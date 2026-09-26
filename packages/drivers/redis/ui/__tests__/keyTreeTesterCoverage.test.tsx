@@ -135,6 +135,22 @@ function folder(prefix: string, count: number): ChildEntry {
 }
 
 /** A `KeyEntry` for the row-shape unit assertions below. */
+/**
+ * The leaf keys whose checkbox is currently ticked.
+ *
+ * The header's selection-count badge left with the batch action group, so the
+ * selection is read off the checkboxes directly — the same set the badge used to
+ * summarise, minus the summary. State comes from the input's `checked` property
+ * rather than the row's optional `data-checked` mirror.
+ */
+function tickedKeys(): string[] {
+  return Array.from(
+    document.querySelectorAll<HTMLInputElement>('[data-testid^="redis-tree-key-check-"]'),
+  )
+    .filter((el) => el.checked)
+    .map((el) => (el.getAttribute('data-testid') ?? '').replace('redis-tree-key-check-', ''));
+}
+
 function entryOf(key: string): KeyEntry {
   return { key, keyType: 'string', ttl: -1, size: 0, preview: '' };
 }
@@ -306,13 +322,11 @@ describe('[tester] row affordances: leaf checkbox, Enter on folder, pinned heade
     expect(screen.getByTestId('redis-tree-key-check-app:user:2').getAttribute('data-checked')).toBe(
       'false',
     );
-    expect(screen.getByTestId('redis-tree-batch-delete-count').getAttribute('data-count')).toBe(
-      '1',
-    );
+    expect(tickedKeys()).toEqual(['app:user:1']);
 
-    // Unticking is the exit; the badge disappears with the empty selection.
+    // Unticking is the exit; the selection empties with it.
     fireEvent.click(screen.getByTestId('redis-tree-key-check-app:user:1'));
-    await waitFor(() => expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(true));
+    await waitFor(() => expect(tickedKeys()).toEqual([]));
   });
 
   it('a leaf row click selects the key, not the checkbox', async () => {
@@ -321,7 +335,7 @@ describe('[tester] row affordances: leaf checkbox, Enter on folder, pinned heade
     fireEvent.click(row);
     await waitFor(() => expect(row.getAttribute('data-selected')).toBe('true'));
     // Opening the detail must not be counted as a checkbox selection (I-8 feed).
-    expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(true);
+    expect(tickedKeys()).toEqual([]);
     expect(getKey.mock.calls.some((c) => String((c as unknown[])[2]) === 'app:user:1')).toBe(true);
   });
 

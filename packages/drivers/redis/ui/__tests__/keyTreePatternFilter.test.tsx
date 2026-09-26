@@ -191,6 +191,23 @@ function attr(testId: string, name: string): string | null {
   return screen.getByTestId(testId).getAttribute(name);
 }
 
+/**
+ * The leaf keys whose checkbox is currently ticked.
+ *
+ * The header's selection-count badge went away with the batch action group, so
+ * "how much of the tree is selected" is read off the checkboxes themselves.
+ * That is a *stronger* observable: the badge was one number derived from this
+ * set, whereas this is the set. State comes from the input's `checked` property
+ * rather than the row's optional `data-checked` mirror.
+ */
+function tickedKeys(): string[] {
+  return Array.from(
+    document.querySelectorAll<HTMLInputElement>('[data-testid^="redis-tree-key-check-"]'),
+  )
+    .filter((el) => el.checked)
+    .map((el) => (el.getAttribute('data-testid') ?? '').replace('redis-tree-key-check-', ''));
+}
+
 async function applyPattern(value: string): Promise<void> {
   const input = await screen.findByTestId('redis-search-input');
   fireEvent.change(input, { target: { value } });
@@ -208,7 +225,10 @@ beforeEach(() => {
     children: childrenFor(prefix),
     cursor: 0,
   }));
-  dbSizes.mockResolvedValue([{ db: 0, keys: KEYSPACE.length }, { db: 1, keys: 0 }]);
+  dbSizes.mockResolvedValue([
+    { db: 0, keys: KEYSPACE.length },
+    { db: 1, keys: 0 },
+  ]);
   getKey.mockResolvedValue({
     key: 'app:1',
     keyType: 'string',
@@ -365,9 +385,7 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     const crumb = await screen.findByTestId('redis-tree-folder-app:');
     expect(crumb.getAttribute('data-breadcrumb')).toBe('true');
     // The surviving leaf is a real row.
-    expect(screen.getByTestId('redis-key-row-app:1').getAttribute('data-row-kind')).toBe(
-      'key',
-    );
+    expect(screen.getByTestId('redis-key-row-app:1').getAttribute('data-row-kind')).toBe('key');
     // Path context only: clicking the breadcrumb does not fold, and it cannot be
     // checked — there is no checkbox in that row at all.
     const before = childPrefixes().length;
@@ -395,21 +413,17 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('1'));
     // Select-all over the visible set takes exactly that one key.
     fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    await waitFor(() =>
-      expect(attr('redis-tree-batch-delete-count', 'data-count')).toBe('1'),
-    );
+    await waitFor(() => expect(tickedKeys()).toEqual(['zzz-thing']));
 
     // A pattern that keeps the two app keys: select-all takes exactly those,
     // never the `root-plain` key the same tree had before the filter.
     await applyPattern('app:*');
     await waitFor(() => expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(false));
     fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    await waitFor(() =>
-      expect(attr('redis-tree-batch-delete-count', 'data-count')).toBe('2'),
+    await waitFor(() => expect(tickedKeys().sort()).toEqual(['app:1', 'app:2']));
+    expect(screen.getByTestId('redis-tree-key-check-app:1').getAttribute('data-checked')).toBe(
+      'true',
     );
-    expect(
-      screen.getByTestId('redis-tree-key-check-app:1').getAttribute('data-checked'),
-    ).toBe('true');
     expect(screen.queryByTestId('redis-tree-key-check-root-plain')).toBeNull();
   });
 
@@ -496,9 +510,7 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
       // The pure client filter must agree with the (hand-written) server answer,
       // otherwise the two views can still disagree even though the widgets read
       // one source.
-      await waitFor(() =>
-        expect(filterKeysByPattern(KEYSPACE, pattern)).toEqual([...expected]),
-      );
+      await waitFor(() => expect(filterKeysByPattern(KEYSPACE, pattern)).toEqual([...expected]));
       // … and what R1 counts is that same set, so the flat list and the tree can
       // never show opposite facts for one pattern again. (The *row* count is not
       // asserted equal here: under a collapsed folder one row stands for many
@@ -553,5 +565,4 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
       'redis.tree.filterUnloaded',
     );
   });
-
 });

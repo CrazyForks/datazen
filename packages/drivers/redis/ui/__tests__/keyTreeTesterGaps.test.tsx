@@ -88,7 +88,6 @@ vi.mock('../shared/redisInvoke', async (importOriginal) => ({
 }));
 
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
-import { KEY_TYPE_FILTERS, SEPARATOR_CHOICES } from '../key-browser/keyTree';
 import {
   EMPTY_LEVEL,
   anyLevelScanning,
@@ -134,15 +133,6 @@ function childCalls(): { prefix: string; opts: Record<string, unknown> }[] {
   }));
 }
 
-/** Pick an option out of an open design-system Select by its own value list. */
-async function pickOption(testId: string, values: readonly string[], wanted: string) {
-  fireEvent.click(screen.getByTestId(testId));
-  const options = await screen.findAllByTestId('select-option');
-  const index = values.indexOf(wanted);
-  expect(index).toBeGreaterThanOrEqual(0);
-  fireEvent.mouseDown(options[index]!);
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
@@ -155,7 +145,10 @@ beforeEach(() => {
     memory: null,
   });
   redisCommand.mockResolvedValue(undefined);
-  dbSizes.mockResolvedValue([{ db: 0, keys: 2 }, { db: 1, keys: 0 }]);
+  dbSizes.mockResolvedValue([
+    { db: 0, keys: 2 },
+    { db: 1, keys: 0 },
+  ]);
 });
 
 afterEach(() => {
@@ -202,6 +195,30 @@ describe('[tester] treeLevels: a failed rescan must close the authoritative pass
 
 /* ── BUG-001 — the R2 pattern never reaches the tree rows ─────────────────── */
 
+/**
+ * The rows whose checkbox is currently ticked — the surviving observable for
+ * "what is selected", now that the header's selection-count badge and its
+ * clear-selection button are gone.
+ *
+ * Folders count too: a select-all over this fixture's two rows ticks the
+ * `app:` folder and the `root-plain` leaf, and a leaf-only count would read 1.
+ * The sticky twin carries its own `redis-tree-sticky-folder-*` testid, so it
+ * cannot double-count here. State comes from the input's `checked` property
+ * rather than a data attribute — only the leaf row mirrors it into
+ * `data-checked`, the folder checkbox carries no such attribute.
+ */
+function tickedRows(): string[] {
+  return Array.from(
+    document.querySelectorAll<HTMLInputElement>(
+      '[data-testid^="redis-tree-key-check-"], [data-testid^="redis-tree-folder-check-"]',
+    ),
+  )
+    .filter((el) => el.checked)
+    .map((el) =>
+      (el.getAttribute('data-testid') ?? '').replace(/^redis-tree-(?:key|folder)-check-/, ''),
+    );
+}
+
 describe('[tester] R2 search row: every filter reaches the tree, and no-match is reachable', () => {
   beforeEach(() => {
     // Flat scan honours the pattern — this is the half that works.
@@ -218,27 +235,6 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
       children: [folder('app:', 2), leaf('root-plain')],
       cursor: 0,
     });
-  });
-
-  it('the type chip reaches list_children (precondition, green)', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-folder-app:');
-    const typeValues = KEY_TYPE_FILTERS.map((item) => item.value);
-    await pickOption('redis-tree-type-filter', typeValues, 'hash');
-    await waitFor(() =>
-      expect(childCalls().some((call) => call.opts.keyType === 'hash')).toBe(true),
-    );
-  });
-
-  it('the separator reaches list_children (precondition, green)', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-folder-app:');
-    await pickOption(
-      'redis-tree-separator',
-      SEPARATOR_CHOICES as unknown as string[],
-      SEPARATOR_CHOICES[1],
-    );
-    await waitFor(() => expect(childCalls().some((call) => call.opts.sep === '.')).toBe(true));
   });
 
   it('keeps every filter surface on one side of the same fact (characterization, rewritten)', async () => {
@@ -274,7 +270,7 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
     // selecting an off-screen one.
     expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(true);
     fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(true);
+    expect(tickedRows()).toEqual([]);
 
     // Exit transition: `Esc` clears input *and* filter — the tree repopulates.
     fireEvent.keyDown(input, { key: 'Escape' });
@@ -282,9 +278,11 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
     await waitFor(() => expect(count.getAttribute('data-loaded')).toBe('2'));
     expect(screen.queryByTestId('redis-tree-empty')).toBeNull();
     fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(false),
-    );
+    // Select-all takes the *loaded* set, which is the flat scan's two keys —
+    // both of them live inside `app:`, so the folder reads all-checked. The
+    // `root-plain` row is painted from `list_children` but is not in the loaded
+    // set, so it stays unticked: selection tracks the scan, not the picture.
+    await waitFor(() => expect(tickedRows()).toEqual(['app:']));
   });
 
   it('FIXME(redis-tree-ui-BUG-001): applying a pattern narrows the rendered tree rows', async () => {

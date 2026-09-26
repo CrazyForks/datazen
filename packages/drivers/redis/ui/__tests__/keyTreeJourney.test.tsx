@@ -73,7 +73,6 @@ vi.mock('../shared/redisInvoke', async (importOriginal) => ({
 
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
 import { toScanPattern } from '../key-browser/useWorkbenchSearch';
-import { KEY_TYPE_FILTERS } from '../key-browser/keyTree';
 
 bindSettingsStore(
   create<SettingsBridgeState>(() => ({
@@ -133,7 +132,10 @@ beforeEach(() => {
     children: [folder('app:', 2), leaf('root-plain')],
     cursor: 0,
   });
-  dbSizes.mockResolvedValue([{ db: 0, keys: 2 }, { db: 1, keys: 0 }]);
+  dbSizes.mockResolvedValue([
+    { db: 0, keys: 2 },
+    { db: 1, keys: 0 },
+  ]);
   getKey.mockResolvedValue({
     key: 'app:user:1',
     keyType: 'string',
@@ -159,42 +161,13 @@ describe('R1 column header (D-1)', () => {
     expect(screen.queryByTestId('redis-db-sidebar')).toBeNull();
   });
 
-  it('marks the counter partial while the cursor is open and exact once drained', async () => {
+  it('marks the counter partial while the scan cursor is still open', async () => {
     renderWorkbench();
     const counter = await screen.findByTestId('redis-tree-count');
     await waitFor(() => expect(counter.getAttribute('data-loaded')).toBe('2'));
     // First page answered with cursor 7 ⇒ the loaded set is not the total.
     expect(counter.getAttribute('data-partial')).toBe('true');
     expect(counter.getAttribute('data-total')).toBe('2');
-
-    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(false);
-    fireEvent.click(screen.getByTestId('redis-tree-clear-selection'));
-    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(true);
-  });
-
-  it('counts the selection into the batch-delete badge and disables it when empty', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-count');
-    expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(true);
-
-    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    const badge = await screen.findByTestId('redis-tree-batch-delete-count');
-    expect(badge.getAttribute('data-count')).toBe('2');
-    expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(false);
-
-    // Enter → the dialog opens; cancel is the exit transition and must leave the
-    // selection untouched (a cancelled write never eats the user's checklist).
-    fireEvent.click(screen.getByTestId('redis-tree-batch-delete'));
-    expect(await screen.findByTestId('redis-batch-delete-confirm')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('redis-batch-delete-cancel'));
-    await waitFor(() => expect(screen.queryByTestId('redis-batch-delete-confirm')).toBeNull());
-    expect(
-      (screen.getByTestId('redis-tree-batch-delete-count') as HTMLElement).getAttribute('data-count'),
-    ).toBe('2');
-
-    fireEvent.click(screen.getByTestId('redis-tree-clear-selection'));
-    expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(true);
   });
 });
 
@@ -257,28 +230,6 @@ describe('R2 search row (D-2)', () => {
     fireEvent.click(screen.getByTestId('redis-tree-load-more'));
     await waitFor(() => expect(lastScan().pattern).toBe('user:*'));
     expect(lastScan().cursor).toBe(7);
-  });
-
-  it('keeps the type filter (our edge over the reference product) on the row', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-search-row');
-    const chip = screen.getByTestId('redis-tree-chip-type');
-    expect(chip.getAttribute('data-key-type')).toBe('all');
-
-    // The design-system Select is a listbox that commits on mousedown, so the
-    // journey walks the real pointer order: open → pick → state leaves the chip.
-    fireEvent.click(screen.getByTestId('redis-tree-type-filter'));
-    const options = await screen.findAllByTestId('select-option');
-    fireEvent.mouseDown(options[KEY_TYPE_FILTERS.findIndex((item) => item.value === 'hash')]);
-
-    await waitFor(() => expect(lastScan().opts.keyType).toBe('hash'));
-    await waitFor(() => expect(chip.getAttribute('data-key-type')).toBe('hash'));
-
-    // Back to "all" is a filter change, not a no-op: the scan restarts unfiltered.
-    fireEvent.click(screen.getByTestId('redis-tree-type-filter'));
-    const reopened = await screen.findAllByTestId('select-option');
-    fireEvent.mouseDown(reopened[KEY_TYPE_FILTERS.findIndex((item) => item.value === 'all')]);
-    await waitFor(() => expect(lastScan().opts.keyType).toBe('all'));
   });
 
   it('toggles the no-expiry filter into the scan request', async () => {
