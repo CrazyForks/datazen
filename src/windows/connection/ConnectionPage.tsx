@@ -319,6 +319,29 @@ export function ConnectionPage() {
 
   // ── Tree callbacks ──
 
+  /*
+   * A connection switch is only half done when the tab changes. `activePanelId`
+   * is a single global slot, so if the previously active panel belongs to another
+   * connection it stays active — and since the navigator's own selection is
+   * derived *from* the active panel (see `activeDbSessionId` above), the tree
+   * highlights the old connection too, not just the content column.
+   *
+   * This is the exit transition of a context switch, so it has to run on every
+   * path that leaves the current connection, not only the one that already had a
+   * tab. It used to live inside the `existingIdx >= 0` branch, which meant a
+   * connection opened for the *first* time (no tab ⇒ the other branch) silently
+   * kept the previous connection's panel: open redis, pick db0, open mysql ⇒
+   * redis's workbench. `?? null` is the meaningful case rather than a fallback —
+   * a connection with no panels of its own must show its overview, so "no
+   * active panel" is the correct state, not a missing one.
+   */
+  const retargetActivePanel = useCallback((connectionId: string) => {
+    const { panels, activePanelId: curActiveId, setActivePanel } = usePanelStore.getState();
+    const curActive = panels.find((p) => p.id === curActiveId);
+    if (curActive?.connectionId === connectionId) return;
+    setActivePanel(panels.find((p) => p.connectionId === connectionId)?.id ?? null);
+  }, []);
+
   const handleSelectConnection = useCallback(
     (connectionId: string) => {
       setWorkspaceMode('connections');
@@ -329,14 +352,7 @@ export function ConnectionPage() {
           syncStoresActiveConnection(existingTab.dbSessionId);
         }
         setActiveIdx(existingIdx);
-        // Sync active panel to the new connection's panels so ContentView
-        // switches immediately instead of still showing the old connection.
-        const { panels, activePanelId: curActiveId } = usePanelStore.getState();
-        const curActive = panels.find((p) => p.id === curActiveId);
-        if (curActive?.connectionId !== connectionId) {
-          const firstForConn = panels.find((p) => p.connectionId === connectionId);
-          usePanelStore.getState().setActivePanel(firstForConn?.id ?? null);
-        }
+        retargetActivePanel(connectionId);
         return;
       }
       const conn = connections.find((c) => c.id === connectionId);
@@ -358,8 +374,9 @@ export function ConnectionPage() {
         setActiveIdx(next.length - 1);
         return next;
       });
+      retargetActivePanel(connectionId);
     },
-    [tabs, connections],
+    [tabs, connections, retargetActivePanel],
   );
 
   const handleSelectKvDb = useCallback(
