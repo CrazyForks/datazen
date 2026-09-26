@@ -433,9 +433,9 @@ describe('named empty states journey (I-11 / D-8)', () => {
     fireEvent.change(input, { target: { value: 'zzz' } });
     await expectEmptyState('no-match');
 
-    // Enter applies: the scan really ran with the typed pattern …
+    // Enter applies: the scan really ran with the resolved prefix pattern …
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(lastScan().pattern).toBe('zzz'));
+    await waitFor(() => expect(lastScan().pattern).toBe('zzz*'));
     await expectEmptyState('no-match');
 
     // … and Esc (the row's exit) drops the filter back to the whole keyspace.
@@ -737,6 +737,74 @@ describe('R2 apply is reachable by pointer, not only by Enter', () => {
     expect(scanKeys.mock.calls.length).toBe(before);
 
     fireEvent.click(screen.getByTestId('redis-search-apply'));
-    await waitFor(() => expect(lastScan().pattern).toBe('app'));
+    await waitFor(() => expect(lastScan().pattern).toBe('app*'));
+  });
+});
+
+/*
+ * The reported defect: typing `app` and pressing Enter listed nothing, because
+ * the pattern reached `SCAN … MATCH` as a bare `app` — a glob that admits only
+ * the single key spelled `app`, so `app:cache` and the rest of the namespace were
+ * invisible. A literal now means prefix.
+ */
+describe('a typed literal searches by prefix', () => {
+  /** Prefixes handed to the server's `list_children`, in order. */
+  function treePrefixes(): string[] {
+    return listChildren.mock.calls.map((call) => String((call as unknown[])[2]));
+  }
+
+  it('sends `app*` and narrows the tree walk to the `app` namespace', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    await waitFor(() => expect(lastScan().pattern).toBe('*'));
+
+    fireEvent.change(screen.getByTestId('redis-search-input'), { target: { value: 'app' } });
+    fireEvent.keyDown(screen.getByTestId('redis-search-input'), { key: 'Enter' });
+
+    // The scan asks for the prefix, not for the one key named `app`.
+    await waitFor(() => expect(lastScan().pattern).toBe('app*'));
+    // …and the tree narrows with it: `patternToTreePrefix` cuts the trailing
+    // star off, so the server walks `app*` instead of the whole keyspace. A bare
+    // `app` would also have narrowed, but only ever to keys that do not exist
+    // under it — which is the whole bug.
+    await waitFor(() => expect(treePrefixes()).toContain('app'));
+  });
+
+  it('a hand-written glob is still honoured, and a trailing star is not doubled', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    fireEvent.change(screen.getByTestId('redis-search-input'), { target: { value: 'app:*' } });
+    fireEvent.keyDown(screen.getByTestId('redis-search-input'), { key: 'Enter' });
+
+    await waitFor(() => expect(lastScan().pattern).toBe('app:*'));
+  });
+
+  it('fuzzy still widens to a substring match, and beats prefix', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    const input = screen.getByTestId('redis-search-input');
+    fireEvent.click(screen.getByTestId('redis-tree-chip-fuzzy'));
+    fireEvent.change(input, { target: { value: 'app' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(lastScan().pattern).toBe('*app*'));
+    // A pattern that opens with a star gives the tree no literal head to route
+    // on, so the walk falls back to the whole keyspace — by design (the server
+    // may return anything, the client filter cuts it down).
+    await waitFor(() => expect(treePrefixes()).toContain(''));
+  });
+
+  it('Esc leaves the prefix state entirely rather than leaving a star behind', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    const input = screen.getByTestId('redis-search-input');
+    fireEvent.change(input, { target: { value: 'app' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(lastScan().pattern).toBe('app*'));
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    // Back to the unfiltered tree, and the box is empty — not holding `app*`.
+    await waitFor(() => expect(lastScan().pattern).toBe('*'));
+    expect(input).toHaveValue('');
   });
 });

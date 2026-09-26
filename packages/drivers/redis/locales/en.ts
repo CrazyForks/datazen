@@ -146,7 +146,7 @@ const locale = {
   'redis.resetSlowlog': 'Reset slowlog',
   'redis.score': 'Score',
   'redis.search': 'Search…',
-  'redis.searchKeys': 'Search keys…',
+  'redis.searchKeys': 'Search key prefix…',
   // Value search (R6) — mode tabs, progress, results
   'redis.search.modeKey': 'Key',
   'redis.search.modeValue': 'Value',
@@ -451,7 +451,9 @@ const locale = {
   // concurrent W3-E / W3-F blocks below never touch these keys.
   'redis.tree.loadedOfTotal': 'Loaded {loaded} of {total} keys',
   'redis.tree.selectAll': 'Select all loaded keys',
-  'redis.tree.fuzzyHint': 'Fuzzy: wrap a literal in *…* when applying',
+  'redis.tree.fuzzyHint': 'Fuzzy: match anywhere. Off = key prefix, * ? [ ] are used as written',
+  'redis.search.keyPatternHint':
+    'Matches every key starting with what you type. Add * or ? for a glob, or turn on Fuzzy to match anywhere in the key.',
   'redis.tree.folderPartial': '{count}+',
   'redis.tree.empty.none': 'This database has no keys yet',
   'redis.tree.empty.noMatch': 'No key matches "{pattern}"',

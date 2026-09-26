@@ -175,18 +175,23 @@ describe('R2 search row (D-2)', () => {
   it('toScanPattern resolves literal, glob, blank and fuzzy states', () => {
     expect(toScanPattern('', false)).toBe('*');
     expect(toScanPattern('   ', true)).toBe('*');
-    expect(toScanPattern('user', false)).toBe('user');
+    // A literal is a PREFIX, not an exact key: `app` has to reach `app:cache`.
+    expect(toScanPattern('app', false)).toBe('app*');
+    expect(toScanPattern('user', false)).toBe('user*');
     expect(toScanPattern('user', true)).toBe('*user*');
-    // an explicit glob is never widened
+    // an explicit glob is never widened, in either chip state
     expect(toScanPattern('user:*', true)).toBe('user:*');
+    expect(toScanPattern('user:*', false)).toBe('user:*');
     expect(toScanPattern('[a-z]bc', true)).toBe('[a-z]bc');
     // whitespace around a literal is not part of the key, and trimming happens
-    // *before* fuzzy wrapping so the star hugs the pattern
-    expect(toScanPattern('  user:1  ', false)).toBe('user:1');
+    // *before* wrapping so the star hugs the pattern
+    expect(toScanPattern('  user:1  ', false)).toBe('user:1*');
     expect(toScanPattern('  user  ', true)).toBe('*user*');
-    // a literal is never widened by itself
+    // fuzzy still widens a literal that has no glob char
     expect(toScanPattern('user:1', true)).toBe('*user:1*');
-    expect(toScanPattern('user:1', false)).toBe('user:1');
+    // …and a hand-written trailing star is not doubled
+    expect(toScanPattern('app*', false)).toBe('app*');
+    expect(toScanPattern('app*', true)).toBe('app*');
   });
 
   it('walks the whole typing journey without ever losing the applied pattern', async () => {
@@ -198,7 +203,7 @@ describe('R2 search row (D-2)', () => {
     fireEvent.change(input, { target: { value: 'us' } });
     fireEvent.change(input, { target: { value: 'user' } });
     expect(input).toHaveValue('user');
-    expect(scanKeys.mock.calls.filter((c) => c[2] === 'user')).toHaveLength(0);
+    expect(scanKeys.mock.calls.filter((c) => c[2] === 'user*')).toHaveLength(0);
 
     // Fuzzy chip on → Enter: literal becomes a substring glob.
     fireEvent.click(screen.getByTestId('redis-tree-chip-fuzzy'));
@@ -206,10 +211,11 @@ describe('R2 search row (D-2)', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(lastScan().pattern).toBe('*user*'));
 
-    // Chip back off → same input is now a literal exact-match search.
+    // Chip back off → the same input narrows to a key prefix (not a bare `user`,
+    // which would admit only the one key spelled `user`).
     fireEvent.click(screen.getByTestId('redis-tree-chip-fuzzy'));
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(lastScan().pattern).toBe('user'));
+    await waitFor(() => expect(lastScan().pattern).toBe('user*'));
 
     // Esc clears the input (exit transition of the row, no scan left running).
     fireEvent.keyDown(input, { key: 'Escape' });

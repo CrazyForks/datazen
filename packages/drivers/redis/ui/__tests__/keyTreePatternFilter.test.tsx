@@ -160,7 +160,11 @@ const SCAN_KEYS_ANSWERS: Readonly<Record<string, readonly string[]>> = {
   '': KEYSPACE,
   '*nope': [],
   'zzz*': ['zzz-thing'],
-  zzz: [],
+  // The server pattern a typed literal now produces. `zzz` (no `*` ⇒ exact) is
+  // gone from this table on purpose: the search row can no longer emit it, since
+  // a literal without a metacharacter is wrapped as a prefix. The exact-match
+  // rule itself is still covered as a client-filter unit in `keyTreeFilter.test.ts`.
+  'app*': ['app:1', 'app:2'],
   'app:*': ['app:1', 'app:2'],
   '*:1': ['app:1'],
   '*thing': ['zzz-thing'],
@@ -335,10 +339,60 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     expect(screen.queryByTestId('redis-tree-empty')).toBeNull();
   });
 
+  /*
+   * The reported defect, against the literal oracle rather than the client
+   * filter: typing `app` used to reach `SCAN … MATCH app`, which admits only the
+   * single key spelled `app` — so `app:1` and `app:2` were invisible and the
+   * whole `app` namespace read as "no matches". The oracle table is derived by
+   * hand from Redis' MATCH rules, so a regression here cannot hide behind the
+   * client implementation agreeing with itself.
+   */
+  it('a typed literal reaches the server as a prefix, not an exact key', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-tree-folder-app:');
+
+    await applyPattern('app');
+    // The scan asked for `app*`, which the oracle answers with both app keys.
+    await waitFor(() => expect(scanKeys.mock.calls.at(-1)?.[2]).toBe('app*'));
+    // R1 counts the key set the pattern admitted, so both app keys are in it —
+    // this is the number the user sees when they ask "did it find anything".
+    await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('2'));
+    // Something is on screen, and it is the app namespace rather than a
+    // no-match page. (The leaves sit under a collapsed `app:` folder, so the
+    // row count is 1 — tree geometry, not the question being asked here.)
+    expect(await screen.findByTestId('redis-tree-folder-app:')).toBeTruthy();
+    expect(screen.queryByTestId('redis-tree-empty')).toBeNull();
+    // The tree walk narrows to the namespace instead of walking everything.
+    expect(childPrefixes().some((prefix) => prefix === 'app')).toBe(true);
+  });
+
+  it('a typed literal and the prefix it stands for admit the same keys', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-tree-folder-app:');
+
+    await applyPattern('app:*');
+    await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('2'));
+    // `app:*` is the narrower pattern, so its two leaves can sit at the root.
+    expect(tree().getAttribute('data-row-count')).toBe('2');
+
+    // `app` now stands for `app*`, which is strictly *broader* (it would also
+    // admit `apple`), so the routed head stays `app` and the server folds it
+    // into one `app:` folder. Same keys, one row instead of two — that is the
+    // fold, not a disagreement, and the counter is what has to match.
+    await applyPattern('app');
+    await waitFor(() => expect(scanKeys.mock.calls.at(-1)?.[2]).toBe('app*'));
+    await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('2'));
+    expect(tree().getAttribute('data-row-count')).toBe('1');
+    expect(screen.getByTestId('redis-tree-folder-app:')).toBeTruthy();
+  });
+
   it('clearing the filter brings the rows back and the empty state goes', async () => {
     renderWorkbench();
     await screen.findByTestId('redis-tree-folder-app:');
-    await applyPattern('zzz');
+    // A typed literal is a *prefix* now, so the no-match case needs a head that
+    // genuinely has nothing under it: `zzz` would reach the server as `zzz*` and
+    // find `zzz-thing`. The empty state is the subject here, not the letter.
+    await applyPattern('nope');
     await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('0'));
     await screen.findByTestId('redis-tree-empty');
 
@@ -441,7 +495,7 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     expect(childPrefixes().length).toBe(rootsBefore);
 
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('0'));
+    await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('1'));
   });
 
   it('R1 counts the pattern-visible set even when the flat scan ignored the glob', async () => {

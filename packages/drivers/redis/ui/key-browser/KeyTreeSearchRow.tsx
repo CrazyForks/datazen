@@ -66,6 +66,13 @@ export function KeyTreeSearchRow({
             if (e.key === 'Escape') onClearFilter();
           }}
           placeholder={scope === 'key' ? t('redis.searchKeys') : t('redis.search.valuePlaceholder')}
+          /*
+           * Key scope only: the value / all scopes take a substring the backend
+           * matches anywhere, so telling those users about key prefixes would be
+           * the wrong instruction. The placeholder already says "prefix"; this is
+           * where the two opt-outs live.
+           */
+          title={scope === 'key' ? t('redis.search.keyPatternHint') : undefined}
           className="h-7 pl-7 text-xs"
           data-testid="redis-search-input"
           data-scope={scope}
