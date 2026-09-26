@@ -478,6 +478,11 @@ const locale = {
   // write command are server data, not copy; only the wrappers are translated.
   // `redis.dbSize` / `redis.loadedCount` above are reused verbatim so the
   // wording matches the workbench toolbar.
+  //
+  // The 48px context bar that once shared this namespace (db selector, memory
+  // and scan readouts, its own action buttons) is gone; only the status bar's
+  // `status.*` keys survive, so they keep the namespace rather than churn every
+  // translation file for a rename.
   'redis.contextBar.status.noKey': 'No key selected',
   'redis.contextBar.status.unsaved': 'Unsaved changes',
   'redis.contextBar.status.scanCursor': 'cursor {cursor}',
@@ -486,29 +491,6 @@ const locale = {
   'redis.contextBar.status.scanStopped': 'cursor {cursor} (partial)',
   'redis.contextBar.status.selected': '{count} selected',
   'redis.contextBar.status.lastWrite': '{command} ({ms}ms)',
-  // ── 48px context bar, full version (PRD §3.4, ruling 8-2 = full) ───────────
-  // Server values (the `db{n}` label, a TYPE token, a byte count) are data, not
-  // copy; only the wrappers below are translated.
-  'redis.contextBar.db': 'Database',
-  'redis.contextBar.dbSelect': 'Switch the database this panel is bound to',
-  'redis.contextBar.memory': 'used {used} / max {max}',
-  // `maxmemory 0` is Redis' way of saying "no ceiling" — it gets its own word so
-  // no renderer can print `max 0` (the same call 屏 A's memory gauge makes).
-  'redis.contextBar.memoryUnlimited': 'used {used} / max no limit',
-  'redis.contextBar.types': 'Key types',
-  // §3.4 hard constraint: a sampled distribution must say so, in the chips group.
-  'redis.contextBar.sampled': 'sampled {sampled}/{dbsize}',
-  'redis.contextBar.scanning': 'Scanning {used}/{total} budget',
-  // Rendered instead when the ceiling is unknown (`scanBudgetTotal === 0`), so no
-  // fraction is implied that the relay cannot back.
-  'redis.contextBar.scanUsed': 'Scanned {used}',
-  'redis.contextBar.scanBudget': 'Scan budget',
-  'redis.contextBar.budget.10k': '10k keys per action',
-  'redis.contextBar.budget.50k': '50k keys per action',
-  'redis.contextBar.budget.200k': '200k keys per action',
-  'redis.contextBar.budget.1M': '1M keys per action',
-  'redis.contextBar.driverSettings': 'Driver settings',
-  'redis.contextBar.more': 'More actions',
   // Key-props sidebar (ruling 8-3 = M). `redis.ttl` / `redis.noExpiry` above are
   // reused here so the wording matches the key tree and the detail editor.
   'redis.keyProps.title': 'Key Attributes',

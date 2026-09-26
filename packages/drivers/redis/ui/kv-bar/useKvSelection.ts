@@ -41,9 +41,9 @@ export function useKvLoadedCount(state: KvSlotState): number {
  * Last SCAN cursor the tree reported; `'0'` means it wrapped.
  *
  * Reading `'0'` **alone does not mean the scan finished** (F-1): a fresh panel
- * also reports `'0'`. Renderers must pair it with {@link useKvLoadedCount} /
- * {@link useKvScanBudgetUsed} before claiming completion — see
- * `contextBarModel.deriveScanReadout` for the pair used by the context bar.
+ * also reports `'0'`. Renderers must pair it with {@link useKvLoadedCount} before
+ * claiming completion — see `scanStateOf` in `KvStatusBar.tsx` for the pair this
+ * driver's own renderer uses.
  */
 export function useKvScanCursor(state: KvSlotState): string {
   return useSyncExternalStore(state.subscribe, state.getScanCursor);

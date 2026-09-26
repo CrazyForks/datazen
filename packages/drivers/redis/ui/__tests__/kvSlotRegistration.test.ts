@@ -24,12 +24,12 @@
  * compile error, since `scripts/**` is outside `tsc`'s reach.
  *
  * Maintenance contract: {@link SHIPPED_ROWS} is the **only** track-scoped fact in
- * this file. A slot Redis does not fill yet (`contextBar`, owned by Rescuer-B) is
- * therefore not asserted as "missing forever" — it is asserted as "missing while
- * this table says so", and adding a row here re-checks both gates at once.
- * Everything else (export identity, module paths, copy keys) is derived from the
- * registry rows rather than hardcoded, so a new slot file cannot make this suite
- * lie in either direction.
+ * this file. A slot Redis does not fill (`contextBar`, removed along with the
+ * 48px context band itself) is therefore not asserted as "missing forever" — it
+ * is asserted as "missing while this table says so", and adding a row here
+ * re-checks both gates at once. Everything else (export identity, module paths,
+ * copy keys) is derived from the registry rows rather than hardcoded, so a new
+ * slot file cannot make this suite lie in either direction.
  *
  * Boundary note: importing `scripts/resolve-drivers.mjs` from a driver test is
  * test-only tooling access, not a host-`src/**` reference, so guard rule R1 does
@@ -52,15 +52,9 @@ import en from '../../locales/en';
  * Rows this build ships: one per KV slot Redis fills, with the module the
  * codegen must import the component from. This table is the **only**
  * track-scoped fact in the file — adding a row here re-checks both gates plus
- * the export at once, which is exactly what the Wave-4 context bar track did
- * when it shipped the fourth slot.
+ * the export at once.
  */
 const SHIPPED_ROWS: Array<{ slot: string; component: string; module: string }> = [
-  {
-    slot: 'contextBar',
-    component: 'RedisContextBar',
-    module: 'packages/drivers/redis/ui/kv-bar',
-  },
   { slot: 'statusBar', component: 'RedisKvStatusBar', module: 'packages/drivers/redis/ui/kv-bar' },
   {
     slot: 'keyPropsSidebar',
@@ -88,7 +82,6 @@ const CAPABILITY_KEY: Record<string, string> = {
   keyPropsSidebar: 'keyPropsSidebar',
   connectionHome: 'home',
 };
-
 /** Capability Redis declares for a slot, normalised to a boolean. */
 function capability(slot: string): boolean {
   const key = CAPABILITY_KEY[slot];
@@ -97,14 +90,12 @@ function capability(slot: string): boolean {
 
 /** Slot names this build registers a component for, for the `redis` db type. */
 function registeredSlots(): Array<Record<string, string>> {
-  return collectDriverKvSlotEntries(undefined, ['redis']).map(
-    (entry: Record<string, string>) => ({
-      dbType: entry.dbType,
-      slot: entry.slot,
-      component: entry.component,
-      path: entry.path,
-    }),
-  );
+  return collectDriverKvSlotEntries(undefined, ['redis']).map((entry: Record<string, string>) => ({
+    dbType: entry.dbType,
+    slot: entry.slot,
+    component: entry.component,
+    path: entry.path,
+  }));
 }
 
 describe('[tester] redis KV slot double gate (F-1 ⇄ F-3)', () => {

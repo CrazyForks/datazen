@@ -313,10 +313,6 @@ const BASIC_PATH_FRONTEND = {
     // an undeclared slot generates neither an import nor a registry row, so the
     // host keeps its default rendering there instead of importing a placeholder.
     kvSlots: {
-      contextBar: {
-        component: 'RedisContextBar',
-        path: '../../packages/drivers/redis/ui/kv-bar',
-      },
       statusBar: {
         component: 'RedisKvStatusBar',
         path: '../../packages/drivers/redis/ui/kv-bar',

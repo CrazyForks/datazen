@@ -33,8 +33,7 @@ import type { ReactNode } from 'react';
 import { Fragment } from 'react';
 import type { KvStatusBarProps } from '@datazen/driver-sdk';
 import { Badge, useI18n } from '@datazen/ui';
-import { formatSize } from '../shared/formatSize';
-import { formatCompactCount } from './contextBarModel';
+import { formatCompactCount, formatSize } from '../shared/formatSize';
 import { useDbKeyCount } from './dbKeyCounts';
 import { attributeViewState, describeTtl, formatDurationMs } from './keyObjectInfo';
 import {
@@ -89,7 +88,11 @@ export function RedisKvStatusBar({ dbSessionId, dbIndex, database, state }: KvSt
     parts.push({
       part: 'keys',
       attrs: { 'data-i18n-key': 'redis.dbSize', 'data-keys': String(keysInDb) },
-      node: <span className="font-mono">{t('redis.dbSize', { count: formatCompactCount(keysInDb) })}</span>,
+      node: (
+        <span className="font-mono">
+          {t('redis.dbSize', { count: formatCompactCount(keysInDb) })}
+        </span>
+      ),
     });
   }
 
@@ -150,7 +153,8 @@ export function RedisKvStatusBar({ dbSessionId, dbIndex, database, state }: KvSt
       part: 'last-write',
       attrs: {
         'data-last-write': lastWrite.command,
-        'data-last-write-ms': lastWrite.durationMs === null ? 'unknown' : String(lastWrite.durationMs),
+        'data-last-write-ms':
+          lastWrite.durationMs === null ? 'unknown' : String(lastWrite.durationMs),
       },
       node: (
         <span className="max-w-[320px] truncate font-mono" title={lastWrite.command}>

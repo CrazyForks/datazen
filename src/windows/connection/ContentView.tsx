@@ -473,7 +473,23 @@ export function ContentView({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      {activePanel && (
+      {/*
+        The 48px toolbar band is skipped entirely for KV panels.
+
+        Every SQL affordance it carries is already false there (a key-value
+        driver supports no query/table/ER/objects), and the one slot that used
+        to fill it — the driver's `contextBar` — was removed rather than
+        re-styled: the db selector and key/memory counters restated facts the
+        key browser and status bar already show, and its action buttons belong
+        to the panel, not to a host row shared with every other driver. The
+        panel's own controls live in its tab bar, so a KV panel now starts at
+        the panel tab bar with no empty band above it.
+
+        Side effect, deliberate: the band's AI-chat button and detail-panel
+        toggle (the latter opens a KV driver's key-props sidebar) lose their
+        entry point along with the band. Both features are untouched in code.
+      */}
+      {activePanel && !isKvPanel && (
         <ContentToolbar
           showNewQuery={showNewQuery}
           showNewTable={showNewTable}

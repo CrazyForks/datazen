@@ -23,7 +23,8 @@
  *  - exit: the panel is unmounted when the connection closes.
  */
 import { useCallback, useState } from 'react';
-import { cn, useI18n } from '@datazen/ui';
+import { Plus } from 'lucide-react';
+import { Button, cn, useI18n } from '@datazen/ui';
 import type { KeyDetail } from '../shared/types';
 import { DetailColumn } from './DetailColumn';
 import { RedisConsole } from '../console/RedisConsole';
@@ -68,6 +69,11 @@ export interface RedisRightPanelProps {
   activeTab?: RightTab;
   /** Callback when the user clicks a tab (controlled by parent). */
   onTabChange?: (tab: RightTab) => void;
+  /**
+   * Open the create-key dialog. Rendered as the tab bar's only action button:
+   * the workbench owns the overlay, so the button needs no host round-trip.
+   */
+  onCreateKey?: () => void;
 }
 
 /**
@@ -92,6 +98,7 @@ export function RedisRightPanel({
   selectedDb,
   activeTab: controlledTab,
   onTabChange,
+  onCreateKey,
 }: RedisRightPanelProps) {
   const { t } = useI18n();
   // Support both controlled and uncontrolled tab mode.
@@ -143,6 +150,25 @@ export function RedisRightPanel({
           </button>
         ))}
         <div className="flex-1" />
+        {/*
+          The panel's only action control. It used to live in the host toolbar's
+          KV context bar, which put a create-key affordance for *this* panel on a
+          row shared with every other driver surface; the workbench already owns
+          the overlay, so the button belongs next to the tabs it creates into.
+        */}
+        {onCreateKey && (
+          <Button
+            variant="secondary"
+            className="mr-2 h-7 shrink-0 gap-1 px-2 text-xs"
+            title={t('redis.createKey')}
+            aria-label={t('redis.createKey')}
+            data-testid="redis-right-create-key"
+            onClick={onCreateKey}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span className="whitespace-nowrap">{t('redis.createKey')}</span>
+          </Button>
+        )}
         {connectionName && selectedDb && (
           <span
             className="max-w-[40%] truncate px-3 text-[11px] text-fg-muted"

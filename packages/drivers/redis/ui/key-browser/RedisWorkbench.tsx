@@ -334,6 +334,7 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                       },
                       onDirtyChange: detail.setEditorDirty,
                       onClose: detail.clearDetailGuarded,
+                      onCreateKey: () => overlays.setCreateOpen(true),
                     })
                   ) : (
                     <DetailColumn
