@@ -74,7 +74,7 @@ export function NavigationCard({
   const actions = buildQuickActions(defaultDbIndex);
 
   return (
-    <OverviewCard cardId="actions" titleKey="redis.overview.navigation.title">
+    <OverviewCard cardId="actions" titleKey="redis.overview.navigation.title" className="h-full">
       <div className="flex flex-col divide-y divide-edge/50 text-xs">
         {/* Quick Actions */}
         <div className="p-2.5">

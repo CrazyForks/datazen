@@ -126,7 +126,7 @@ export function RedisOverviewHome({
           </div>
         ) : null}
 
-        <div data-overview-grid className="flex min-h-0 flex-1 flex-col gap-2">
+        <div data-overview-grid className="grid min-h-0 grid-rows-[auto_1fr] gap-2">
           {/* 1. Instance: Server + Memory side-by-side, full width */}
           <InstanceCard
             status={data.info.status}
@@ -136,7 +136,7 @@ export function RedisOverviewHome({
           />
 
           {/* 2+3. Performance + Navigation side-by-side */}
-          <div className="grid min-h-0 grid-cols-2 gap-2" style={{ flex: '1 1 0' }}>
+          <div className="grid min-h-0 grid-cols-2 gap-2">
             <PerformanceCard
               slowlogStatus={data.slowlog.status}
               slowlogRows={slowlogRows}

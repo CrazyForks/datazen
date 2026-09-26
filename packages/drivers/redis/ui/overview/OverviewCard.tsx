@@ -95,7 +95,7 @@ export function OverviewCard({
         <span className="flex-1" />
       </header>
 
-      <div className="min-h-0">
+      <div className="min-h-0 flex-1">
         {state === 'loading' ? (
           <div
             data-overview-loading={cardId}

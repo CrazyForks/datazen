@@ -83,6 +83,7 @@ export function PerformanceCard({
       emptyKey="redis.overview.performance.empty"
       unauthorizedKey="redis.overview.slowlog.unauthorized"
       onRetry={onRetry}
+      className="h-full"
     >
       <div className="flex flex-col divide-y divide-edge/50 text-xs">
         {/* Slow Queries Section */}
