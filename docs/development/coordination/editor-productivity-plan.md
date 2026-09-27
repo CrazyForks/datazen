@@ -181,6 +181,56 @@ title: 多目标协调计划（hub 静态段落来源）
   - store **不阻止「从未打开过的 pane」成为焦点**，**孤儿 exec entry 那扇门仍开着** ⇒ 属**调用方契约**：
     P2 的 pane 点击处理器**只能传自己 tab 内已存在的 paneId**；
   - `ContentViewKvToolbar.test.tsx` 的 **4 键 store mock 是硬性前置** —— P2 一旦让视图改读 `map`，该 mock **会直接 `TypeError`**。
+- **🔴【方法论·第十类·我自己的话被 Coder 实测推翻】一个听起来合理的因果，我从没验证就复述了四轮。**
+  我在台账里写「缺件 2：第三层 codegen `src/extensions/generated-locales.ts` 缺失导致大面积莫名失败」，
+  并把这条**当作事实写进了此后每一轨的简报**（compartment、scripts-gate、folding、guard-audit）。
+  **本轨 Coder 实测推翻**（我已独立复核，结论对它有利）：
+  ```
+  git ls-files src/extensions/generated-locales.ts
+    → error: 路径规格未匹配任何 git 已知文件      ← 它根本不在 git 里
+  全仓唯一命中（排除 node_modules/.worktrees/dist/.git）
+    → scripts/check-driver-import-boundaries.mjs:94 的一个常量
+  本轨 worktree 全套件 4820 例：4 failed / 4813 passed / 3 skipped
+    → 4 例全部是 Pro manifest ENOENT，无一例源于该文件
+  ```
+  该 codegen 已被 `i18n-drivers` 轨**退役**。`generate-builtin-locales.mjs:27` 实测只产出
+  `src/locales/builtinLocales.ts` —— 「不是同一个文件」属实，但**救不了那个因果**。
+  ⇒ **新判据（与前九类都不同）**：**我写下台账时用的因果，和代理写进 commit message 的因果，
+  是同一类未经检验的东西。**「听起来合理」**不是证据**。
+  **每次往简报/台账里写「X 会导致 Y」时，必须当场问：我验过 X ⇒ Y 吗？**
+  ⚠️ 本条**已随四份简报复述出去**，故已列入给在跑代理的更正项。
+- **✅ P-EP-1 结案 —— 从「推理安全」升级为「实测坐实」。**
+  协调方实测三个分支的 `manifest.json`：
+  | Pro 分支 | `extensionPointsVersion` |
+  | --- | --- |
+  | `main` | **1.0.0** |
+  | `productivity/editor-productivity` | **1.1.0** |
+  而 `security.test.ts:34` 以 `extensionPointsVersion: EXTENSION_POINTS_VERSION` **精确等值**断言。
+  ⇒ **`createFoldExtensions` 不 bump `EXTENSION_POINTS_VERSION`（保持 1.1.0）是正确的**：
+  一旦 bump，**每个仍声明 1.1.0 的 manifest 都会被 `checkEngineCompatibility` 判为不兼容**。
+  我此前判定「两个方向都安全」属**机制论证（最弱级）**，现由实测取代。
+- **🚨【本轨最有价值的产品级发现】同一个缺件，换一种分支就换一种失败签名 —— 会被代理误记成自己的缺陷。**
+  同一个 `security.test.ts`，三种 Pro 状态实测：
+  | Pro 状态 | 结果 |
+  | --- | --- |
+  | 无 Pro 检出 | **4 failed（ENOENT）** —— 形态上明显是环境问题 |
+  | Pro @ `main`（ep **1.0.0**，映射回退落错） | **2 failed 断言失败**：`expected '1.0.0' to be '1.1.0'` |
+  | Pro @ `productivity/editor-productivity`（ep 1.1.0） | **25 passed / 0 failed** |
+  ⇒ **中间那行是灾难性的**：ENOENT 一眼可辨是环境问题，而**断言失败长得就像「我的改动改错了」**。
+  这解释了为什么代理反复在「这 4 个失败是不是我造成的」上花时间 —— **它甚至可能不是 4 个，而是 2 个断言失败**。
+  故新脚本加了 **EP 契约版本交叉核对**（铺完 Pro 后比对 manifest 声明的版本与宿主常量），
+  并把 Pro 分支映射写成**规则**而非硬编码：`宿主 feature/<slug> → Pro productivity/<slug> → Pro feature/<slug> → Pro main`，
+  每个候选用 `show-ref` **探测源仓是否真有该分支**，不存在就顺延；`DATAZEN_PRO_BRANCH` 可显式覆盖。
+- **✅ `new-feature-worktree.sh` 已修（`713a5a255`）**，根因是 `MAIN="$(git rev-parse --show-toplevel)"`
+  **直接采信调用方 cwd**。现按 ① 脚本自身位置 → ② `--git-common-dir` 反推 → ③ 都不成立就 `die`
+  （**明确拒绝「猜」**）；并自检「必须命中 `git worktree list` 且 HEAD 分支正确」，否则回滚。
+  【变异证据】旧脚本在 worktree 内调用实测**嵌套两层**（`.worktrees/datazen-worktree-script/.worktrees/datazen-wtprobe`）；
+  【真实管线实测】修复后同一 cwd 落在 `datazen/.worktrees/datazen-wtfix-a @ feature/wtfix-a`，
+  `.worktrees` 子目录不存在、HEAD == 基准、登记自检通过。
+  失败回滚：**EXIT trap 兜底 + 只删本次创建物**；worktree 内有未提交改动时**不强删**而是打印清理命令；
+  「目录已存在但未登记」一律**拒绝删除**。`shellcheck` **0 findings**。
+  ⚠️ **一条只有代码审查、无实测的路径**：worktree 内有未提交改动时的回滚分支。
+  **已列为 Tester 重点复测项。**
 - **🔴【本波最重要的方法论发现】「断言存在」≠「断言能失败」。** —— 由 Track C 复测 Tester **主动交代**：
   > 我第一版的 PROVENANCE 2 是个**假守卫**。原写法是 `expect(banner).toContain('227b6af8e')`，
   > 而 banner 里**另有两行也引用该 commit**，所以该断言**几乎不可能失败** ——
