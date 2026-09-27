@@ -70,7 +70,7 @@ const pack = {
   'query.txAbortedSkip': '跳过',
   'query.dangerousSqlTitle': '破坏性 SQL',
   'query.dangerousSqlConfirm':
-    '脚本包含 DROP 或 TRUNCATE。Safe Mode 已关闭，语句将直接作用于当前数据库。是否继续执行？',
+    '脚本包含 DROP 或 TRUNCATE。安全模式已关闭，语句将直接作用于当前数据库。是否继续执行？',
   // --- SQL 编辑器（AC-01~AC-17）— Track S1-D i18n 契约 ---
   'query.editor.gutter.executeTooltipMac': '运行此语句（⌘+Enter）',
   'query.editor.gutter.executeTooltipWin': '运行此语句（Ctrl+Enter）',
@@ -172,7 +172,7 @@ const pack = {
   'query.editor.executionConfirm.badgeHighRisk': '高危',
   'query.editor.executionConfirm.blockedReadOnly': '只读连接不能执行写语句。',
   'query.editor.executionConfirm.blockedSafeMode':
-    'Safe Mode 已阻止此语句。请关闭 Safe Mode 或调整 SQL 后再试。',
+    '安全模式已阻止此语句。请关闭安全模式或调整 SQL 后再试。',
   'query.editor.executionConfirm.findingDrop': 'DROP 语句',
   'query.editor.executionConfirm.findingTruncate': 'TRUNCATE 语句',
   'query.editor.executionConfirm.findingUpdateNoWhere': '无 WHERE 的 UPDATE',

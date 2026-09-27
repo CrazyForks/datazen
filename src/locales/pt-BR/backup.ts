@@ -23,7 +23,7 @@ const pack = {
   'backup.restoreProgress': 'Restaurando {name} ({current}/{total})',
   'backup.progressLog': 'Log de execução',
   'backup.copyLog': 'Copiar log',
-  'backup.logCopied': 'Copied',
+  'backup.logCopied': 'Copiado',
   'backup.logOmitted': '… {count} linhas omitidas (log truncado para economizar memória)',
 } as const;
 export default pack;

@@ -37,7 +37,7 @@ const pack = {
   'dashboard.intervalUnit.hours': '小时',
   'dashboard.intervalUnit.minutes': '分钟',
   'dashboard.intervalUnit.seconds': '秒',
-  'dashboard.workflowSource': 'Workflow',
+  'dashboard.workflowSource': '工作流',
   'dashboard.defaultView': '默认视图',
   'dashboard.viewChart': '图',
   'dashboard.viewTable': '表',
@@ -79,5 +79,7 @@ const pack = {
   'dashboard.workflowInUse': '此工作流已被看板报表使用',
   'dashboard.openWorkflowEditor': '打开工作流编辑器',
   'dashboard.selectWorkflow': '选择工作流',
+  'dashboard.expand': '展开',
+  'dashboard.collapse': '折叠',
 } as const;
 export default pack;
