@@ -429,6 +429,21 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
     ],
   );
 
+  /**
+   * The payload currently installed in the live view, used to make the
+   * reconfigure effect below idempotent across the mount commit.
+   *
+   * It is declared *before* the mount effect because the mount effect has to
+   * seed it. React runs effects in declaration order, so in the mount commit
+   * the two effects run back to back against the same `proPayload` object:
+   * the mount effect installs that exact payload, and the reconfigure effect
+   * must then recognise the identity and stay quiet. Left at its initial
+   * `null`, the guard `appliedPayloadRef.current === proPayload` never matched
+   * and every mount paid for a redundant full 8-slot reconfiguration
+   * transaction (ep-hooks-settings-BUG-002).
+   */
+  const appliedPayloadRef = useRef<ProCompartmentPayload | null>(null);
+
   // ── Editor mount ─────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return;
@@ -495,6 +510,11 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
     (view.dom as any).cmView = { view };
     (view.dom as any).__cmView = view;
 
+    // The state built above already carries exactly this payload. Record it so
+    // the reconfigure effect — declared below, hence run right after this one
+    // in the same commit — short-circuits instead of re-dispatching it.
+    appliedPayloadRef.current = proPayload;
+
     try {
       modelRef.current = buildSemanticModel(
         view.state.doc.toString(),
@@ -526,11 +546,10 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   // produced N transactions and an observer could see a frame where, say, the
   // linter had been updated but the keymap had not. All slots — including the
   // ones the host has never heard of — now land together.
-  const appliedPayloadRef = useRef<ProCompartmentPayload | null>(null);
   useEffect(() => {
     const view = viewRef.current;
-    // The mount effect above already installed this exact payload; re-applying
-    // it would only add a redundant transaction.
+    // The mount effect above seeded `appliedPayloadRef` with this exact
+    // `proPayload`; re-applying it would only add a redundant transaction.
     if (!view || appliedPayloadRef.current === proPayload) return;
     appliedPayloadRef.current = proPayload;
     reconfigureProCompartments(view, proPayload);

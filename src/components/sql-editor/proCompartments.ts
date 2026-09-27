@@ -172,9 +172,15 @@ export function reconfigureProCompartments(view: EditorView, payload: ProCompart
   const extraCompartment = getProCompartment(EXTRA_COMPARTMENT_ID);
   if (overflow.length > 0) {
     if (extraCompartment && extraCompartment.get(view.state) !== undefined) {
+      // `overflow` cannot contain `extra` itself, and that is a property of
+      // the classification above rather than a runtime possibility: reaching
+      // this branch *means* `extra` is mounted in this view, and a mounted
+      // `extra` was filed under `directIds` by the same predicate. So `extra`
+      // needs no per-id guard in the merge below — there is no "fold `extra`
+      // into `extra`" state to exclude. A guard here would be dead code
+      // (ep-hooks-settings-BUG-003).
       const merged: Extension[] = [...(payload[EXTRA_COMPARTMENT_ID] ?? [])];
       for (const id of overflow) {
-        if (id === EXTRA_COMPARTMENT_ID) continue;
         merged.push(...payload[id]);
       }
       direct.push(extraCompartment.reconfigure(merged));

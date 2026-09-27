@@ -129,6 +129,24 @@ describe('proCompartments registry', () => {
       warn.mockRestore();
     });
 
+    it('merges overflow into a mounted `extra` the payload never names', () => {
+      // `extra` is mounted in this view, but this payload does not mention it —
+      // so the merge has to start from an empty base. Spreading the absent key
+      // would throw `undefined is not iterable` and lose the whole batch. The
+      // editor's own payload always carries `extra`, but this function is
+      // exported and its contract is stated in terms of the *view*, not in
+      // terms of the caller's payload shape.
+      view = makeView({ extra: [slot('mounted-base')] });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(() => reconfigureProCompartments(view!, { ghost: [slot('ghost')] })).not.toThrow();
+
+      expect(warn).not.toHaveBeenCalled();
+      // `extra` is reconfigured wholesale, so the late id is all that is left.
+      expect(view!.state.facet(tags)).toBe('ghost');
+      warn.mockRestore();
+    });
+
     it('warns and skips when even `extra` is unmounted, but still applies the rest', () => {
       view = makeView({ statement: [slot('statement-1')] });
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
