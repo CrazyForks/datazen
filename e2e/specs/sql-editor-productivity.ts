@@ -68,6 +68,198 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     }
   });
 
+  // ── 多光标 / 矩形选择的取状态辅助 ──────────────────────────────────
+  //
+  // 这些辅助集中放在这里，因为 SE-PROD-030/031/040 与文件其余部分共享同一套
+  // 约束（见下）。它们刻意返回 `false` 而非静默跳过：一次没落地的点击必须让
+  // 用例变红，而不是让它对着「什么都没发生」的状态通过。
+  //
+  // 为什么驱动真实的 mousedown/mousemove/mouseup：
+  // `EditorView.clickAddsSelectionRange` 由 `MouseSelection` 的**构造函数**从
+  // mousedown 读取：`handlers.mousedown`（@codemirror/view dist/index.js:4967）把
+  // 事件作为 startEvent 交给构造函数，构造函数内第 4753 行求值
+  // `this.multiple = view.state.facet(EditorState.allowMultipleSelections) &&
+  // addsSelectionRange(view, startEvent)`。派发一个 `click` 事件永远走不到这里——
+  // 那正是 SE-PROD-030 原先的写法，它断言的分支一次都没被执行过。
+  //
+  // 同一构造函数第 4750-4751 行把 mousemove / mouseup 注册到
+  // `view.contentDOM.ownerDocument` 上，所以本文件的手势辅助必须在 contentDOM 上
+  // 派发 mousedown、而在 document 上派发后两个事件。
+  //
+  // 为什么 detail: 1 是必须的：
+  // `getClickType` 在行为正常的浏览器上直接返回 `event.detail`。合成事件若留在
+  // 默认的 `detail: 0`，会被当成多击序列的起点，把手势变成按词/按行选择，
+  // 于是「加了光标」被误测成「选了词」。
+  //
+  // 为什么坐标从 .cm-line 自己的 rect 推导：
+  // 固定视口坐标（x: 50, y: 100）会随视口、缩放或字体变化而静默命中另一行，
+  // 那样用例仍然通过，却测的是别的东西。
+
+  //
+  // 注意：`browser.execute(fn, args)` 会把 fn 序列化后在页面里执行，因此它
+  // **不能**闭包捕获本文件的任何变量。后面三个辅助里重复的 Range 遍历代码是
+  // 这个限制的必然结果，不是重复劳动——把它们提到模块级反而会在页面里变成
+  // 未定义引用。
+
+  /**
+   * Sends a complete primary-button gesture: mousedown on the editor's
+   * `contentDOM`, then mousemove/mouseup on `document` — which is where
+   * `MouseSelection` registers the drag listeners.
+   *
+   * Returns false when a named line is not rendered or has no owning editor,
+   * so the caller can assert on it instead of testing a gesture that never landed.
+   */
+  const gesture = (
+    fromLineText: string,
+    fromChar: number,
+    toLineText: string | null,
+    toChar: number | null,
+    mods: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean },
+  ): Promise<boolean> =>
+    browser.execute(
+      (args: {
+        fromLineText: string;
+        fromChar: number;
+        toLineText: string | null;
+        toChar: number | null;
+        mods: Record<string, boolean>;
+      }): boolean => {
+        const lineFor = (text: string): HTMLElement | undefined =>
+          Array.from(document.querySelectorAll<HTMLElement>('.cm-line')).find(
+            (el) => text.length > 0 && (el.textContent || '').includes(text),
+          );
+        const fromLine = lineFor(args.fromLineText);
+        if (!fromLine) return false;
+        // A null target line means "release where we pressed" — that is a click.
+        const toLine = args.toLineText === null ? fromLine : lineFor(args.toLineText);
+        if (!toLine) return false;
+
+        const range = document.createRange();
+        const charRect = (line: HTMLElement, charIndex: number): DOMRect | null => {
+          let remaining = charIndex;
+          let out: DOMRect | null = null;
+          const visit = (node: Node): boolean => {
+            if (node.nodeType === Node.TEXT_NODE) {
+              const len = node.textContent?.length ?? 0;
+              if (remaining <= len) {
+                range.setStart(node, Math.max(0, Math.min(remaining, len)));
+                range.setEnd(node, Math.max(0, Math.min(remaining + 1, len)));
+                out = range.getBoundingClientRect();
+                return true;
+              }
+              remaining -= len;
+              return false;
+            }
+            for (let i = 0; i < node.childNodes.length; i += 1) {
+              if (visit(node.childNodes[i])) return true;
+            }
+            return false;
+          };
+          if (!visit(line)) return null;
+          return out;
+        };
+
+        const start = charRect(fromLine, args.fromChar);
+        if (!start) return false;
+        const end = args.toChar === null ? start : charRect(toLine, args.toChar);
+        if (!end) return false;
+
+        // Walk up to the editor that owns the start line so mousedown lands on
+        // its contentDOM, the element CodeMirror's mousedown handler reads.
+        type View = {
+          state: unknown;
+          dispatch(s: unknown): void;
+          focus(): void;
+          contentDOM: HTMLElement;
+        };
+        let contentDOM: HTMLElement | null = null;
+        let node: HTMLElement | null = fromLine;
+        while (node && !contentDOM) {
+          const host = node.closest<HTMLElement>('.cm-editor');
+          const view = (host as (HTMLElement & { cmView?: { view?: View } }) | null)?.cmView
+            ?.view;
+          if (view?.contentDOM) contentDOM = view.contentDOM;
+          node = node.parentElement;
+        }
+        if (!contentDOM) return false;
+
+        const at = (rect: DOMRect): MouseEventInit => ({
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          detail: 1,
+          clientX: rect.left + 1,
+          clientY: rect.top + rect.height / 2,
+          ...args.mods,
+        });
+        const startInit = at(start);
+        const endInit = at(end);
+        contentDOM.dispatchEvent(new MouseEvent('mousedown', { ...startInit, buttons: 1 }));
+        if (args.toChar !== null) {
+          document.dispatchEvent(new MouseEvent('mousemove', { ...endInit, buttons: 1 }));
+        }
+        document.dispatchEvent(new MouseEvent('mouseup', { ...endInit, buttons: 0 }));
+        return true;
+      },
+      {
+        fromLineText,
+        fromChar,
+        toLineText,
+        toChar,
+        mods: mods as Record<string, boolean>,
+      },
+    );
+
+  /**
+   * Reads the current multi-cursor state, plus the line number each range starts
+   * and ends on. `ranges` is `[]` when no editor is mounted at all, which the
+   * assertions treat as a failure rather than an empty success.
+   */
+  const readSelection = (): Promise<{
+    rangeCount: number;
+    ranges: { from: number; to: number; fromLine: number; toLine: number }[];
+    doc: string;
+    mounted: boolean;
+  }> =>
+    browser.execute((): {
+      rangeCount: number;
+      ranges: { from: number; to: number; fromLine: number; toLine: number }[];
+      doc: string;
+      mounted: boolean;
+    } => {
+      const empty = {
+        rangeCount: 0,
+        ranges: [],
+        doc: '',
+        mounted: false,
+      };
+      const view = (
+        Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'))
+          .map((el) => (el as HTMLElement & { cmView?: { view?: unknown } }).cmView?.view)
+          .find((v) => Boolean(v)) as
+          | {
+              state: {
+                doc: { toString(): string; lineAt(p: number): { number: number } };
+                selection: { ranges: readonly { from: number; to: number }[] };
+              };
+            }
+          | undefined
+      );
+      if (!view) return empty;
+      const { doc, selection } = view.state;
+      return {
+        rangeCount: selection.ranges.length,
+        ranges: selection.ranges.map((r) => ({
+          from: r.from,
+          to: r.to,
+          fromLine: doc.lineAt(r.from).number,
+          toLine: doc.lineAt(r.to).number,
+        })),
+        doc: doc.toString(),
+        mounted: true,
+      };
+    });
+
   // ── 粘贴为 IN (Mod+Shift+V) ────────────────────────────────────
 
   it('SE-PROD-001: Mod+Shift+V 应触发粘贴为 IN 子句', async () => {
@@ -474,42 +666,29 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     await setEditorContent('line one\nline two\nline three');
     await browser.pause(300);
 
-    // Click on first line
-    await browser.execute(() => {
-      const cmView = (document.querySelector('.cm-editor') as any)?.cmView?.view;
-      if (!cmView) return;
-      const pos = cmView.posAtCoords({ x: 50, y: 100 });
-      if (pos != null) {
-        cmView.dispatch({ selection: { anchor: pos, head: pos } });
-      }
-    });
+    // Put one cursor on line one, so the Alt+click below has something to add to.
+    const seeded = await gesture('line one', 0, null, null, {});
+    expect(seeded).toBe(true);
     await browser.pause(200);
+    const before = await readSelection();
+    expect(before.mounted).toBe(true);
+    expect(before.rangeCount).toBe(1);
 
-    // Alt+Click on second line to add cursor
-    await browser.execute(() => {
-      const cmView = (document.querySelector('.cm-editor') as any)?.cmView?.view;
-      if (!cmView) return;
-      const pos = cmView.posAtCoords({ x: 50, y: 120 });
-      if (pos != null) {
-        const event = new MouseEvent('click', {
-          bubbles: true,
-          cancelable: true,
-          clientX: 50,
-          clientY: 120,
-          altKey: true,
-        });
-        document.querySelector('.cm-editor')?.dispatchEvent(event);
-      }
-    });
+    // Alt+click on line two must ADD a second cursor.
+    const landed = await gesture('line two', 0, null, null, { altKey: true });
+    expect(landed).toBe(true);
     await browser.pause(300);
 
-    const selectionCount = await browser.execute(() => {
-      const cmView = (document.querySelector('.cm-editor') as any)?.cmView?.view;
-      if (!cmView) return 1;
-      return cmView.state.selection.ranges.length;
-    });
-    // Should have multiple cursors
-    expect(selectionCount).toBeGreaterThanOrEqual(1);
+    const after = await readSelection();
+    // Exactly two. This used to assert `toBeGreaterThanOrEqual(1)`, which the
+    // single cursor left behind by the never-dispatched mousedown satisfied.
+    expect(after.rangeCount).toBe(2);
+    // "Add" has to mean add: the original cursor survives, and neither range may
+    // have become a word or line selection. A non-empty range here means the
+    // gesture was read as a multi-click instead of an Alt+click.
+    const byLine = [...after.ranges].sort((a, b) => a.fromLine - b.fromLine);
+    expect(byLine.map((r) => r.fromLine)).toEqual([1, 2]);
+    expect(byLine.map((r) => r.from === r.to)).toEqual([true, true]);
 
     await captureJourneyStep('multi-cursor-alt-click');
   });
@@ -518,86 +697,65 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     await setEditorContent('aaa\naaa\naaa');
     await browser.pause(300);
 
-    // Use Mod+D to select all 'aaa' occurrences
-    await browser.execute(() => {
-      const cmView = (document.querySelector('.cm-editor') as any)?.cmView?.view;
-      if (!cmView) return;
-      const doc = cmView.state.doc.toString();
-      const idx = doc.indexOf('aaa');
-      if (idx >= 0) {
-        cmView.dispatch({ selection: { anchor: idx, head: idx + 3 } });
-      }
-    });
+    // Drag-select the first 'aaa', then pull in the other two with Mod+D.
+    // `Meta` is the modifier convention the rest of this suite already uses
+    // (SE-PROD-021, hotkeys.ts); WebdriverIO has no portable `Mod` key. All three
+    // lines are identical, so `gesture` deterministically resolves to the first.
+    const seeded = await gesture('aaa', 0, 'aaa', 3, {});
+    expect(seeded).toBe(true);
     await browser.pause(200);
-
-    // Add next occurrences with Mod+D
     await browser.keys(['Meta', 'D']);
     await browser.pause(200);
     await browser.keys(['Meta', 'D']);
     await browser.pause(200);
 
-    // Type replacement text
+    // Precondition: one cursor per line. Checked before typing, so a broken
+    // Mod+D is reported as a Mod+D failure rather than as a typing failure.
+    const cursors = await readSelection();
+    expect(cursors.rangeCount).toBe(3);
+
     await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content') as HTMLElement;
-      if (el) el.focus();
+      const el = document.querySelector<HTMLElement>('.cm-editor .cm-content');
+      el?.focus();
     });
     await browser.keys('bbb');
     await browser.pause(300);
 
-    const editorContent = await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content');
-      return el?.textContent || '';
-    });
-    // All occurrences should be replaced
-    const allReplaced = !editorContent.includes('aaa') && editorContent.includes('bbb');
-    expect(typeof allReplaced).toBe('boolean');
+    // The observable is the document, read from editor state rather than from
+    // `.cm-content` textContent: CodeMirror renders only the visible window, so
+    // the DOM text is not the document. This case used to assert
+    // `expect(typeof allReplaced).toBe('boolean')` over `!includes('aaa') &&
+    // includes('bbb')` — a `&&` of two booleans, so no input could ever fail it.
+    const after = await readSelection();
+    expect(after.doc).toBe('bbb\nbbb\nbbb');
   });
 
   // ── 矩形选择 ───────────────────────────────────────────────────
 
   it('SE-PROD-040: Alt+拖动应创建矩形选择', async () => {
-    await setEditorContent('column_a column_b column_c\nvalue_1  value_2  value_3');
+    await setEditorContent('col_a col_b col_c\nval_1 val_2 val_3');
     await browser.pause(300);
 
-    // Alt+drag to create rectangular selection
-    await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        if ((editors[i] as any)?.cmView?.view) {
-          cmView = (editors[i] as any).cmView.view;
-          break;
-        }
-      }
-      if (!cmView) return;
-      cmView.focus();
-      // Simulate rectangular selection via CM API
-      const pos1 = cmView.posAtCoords({ x: 20, y: 100 }) ?? 0;
-      const pos2 = cmView.posAtCoords({ x: 100, y: 120 }) ?? Math.min(10, cmView.state.doc.length);
-      cmView.dispatch({
-        selection: { anchor: pos1, head: pos2 },
-      });
-    });
+    // A real Alt+drag from the start of line 1 down to the same column on line 2.
+    // This case used to dispatch an ordinary `{anchor, head}` range and then
+    // assert `not.toBeNull()` on `state.selection`, which is never null — so the
+    // rectangular gesture was never performed and nothing could ever fail.
+    const landed = await gesture('col_a', 0, 'val_1', 3, { altKey: true });
+    expect(landed).toBe(true);
     await browser.pause(300);
 
-    const selection = await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        if ((editors[i] as any)?.cmView?.view) {
-          cmView = (editors[i] as any).cmView.view;
-          break;
-        }
-      }
-      if (!cmView) return null;
-      const sel = cmView.state.selection;
-      return {
-        rangeCount: sel.ranges.length,
-        mainFrom: sel.main.from,
-        mainTo: sel.main.to,
-      };
-    });
-    expect(selection).not.toBeNull();
+    const after = await readSelection();
+    const byLine = [...after.ranges].sort((a, b) => a.fromLine - b.fromLine);
+    // One range per line touched. A plain drag produces a single range spanning
+    // the newline, so this count alone already rules that out.
+    expect(after.rangeCount).toBe(2);
+    expect(byLine.map((r) => r.fromLine)).toEqual([1, 2]);
+    // The rectangular invariant proper: no range crosses a line break. This is
+    // the one property an ordinary cross-line selection cannot fake.
+    expect(byLine.map((r) => r.fromLine === r.toLine)).toEqual([true, true]);
+    // And the covered text is the same column on both rows. The fixture keeps
+    // the two rows the same width so this stays an exact slice.
+    expect(byLine.map((r) => after.doc.slice(r.from, r.to))).toEqual(['col', 'val']);
 
     await captureJourneyStep('rectangular-selection');
   });
