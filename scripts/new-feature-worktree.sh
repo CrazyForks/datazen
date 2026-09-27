@@ -143,7 +143,12 @@ skipped() { # <名称> <原因> <手动补命令> <不补的后果>
 # --------------------------------------------------------------------------
 mkdir -p "${MAIN}/.worktrees"
 
-if git -C "$MAIN" worktree list --porcelain | grep -qx "worktree ${WT}"; then
+if git -C "$MAIN" worktree list --porcelain | grep -Fqx "worktree ${WT}"; then
+  # -F 是必须的：${WT} 含 ${TRACK}（无字符白名单的用户输入），当**正则**解释会出错。
+  #   实测：模式 'worktree /a/b.c/d' 命中已登记的 'worktree /a/bXc/d'（假阳性）
+  #   实测：${WT} 含 '*' ⇒ 正则不命中该字面路径（假阴性）
+  #   实测：${WT} 含 '[' ⇒ grep 报错 exit 2 且 stderr 漏出 'brackets not balanced'
+  # 本处误判后果：对**不存在**的工作区报「已登记」并让用户去清理，脚本拒绝启动。
   die "worktree 已登记: ${WT}
 若是上次失败的半成品，先清理：git -C ${MAIN} worktree remove --force ${WT}"
 fi
@@ -187,7 +192,9 @@ rollback() {
   fi
 
   if [ "$CREATED_WT" -eq 1 ]; then
-    if git -C "$MAIN" worktree list --porcelain | grep -qx "worktree ${WT}"; then
+    # -F 必须，理由同 L146。本处误判后果是四处里**最重**的：假阴性会落到下面的
+    # `elif [ -d ]` ⇒ 对一个**仍登记着**的 worktree 执行 `rm -rf`。
+    if git -C "$MAIN" worktree list --porcelain | grep -Fqx "worktree ${WT}"; then
       dirty=$(git -C "$WT" status --porcelain 2>/dev/null || true)
       if [ -n "$dirty" ]; then
         WT_KEPT_DIRTY=1
@@ -228,7 +235,10 @@ rollback() {
       #     （目录残留但登记没了），此时 branch -D 反而**能**成功。
       # 成因 B 下若照基线继续跑 branch -D，分支会被正常删掉（基线行为）—— 既然
       # 删得掉就没什么要解释的；只有删不掉时，下面才按**实测到的**登记状态措辞。
-      if git -C "$MAIN" worktree list --porcelain | grep -qx "worktree ${WT}"; then
+      # -F 必须，理由同 L146。本处误判后果：假阳性会把诱饵当成本体，**直接对用户
+      # 断言一句为假的事实**（并抑制下面「原因未确定」的兜底）；假阴性则退到兜底，
+      # 诚实但不够具体。
+      if git -C "$MAIN" worktree list --porcelain | grep -Fqx "worktree ${WT}"; then
         printf '⚠ 分支 %s **未删除**：worktree %s 仍在 git worktree 登记中。\n' "$BRANCH" "$WT" >&2
         printf '  请按上面「手动清理命令」的两条**按序**执行。\n' >&2
       else
@@ -284,7 +294,10 @@ fi
 CREATED_WT=1
 
 # 落地自检：必须真的登记在 worktree list 里，且分支正确
-grep -qx "worktree ${WT}" < <(git -C "$MAIN" worktree list --porcelain) \
+# -F 必须，理由同 L146。本处误判后果：假阴性 ⇒ 对刚建好的 worktree 报
+# 「未登记进 git worktree list（半成品）」并触发回滚（而回滚那处同样会误判，
+# 见 L190 的说明）。
+grep -Fqx "worktree ${WT}" < <(git -C "$MAIN" worktree list --porcelain) \
   || critical_fail "worktree 未登记进 git worktree list（半成品）"
 _actual_branch=$(git -C "$WT" branch --show-current 2>/dev/null || true)
 [ "$_actual_branch" = "$BRANCH" ] \
@@ -355,7 +368,10 @@ fi
 count_pro_manifest_tests() {
   local f="${WT}/packages/extension-points/src/__tests__/security.test.ts" n
   [ -f "$f" ] || { printf '0'; return 0; }
-  grep -q 'pro-extensions/sql-editor-pro/manifest.json' "$f" || { printf '0'; return 0; }
+  # 模式是**字面常量**（无变量插值），但意图明显是子串字面匹配 ⇒ 同样加 -F，
+  # 免得 3 个 '.' 变成通配符。此处误判后果仅为**计数**失真（报「0 条」），
+  # 方向保守、不涉及数据安全，优先级低于上面四处。
+  grep -Fq 'pro-extensions/sql-editor-pro/manifest.json' "$f" || { printf '0'; return 0; }
   n=$(awk '
     /describe\(.*EXTENSION_POINTS_VERSION/ { inblk = 1 }
     inblk && /^  it\(/ { if (buf ~ /readProManifest/) c++; buf = $0 "\n"; next }
