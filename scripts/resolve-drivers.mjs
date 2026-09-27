@@ -71,6 +71,36 @@ export function parseVariant(argv = process.argv.slice(2), env = process.env) {
   return normalizeVariant(env[VARIANT_ENV]);
 }
 
+/**
+ * Write a generated file only when its content actually changed.
+ *
+ * `driver_init.rs` is a real source file of the `datazen` crate, and Cargo
+ * fingerprints crate sources by mtime — so rewriting a byte-identical
+ * `driver_init.rs` on every build invalidates the host lib and forces a full
+ * recompile (~5m for `--drivers=all`) that produces the same rlib. Skipping
+ * the no-op write keeps repeat builds warm. Content comparison still writes
+ * whenever the output genuinely differs, so self-healing stale files is
+ * unaffected.
+ *
+ * @returns {boolean} true when the file was actually written.
+ */
+export function writeIfChanged(absPath, content) {
+  mkdirSync(dirname(absPath), { recursive: true });
+  if (existsSync(absPath) && readFileSync(absPath, 'utf-8') === content) {
+    return false;
+  }
+  writeFileSync(absPath, content);
+  return true;
+}
+
+/** Log whether a generated file was rewritten or was already up to date. */
+function reportWrite(absPath, written, note = '') {
+  console.log(
+    `[resolve-drivers] ${written ? 'wrote' : 'unchanged'} ${absPath}${note ? ` ${note}` : ''}`,
+  );
+  return written;
+}
+
 function loadRegistry() {
   const raw = readFileSync(resolve(ROOT, 'drivers-registry.json'), 'utf-8');
   const registry = JSON.parse(raw);
@@ -863,9 +893,7 @@ export function hasDriverCommand(driverId: string, command: string): boolean {
 `;
 
   const outPath = workPath('src/extensions/generated.ts');
-  mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, content);
-  console.log(`[resolve-drivers] wrote ${outPath} (variant: ${variant})`);
+  reportWrite(outPath, writeIfChanged(outPath, content), `(variant: ${variant})`);
 }
 
 /**
@@ -965,7 +993,7 @@ function replaceMarkerSection(relPath, tag, newContent) {
     return;
   }
   const body = newContent ? `${begin}\n${newContent}\n${end}` : `${begin}\n${end}`;
-  writeFileSync(workPath(relPath), text.replace(re, body));
+  writeIfChanged(workPath(relPath), text.replace(re, body));
 }
 
 function escapeRegex(s) {
@@ -1086,9 +1114,7 @@ ${body}
 `;
 
   const outPath = workPath('src-tauri/src/driver_init.rs');
-  mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, content);
-  console.log(`[resolve-drivers] wrote ${outPath}`);
+  reportWrite(outPath, writeIfChanged(outPath, content));
 }
 
 /**
@@ -1157,7 +1183,7 @@ function injectCargoToml(drivers, registry) {
       : 'default = []',
   );
 
-  writeFileSync(workPath(relPath), content);
+  writeIfChanged(workPath(relPath), content);
   console.log(`[resolve-drivers] injected ${depLines.length} deps + ${featureLines.length} features into Cargo.toml`);
 }
 
@@ -1221,7 +1247,10 @@ function syncDriverCapabilities(drivers, registry) {
     `}`,
     ``,
   ].join('\n');
-  writeFileSync(workPath('src-tauri/capabilities/default.json'), content);
+  // tauri-build re-runs on changes under src-tauri/capabilities, so avoid
+  // touching the file when the merged permissions are identical.
+  const capPath = workPath('src-tauri/capabilities/default.json');
+  writeIfChanged(capPath, content);
   console.log(
     `[resolve-drivers] generated capabilities (host + drivers): [${added.join(', ') || 'no drivers'}]`,
   );
@@ -1265,7 +1294,7 @@ function injectRootCargoPatches(drivers, registry) {
 
   content = replaceMarkerBlock(content, 'driver-patches', patchLines);
 
-  writeFileSync(workPath(relPath), content);
+  writeIfChanged(workPath(relPath), content);
   if (patchLines.length > 0) {
     console.log(`[resolve-drivers] injected.*drivers.length} patch(es) into root Cargo.toml`);
   }
@@ -1362,8 +1391,7 @@ function main() {
     };
 
     const outPath = resolve(ROOT, '.driver-features.json');
-    writeFileSync(outPath, JSON.stringify(output, null, 2) + '\n');
-    console.log(`[resolve-drivers] wrote ${outPath}`);
+    reportWrite(outPath, writeIfChanged(outPath, JSON.stringify(output, null, 2) + '\n'));
 
     generateFrontendRegistry(resolvedDrivers, variant);
     generateRustDriverInit(resolvedDrivers, registry);
