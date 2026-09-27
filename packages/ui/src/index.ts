@@ -1,4 +1,5 @@
 export { cn } from './cn';
+export { tid, type TidAttrs } from './tid';
 export { Button, type ButtonProps } from './Button';
 export { Input, type InputProps } from './Input';
 export {
@@ -27,6 +28,12 @@ export {
   type TemporalPickerKind,
 } from './TemporalValueInput';
 export { PathInput, type PathInputProps } from './PathInput';
+export { ToolbarShell, type ToolbarShellProps } from './ToolbarShell';
+export { ToolbarButton, type ToolbarButtonProps } from './ToolbarButton';
+export { ConfirmDialog, type ConfirmDialogProps } from './ConfirmDialog';
+export { CopyableError, type CopyableErrorProps } from './CopyableError';
+export { ResultMessageDialog, type ResultMessageDialogProps } from './ResultMessageDialog';
+export { LimitationsDialog, type LimitationsDialogProps } from './LimitationsDialog';
 // The ONE i18n implementation shared by host, drivers and extensions.
 export {
   setLocale,
