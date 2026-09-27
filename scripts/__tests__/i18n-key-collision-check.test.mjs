@@ -170,6 +170,76 @@ describe('i18n-key-collision-check', () => {
     });
   });
 
+  describe('driver x driver axis — one owner per key across every namespace', () => {
+    // `registerTranslations` is Object.assign into ONE flat registry
+    // (packages/ui/src/i18n.ts), so two drivers agreeing on a key is the same
+    // silent-overwrite hazard as host-and-driver. On this repo the axis is
+    // latent coverage: mongodb 15 keys x redis 417 keys intersect in 0.
+
+    it('reports a key two driver packs both define, with no host involved', () => {
+      writeHostLocale('en', { 'common.ok': 'OK' });
+      writeDriverPack('alpha', { 'shared.toolbar.save': 'Save (alpha)' });
+      writeDriverPack('beta', { 'shared.toolbar.save': 'Save (beta)' });
+
+      const { collisions, packCollisions } = scan();
+      // The host axis is clean — this is purely driver against driver.
+      expect(collisions).toEqual([]);
+      expect(packCollisions).toHaveLength(1);
+      expect(packCollisions[0].key).toBe('shared.toolbar.save');
+      expect(packCollisions[0].drivers).toEqual(['alpha', 'beta']);
+    });
+
+    it('fails the gate with exit 1 and names both drivers', () => {
+      writeHostLocale('en', { 'common.ok': 'OK' });
+      writeDriverPack('alpha', { 'shared.toolbar.save': 'Save (alpha)' });
+      writeDriverPack('beta', { 'shared.toolbar.save': 'Save (beta)' });
+
+      const { code, err } = runGuard();
+      expect(code).toBe(1);
+      expect(err).toContain("'shared.toolbar.save' is defined by BOTH the alpha and the beta driver");
+      expect(err).toContain('more than one driver pack');
+    });
+
+    it('reports nothing when two drivers keep separate namespaces', () => {
+      writeHostLocale('en', { 'common.ok': 'OK' });
+      writeDriverPack('alpha', { 'alpha.toolbar.save': 'Save' });
+      writeDriverPack('beta', { 'beta.toolbar.save': 'Save' });
+
+      const { packCollisions } = scan();
+      expect(packCollisions).toEqual([]);
+      expect(runGuard().code).toBe(0);
+    });
+
+    it('compares every unordered pair, not just the first two packs', () => {
+      writeHostLocale('en', { 'common.ok': 'OK' });
+      writeDriverPack('a', { 'k.one': '1' });
+      writeDriverPack('b', { 'k.two': '2' });
+      writeDriverPack('c', { 'k.one': '1', 'k.two': '2' });
+
+      const { packCollisions } = scan();
+      // 3 pairs exist (a-b, a-c, b-c); only c collides, with each of the others.
+      expect(packCollisions.map((c) => `${c.key}@${c.drivers.join('-')}`).sort()).toEqual([
+        'k.one@a-c',
+        'k.two@b-c',
+      ]);
+    });
+
+    it('keeps the host axis reporting the same key independently', () => {
+      // A key three ways must be reported on both axes, not merged into one row.
+      writeHostLocale('en', { 'triple.owned': 'Host' });
+      writeDriverPack('alpha', { 'triple.owned': 'Alpha' });
+      writeDriverPack('beta', { 'triple.owned': 'Beta' });
+
+      const { collisions, packCollisions } = scan();
+      expect(collisions.map((c) => `${c.key}@${c.driver}`).sort()).toEqual([
+        'triple.owned@alpha',
+        'triple.owned@beta',
+      ]);
+      expect(packCollisions).toHaveLength(1);
+      expect(runGuard().code).toBe(1);
+    });
+  });
+
   describe('separates namespaces cleanly', () => {
     it('reports nothing when the same words live under different namespaces', () => {
       // Exactly the post-fix shape: host `docView.insert` and driver
@@ -213,6 +283,49 @@ describe('i18n-key-collision-check', () => {
       const { code, err } = runGuard();
       expect(code).toBe(2);
       expect(err).toContain('nothing to compare');
+    });
+
+    it('exits 2 when a discovered pack contributes zero keys', () => {
+      // The half-empty scan. findDriverLocalePacks only requires locales/en.ts to
+      // exist, so a pack holding `{}` is discovered and then never compared
+      // against anything. Before this check the guard exited 0 and printed "ok"
+      // with this pack listed as 0 — reporting success on a comparison it never
+      // made. Reproduced before the fix, with exactly this fixture.
+      writeHostLocale('en', { 'common.ok': 'OK' });
+      writeDriverPack('alpha', { 'alpha.a': 'A' });
+      writeDriverPack('ghost', {});
+
+      const { packs } = scan();
+      expect(packs).toHaveLength(2);
+      expect(packs.find((p) => p.driver === 'ghost')?.keyCount).toBe(0);
+
+      const { code, err } = runGuard();
+      expect(code).toBe(2);
+      expect(err).toContain('half-empty scan');
+      expect(err).toContain('ghost');
+      // It must NOT claim the repo is clean on the way out.
+      expect(err).not.toContain('0 key(s) owned by both');
+    });
+
+    it('names every zero-key pack, not only the first', () => {
+      writeHostLocale('en', { 'common.ok': 'OK' });
+      writeDriverPack('alpha', { 'alpha.a': 'A' });
+      writeDriverPack('ghost1', {});
+      writeDriverPack('ghost2', {});
+
+      const { code, err } = runGuard();
+      expect(code).toBe(2);
+      expect(err).toContain('2 driver pack(s) contributed 0');
+      expect(err).toContain('ghost1, ghost2');
+    });
+
+    it('still exits 0 when every pack contributes keys', () => {
+      // The half-empty check must not fire on a legitimate small pack.
+      writeHostLocale('en', { 'common.ok': 'OK' });
+      writeDriverPack('alpha', { 'alpha.a': 'A' });
+      writeDriverPack('beta', { 'beta.b': 'B' });
+
+      expect(runGuard().code).toBe(0);
     });
 
     it('prints the scanned input counts, so "0 collisions" is never bare', () => {
