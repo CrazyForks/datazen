@@ -16,17 +16,15 @@ concurrency:
   cancel-in-progress: false
 
 # ── Shared release build settings ──
-# `ci-release` is a thin-LTO profile (see [profile.ci-release] in Cargo.toml).
-# Every cargo invocation in this workflow — the driver warmup included — must
-# name the same profile, or its artifacts land in a different target dir and
-# the variant jobs recompile the driver crates from scratch.
+# Builds run on the default `release` Cargo profile: tauri-cli 2.10.1 exposes no
+# `--profile` flag (only `--debug` vs release), so a custom Cargo profile cannot
+# be selected through `tauri build` at all.
 #
 # DATAZEN_CI_TYPECHECK_ONCE=1 drops `tsc --noEmit` from the per-variant frontend
 # build: warm-driver-deps typechecks the union driver set once, which is a
 # strict superset of what each variant would have checked.
 env:
   DATAZEN_KEYRING: file
-  DATAZEN_BUILD_PROFILE: ci-release
   DATAZEN_CI_TYPECHECK_ONCE: '1'
 
 jobs:
@@ -564,7 +562,7 @@ jobs:
           # Note: with-driver-inject.mjs restores staging dirs after the child command,
           # so src-tauri/resources/builtin-ep/ may already be cleared here.
           # We verify the actual bundled output instead.
-          BUNDLE_DIR="target/${{ matrix.target }}/${{ env.DATAZEN_BUILD_PROFILE }}/bundle"
+          BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
           FAIL=0
 
           # ── macOS: check .app bundle ──
@@ -642,7 +640,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $releaseDir = Join-Path "target/${{ matrix.target }}" $env:DATAZEN_BUILD_PROFILE
+          $releaseDir = Join-Path "target/${{ matrix.target }}" "release"
           $executable = Join-Path $releaseDir "datazen.exe"
           if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
             $executable = Join-Path $releaseDir "DataZen.exe"
@@ -714,7 +712,7 @@ jobs:
       - name: Rename artifacts with canonical names
         shell: bash
         run: |
-          BUNDLE_DIR="target/${{ matrix.target }}/${{ env.DATAZEN_BUILD_PROFILE }}/bundle"
+          BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
           VERSION=$(node -p "require('./package.json').version")
           OS_LABEL="${{ matrix.os_label }}"
           VARIANT="${{ matrix.variant_suffix }}"
