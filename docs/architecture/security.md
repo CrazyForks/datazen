@@ -14,6 +14,7 @@
 | **连接泄露检测** | 守卫模式 + 超时警告 | `ConnectionGuard` |
 | **内存限制** | 结果集大小检查 | `QueryResultLimiter` |
 | **SQL 注入防护** | 参数化查询 | `query_with_params` |
+| **TLS 加密后端** | 进程级 rustls `CryptoProvider` 显式安装（`aws-lc-rs`） | `src-tauri/src/tls.rs` |
 | **CSP** | Content Security Policy | `tauri.conf.json` |
 | **路径遍历防护** | 路径校验 | `commands/file.rs` |
 | **SQL 安全（Safe Mode / 只读）** | 启发式语句分类 + 连接级拦截 | `sql_guard.rs` |
@@ -234,3 +235,18 @@ Safe Mode 开启时，Schema 树会隐藏 Truncate/Drop 等高危菜单项；关
 ### 5.4 用户预期
 
 Safe Mode 与只读连接旨在降低误操作风险，**不能**替代数据库侧权限控制、审计或变更审批。生产环境应同时配置最小权限账号与外部治理流程。
+
+## 6. 传输层与 rustls 加密后端
+
+DataZen 的出站 TLS 统一走 `rustls 0.23`。该 crate 的 `CryptoProvider` 是**进程级单例**，只能由自身 Cargo feature 推断，而本项目的依赖图同时启用了两个 feature（`cargo tree -p datazen --edges normal,build -e features -i rustls@0.23.43`）：
+
+| feature | 来源 |
+|---------|------|
+| `aws-lc-rs` | `reqwest`（feature `rustls`）、`tokio-rustls`（默认 feature） |
+| `ring` | `tauri-plugin-updater`（feature `rustls-tls`）；启用 `redis` / `mongodb` / `sqlx` 等驱动时还会增加请求方 |
+
+两个 feature 同时存在时，rustls 拒绝猜测：凡是**未显式指定 provider** 的 `ClientConfig::builder()` 都会 panic。因此 `src-tauri/src/tls.rs::install_default_crypto_provider()` 在 `main()` 的第一行显式安装 `aws-lc-rs`（rustls 0.23 自身的首选实现，也与 `reqwest` 显式 pin 的 provider 一致），并由各 TLS 构造点重复调用以覆盖不经 `main()` 的库/测试嵌入方。
+
+`install_default()` 由 rustls 自身的 compare-and-swap 保证不会重复安装；DataZen 用 `OnceLock` 保证全进程只发起一次安装，**先到先得的竞态不会 panic**。需要注意的是 `tauri-plugin-updater` 会在没有默认 provider 时安装 `ring`，与本模块构成竞争——所以「安装得足够早」（`main()` 首行，早于 Tauri builder 初始化插件）是该修复成立的前提，而不仅仅是「幂等」。
+
+依赖图中显式指定 provider 的组件（`reqwest`、`sqlx`、`mongodb`、`rustls-platform-verifier`）不受该选择影响。
