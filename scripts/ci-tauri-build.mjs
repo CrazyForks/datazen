@@ -18,8 +18,9 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { createRequire } from 'module';
 import { tmpdir } from 'os';
-import { resolve, dirname, join } from 'path';
+import { resolve, dirname, join, basename } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { stagingMarkerPath } from './pack-ep.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -64,12 +65,27 @@ export function builtinEpStagingDir(root = ROOT) {
  * exists *before* the ~10 min Tauri build starts. Returns the list of missing
  * relative paths (empty = ready). Emits a `::notice::` line per missing file
  * so failures are visible in check-run annotations without admin log access.
+ *
+ * Presence of the three required files is not sufficient on its own: a pack
+ * that failed before its final staging step leaves all three in place, holding
+ * the *previous* build's bytes and signature. The sibling `.incomplete` marker
+ * is what distinguishes that from a tree this build produced, so a marked tree
+ * is reported as not ready rather than shipped.
  */
 export function checkProStagingReady({ root = ROOT, log = console.log } = {}) {
   const staging = builtinEpStagingDir(root);
   const missing = REQUIRED_PRO_STAGED_PATHS.filter(
     (rel) => !existsSync(join(staging, rel)),
   );
+  const marker = stagingMarkerPath(staging);
+  if (existsSync(marker)) {
+    missing.push(basename(marker));
+    log(
+      `::error::[pro-staging] ${marker} exists — the last pack-ep run over ` +
+        `${staging} failed, so the tree there is stale and must not be shipped. ` +
+        `Re-run 'node scripts/resolve-pro.mjs --edition=pro'.`,
+    );
+  }
   if (missing.length > 0) {
     log(
       `::notice::[pro-staging] missing staged files under ${staging}: ${missing.join(', ')}`,

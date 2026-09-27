@@ -37,7 +37,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'fs';
-import { dirname, join, relative, resolve } from 'path';
+import { basename, dirname, join, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { zipSync } from 'fflate';
 import { signEpPackage } from './sign-ep.mjs';
@@ -57,6 +57,52 @@ export const REQUIRED_PACKAGE_PATHS = [
 
 /** Optional locale sources copied into locales/ when present. */
 export const LOCALE_SOURCE_DIR = 'src/locales';
+
+/**
+ * Sibling marker recording that a staging run did NOT finish.
+ *
+ * A staged tree is only trustworthy as a whole: `manifest.json` +
+ * `dist/index.esm.js` + `signature.sig` are one signed unit, and the signature
+ * covers exactly those bytes. `packEp` rewrites `builtin-ep/<ext>` as its very
+ * last step, so a run that dies earlier — vite build, or the artifact-level
+ * host-key gate — leaves the *previous* tree in place, still complete and still
+ * signed. Nothing about it says "this does not match the source you just
+ * built". `resolve-pro`'s "already staged" short-circuit then reuses it and
+ * exits 0, which is how a failed build turns into a green run.
+ *
+ * The marker makes that state explicit. It is written *before* the build starts
+ * and removed only after the tree has been staged, so a tree is trusted exactly
+ * when the last staging run over it finished. A crash or a kill leaves the
+ * marker behind and the tree is ignored, which is the same answer as a clean
+ * failure — rebuild, never "verify with yesterday's bytes".
+ *
+ * It is a sibling of the tree (not a file inside it) because `stagePackageTree`
+ * `rmSync`s its target on entry and would take an in-tree marker with it, and
+ * because CI ships the tree alone as an artifact: a variant job that downloads
+ * `pro-extension` into `builtin-ep/` sees no marker, and the "build once, share
+ * with every variant" short-circuit is preserved exactly.
+ */
+export function stagingMarkerPath(stageDir) {
+  const target = resolve(stageDir);
+  return join(dirname(target), `${basename(target)}.incomplete`);
+}
+
+export function markStagingIncomplete(stageDir, reason) {
+  const marker = stagingMarkerPath(stageDir);
+  mkdirSync(dirname(marker), { recursive: true });
+  writeFileSync(marker, `${reason}\n`, 'utf-8');
+  return marker;
+}
+
+export function clearStagingIncomplete(stageDir) {
+  rmSync(stagingMarkerPath(stageDir), { force: true });
+}
+
+/** Whether the last staging run over `stageDir` finished. */
+export function stagedTreeComplete(stageDir) {
+  return !existsSync(stagingMarkerPath(stageDir));
+}
+
 
 /**
  * Host shared-singleton table consumed by staged EP bundles at runtime
@@ -679,6 +725,59 @@ export function packEp(opts = {}) {
   const skipBuild = opts.skipBuild ?? parsed.skipBuild;
   const log = opts.log ?? console.log.bind(console);
 
+  // Only a run that is going to rewrite the staged tree may invalidate it: a
+  // dzx-only pack never touches `stageDir` and must leave the CI-shared tree
+  // exactly as usable as it found it.
+  const stagesTree = mode === 'stage' || mode === 'both';
+  if (stagesTree) {
+    markStagingIncomplete(stageDir, `pack-ep started at ${new Date().toISOString()} (${extension})`);
+  }
+
+  try {
+    return packEpInner({
+      opts,
+      extension,
+      extensionDir,
+      mode,
+      outDir,
+      stageDir,
+      skipBuild,
+      log,
+      stagesTree,
+    });
+  } catch (err) {
+    if (stagesTree) {
+      // Left in place on purpose: the tree under `stageDir` still carries the
+      // PREVIOUS build's bytes and signature, and must not be reusable as if it
+      // were this build's. (The work dir under `artifacts/` is deliberately
+      // kept too — it is the on-disk evidence of what this run produced.)
+      markStagingIncomplete(
+        stageDir,
+        `pack-ep FAILED for ${extension} at ${new Date().toISOString()}: ${err.message}`,
+      );
+      log(
+        `[pack-ep] staging at ${stageDir} marked incomplete after a failed run; ` +
+          `resolve-pro will not reuse it. (markers: ${stagingMarkerPath(stageDir)})`,
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * @param {{
+ *   opts: Record<string, unknown>,
+ *   extension: string,
+ *   extensionDir: string,
+ *   mode: string,
+ *   outDir: string,
+ *   stageDir: string,
+ *   skipBuild: boolean,
+ *   log: (...args: unknown[]) => void,
+ *   stagesTree: boolean,
+ * }} ctx
+ */
+function packEpInner({ opts, extension, extensionDir, mode, outDir, stageDir, skipBuild, log, stagesTree }) {
   let effectiveExtensionDir = extensionDir;
   if (!existsSync(effectiveExtensionDir)) {
     if (extension === 'sql-editor-pro' && existsSync(DEFAULT_PRO_DEST)) {
@@ -732,6 +831,10 @@ export function packEp(opts = {}) {
   }
 
   rmSync(workDir, { recursive: true, force: true });
+  if (stagesTree) {
+    // Only now is the tree a faithful, signed image of this build.
+    clearStagingIncomplete(stageDir);
+  }
   return result;
 }
 
