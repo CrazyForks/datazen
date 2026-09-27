@@ -89,6 +89,34 @@ title: 多目标协调计划（hub 静态段落来源）
   **复验方法本身踩了两个坑，须写进判据**：① 注入若只写 `import` 不引用会被 tree-shaking 吃掉，
   产物里根本没这个键，闸门自然放行——**必须注入即引用**；
   ② `resolve-pro` 在 EP **已暂存**时会跳过构建，此时测的是旧产物——**复验前必须清暂存目录**。
+- **⚠️【方法论·已三次】探针键绝不能与被测修复共用同一份被修改的数据**。本项目在 BUG-002
+  复验中连续栽了**三个方向**的错，根因同一：
+  ① **假绿**：注入只写 `import` 不引用 ⇒ 被 tree-shaking 吃掉，产物里根本没这个键，闸门自然放行；
+  ② **假绿**：`resolve-pro` 在 EP「已暂存」时**跳过构建**，测的是旧产物（须先
+  `rm -rf src-tauri/resources/builtin-ep/sql-editor-pro`）；
+  ③ **假阴性**（Track B Tester 独立发现，我原报判据作废）：复验探针用了 `@codemirror/commands`，
+  而该键**已被 commit `5631f2bc8` 提升进白名单** ⇒ 照抄我的命令会看到「不抛错」，
+  从而**错误判定修复无效**。改用修复前后**都非法**的键（`@codemirror/search` / `@codemirror/merge`）后
+  9 种形态全拦、且对照组仍能签名。
+  ⇒ **判据：探针必须选在修复前后都非法的键；且必须有「修复前红、修复后绿」双向证据。**
+  第三例由 Track B Tester 以变异测试交叉确认：A 恰好 5 红（`createDzxArchive` 那条仍绿 ⇒ 两个调用点
+  **独立**承重）、B 恰好 1 红、C 恰好 2 红**且含真实产物端到端那条**。
+- **⚠️【中·闸门的对称盲区】共享模块「双副本」校验缺失**。产物级不变量只校验「产物里出现的每个
+  `__DATAZEN_HOST__` 键都被允许」，**不**校验「某共享模块是否被**一致地**外部化**。若产物同时含
+  `__DATAZEN_HOST__['@codemirror/language']`（宿主单例）与一份**自带副本**，闸门是**绿的**，
+  但 CM6 的 `StateField`/`ViewPlugin`/`Facet`/`RangeSet` 均为 **class 身份** ⇒ 跨 realm
+  `instanceof` 失败、`instance.of()` 误判、`Facet` provider 不被识别 ⇒ **静默行为异常，不抛错**。
+  现状无实际风险（Pro 对该两包 0 导入），但 **Track E 一导入即变活风险**，已就此警告在途 Coder。
+  缺的正是**产物级双副本断言**；现有 `sql-editor-pro peerDependencies stay inside the host shared set`
+  校验的是**声明**（`package.json` peerDeps）**而非产物**，不能充当该证据。已排独立小轨。
+- **【出处澄清】宿主表 9→11 来自 `5631f2bc8`，不是 BUG-002 修复**。`85594adb4` 只动 3 个文件
+  （`pack-ep.mjs`、`pack-ep.test.ts`、规格文档），**未碰 `src/main.tsx`**。`5631f2bc8`
+  `feat(ep): 补齐 @codemirror/language 与 @codemirror/commands 共享模块` 才是出处
+  （`src/main.tsx` +12），**有意预授权**给 Track E 折叠（`@codemirror/language`）与 Track D 多光标
+  （`@codemirror/commands`）。**Pro 侧并非「无消费者」**：Pro `package.json` 的 `dependencies` 为空、
+  6 个 `@codemirror/*` 全在 `peerDependencies` ⇒ **已声明、待导入**。
+  ⚠️ 我此前报「宿主表 11 键恒等」时**未点名该 commit**，导致 Track B Tester 合理地倒推为
+  「安全修复顺带扩了表」——**表述缺出处是我的责任**，已订正。
 - **✅【高】打包白名单「预改写」绕过 —— 三个独立来源收敛到同一处，已修复并合流**。
   **本轮最重要的结果：三名互不相关的 Tester/编码者各自独立发现了同一个缺陷。**
   ① Track B Tester 的 `ep-hooks-settings-BUG-001`（高）：Pro vite 的 `hostGlobalsPlugin` 在
