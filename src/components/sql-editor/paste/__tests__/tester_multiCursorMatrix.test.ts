@@ -234,9 +234,14 @@ describe('[tester] 裁定 3 · copy-line 改键方案', () => {
     }
   });
 
-  it('提权只发生在必要处：Prec.high 块里只有 Shift-Alt-ArrowUp/Down 两条', () => {
+  it('提权只发生在必要处：Prec.high 块里只有 Shift-Alt-ArrowUp/Down 和 Escape 三条', () => {
     // 用户自定义快捷键（默认 execute=Mod-Enter / saveQuery=Mod-s）不得被多光标抢占。
     // 若 Prec 覆盖范围扩大到整个 keymap，下面的 Mod-Enter 就会失效。
+    //
+    // Escape 提权是为了压过 defaultKeymap 里先注册的 simplifySelection，
+    // 但 exitMultiCursor 在只有 ≤1 个 range 时返回 false，所以它不能吃掉
+    // 同一个 keymap 里别的 Escape 绑定——下面那一条就是回归守卫。
+    let escapeRan = false;
     const parent = document.createElement('div');
     document.body.appendChild(parent);
     const state = EditorState.create({
@@ -247,6 +252,13 @@ describe('[tester] 裁定 3 · copy-line 改键方案', () => {
           { key: 'Mod-Enter', run: () => true },
           { key: 'Mod-s', run: () => true },
           { key: 'Tab', run: () => true },
+          {
+            key: 'Escape',
+            run: () => {
+              escapeRan = true;
+              return true;
+            },
+          },
         ]),
         createMultipleSelectionsExtension(),
       ],
@@ -259,6 +271,9 @@ describe('[tester] 裁定 3 · copy-line 改键方案', () => {
       // 文档未变 ⇒ 没有任何多光标绑定误吞这些按键
       expect(view.state.doc.toString()).toBe(DOC);
       expect(view.state.selection.ranges).toHaveLength(1);
+      // 单光标态下 exitMultiCursor 让路，默认优先级的 Escape 仍能拿到按键。
+      press(view, { key: 'Escape', code: 'Escape' });
+      expect(escapeRan).toBe(true);
     } finally {
       destroy(view, parent);
     }
