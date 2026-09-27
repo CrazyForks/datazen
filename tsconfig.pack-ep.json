@@ -50,6 +50,17 @@
     "runtime. Adding a CI step is a separate decision, to be made on a measurement",
     "taken on the runner it would run on.",
     "",
+    "check-restore-block-guards.mjs is in the same category and the same",
+    "reason: nothing runs it either (grep -rn check-restore-block-guards .github/",
+    "package.json returns nothing). It type-checks here so its lines are not",
+    "unchecked; the property it verifies about the harness is NOT enforced by any",
+    "gate, and its header says so in the same terms. Note what this program can",
+    "and cannot do: because `files` is a whitelist with `include: []`, tsc cannot",
+    "force a future .mjs under scripts/ to be added here — a new script that is",
+    "never registered type-checks at 0 errors and stays invisible. That is a",
+    "property of the whitelist design, not something this file can fix without",
+    "giving up the tight scope that makes the gate meaningful.",
+    "",
     "No compiler option is relaxed here. checkJs is on; strict,",
     "noImplicitAny, noUnusedLocals, noUnusedParameters and skipLibCheck all",
     "inherit from tsconfig.json unchanged."
@@ -65,7 +76,8 @@
     "scripts/sign-ep.mjs",
     "scripts/pro-seam-gate.mjs",
     "scripts/run-pro-guards.mjs",
-    "scripts/mutation-check-pane-focus.mjs"
+    "scripts/mutation-check-pane-focus.mjs",
+    "scripts/check-restore-block-guards.mjs"
   ],
   "include": [],
   "references": []

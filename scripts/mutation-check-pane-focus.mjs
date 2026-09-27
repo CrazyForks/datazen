@@ -68,7 +68,11 @@
  * equality is exactly what the assertion proves). The single exception is at
  * `restoreTarget` below and is deliberately **not** a restore — read it before
  * "simplifying" the two arms into one. `<path>.mutation-backup` holds the startup
- * bytes and is removed only on a clean exit. No mutation is ever committed.
+ * bytes. It is deleted when the run finishes having put the store back, and it is
+ * deliberately left on disk in every other case — including a run that exits 0,
+ * because the deletion itself can fail on a read-only directory. So a backup
+ * still on disk after a run is the expected shape, not a surprise to chase.
+ * No mutation is ever committed.
  *
  * Exit codes — 0 is the only value that means "this measurement is trustworthy":
  *   0 clean · 1 uncovered · 2 baseline not green · 3 write-back verification
@@ -96,8 +100,14 @@
  *               backup being written while leaving every rewrite of the file
  *               itself working. This is the NO_SAFETY_NET refusal, and the only
  *               value that needs a directory: a read-only FILE cannot express it.
- *               Note the asymmetry the earlier two miss — a read-only directory
- *               is invisible to the run until the unlink at the very end.
+ *               A read-only directory is not expressible by the two values above
+ *               either, and pointing them at the directory does not make them
+ *               stricter — it deletes the fault. Measured, on a scratch dir:
+ *               dir 555 / file 644 lets an overwrite through and refuses only
+ *               create+unlink; file 444 / dir 755 refuses the overwrite. So the
+ *               file-scoped injectors work (their write fails, visibly, exit 6)
+ *               but can only ever reach faults that break writing the FILE, and
+ *               this one breaks nothing until the run is already over.
  *
  * `--testTimeout=30000` is passed deliberately: several tests here drive a
  * never-settling query stream, and a busy machine must not turn CPU contention
