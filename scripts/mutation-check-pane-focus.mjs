@@ -82,8 +82,21 @@
  * If several apply, the highest wins, and **every** condition found is printed.
  * 6 sits above the rest on purpose: a tree left holding an injected mutation
  * voids every number in the run, so it must not be summarised as "1 uncovered".
- * 7 is above 6 only as a tiebreak — they cannot co-occur, because 7 exits before
- * the first mutation and 6 needs a mutation to have happened.
+ * 7 is above 6 only as a tiebreak, and they cannot co-occur for two independent
+ * reasons. Mechanism: the NO_SAFETY_NET path calls process.exit, which ends the
+ * process there, so the Math.max fold at the bottom never runs and never sees a
+ * 7 — measured, with 6 already in the list the fold still does not execute, and
+ * neutering that one call makes it run and yield 6. So the 7 above 6 in the table
+ * is documentation, not something the fold is being asked to resolve. Ordering,
+ * independently: 7 exits before the first mutation and 6 requires that a
+ * mutation happened.
+ * One caveat on the mechanism half, measured and worth keeping: the exit code is
+ * not immutable after the call. A process.on('exit') listener still runs and can
+ * set process.exitCode over it (set 7 -> 99 that way). The fold is bypassed
+ * regardless; the number is only safe because nothing here registers such a
+ * listener — checked by preloading a wrapper over process.on onto a real
+ * PANE_MUTATION_FAULT=backup run, which reported none. Adding one would put 7
+ * under the same "cannot co-occur" claim without the mechanism to back it.
  *
  * `PANE_MUTATION_FAULT` is a debug-only fault injector (off by default), the
  * counterpart of `NEW_WT_FORCE_FAIL` in scripts/new-feature-worktree.sh. Each
@@ -319,8 +332,12 @@ const EXIT = {
   // does not hold an injection and there is nothing to go and check by hand —
   // reporting 6 here would overstate it. What 7 means is "this run produced no
   // measurement at all", the most complete absence of a result. It sits above 6
-  // only as a tiebreak: the two cannot co-occur, because 7 exits before the first
-  // mutation and 6 requires that a mutation happened.
+  // only as a tiebreak, and the tiebreak is never exercised: this path calls
+  // process.exit, so the fold below never runs and never sees a 7 (measured —
+  // with 6 already in the list the fold still does not execute, and neutering
+  // that one call makes it run and yield 6). The ordering is a second, separate
+  // reason: 7 exits before the first mutation, 6 needs one to have happened.
+  // Header at the top says why the exit code itself is still safe to report.
   NO_SAFETY_NET: 7,
 };
 /**
