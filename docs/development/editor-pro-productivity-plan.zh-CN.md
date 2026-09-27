@@ -172,7 +172,7 @@ Multi-cursor **不应做成 Pro 特性**。它是编辑器基础能力，散在�
 #### "落盘为文件"要不要跟？
 TablePlus 把历史/收藏存成真实 `.sql` 文件（所以有 Show in Finder）。DataZen 存 SQLite。
 - **跟**：可获得"外部可访问、可被其他工具消费"的高级感；代价是引入文件锁/清理/加密问题（当前 `history.sqlite` 是**明文**，SQL 与错误信息裸存——任何导出/同步功能都必须先处理这个已记录在案的风险）。
-- **不跟**：加一个"导出为 `.sql` / 在文件管理器中显示目录"的壳即可，成本极低，且不引入文件系统耦合。**建议先做壳，暂不做存储形态迁移。**
+- **不跟（✅ 已裁决，见 §6 裁决 4）**：**保持 SQLite 作为唯一存储形态**，只加一个"导出为 `.sql` / 在文件管理器中显示目录"的壳，成本极低且不引入文件系统耦合（文件锁、清理、与 `panelStore` 无持久化叠加的丢失面）。落地见 P3-4。
 
 ---
 
@@ -203,6 +203,65 @@ TablePlus 把历史/收藏存成真实 `.sql` 文件（所以有 Show in Finder�
 
 > 注意概念区分：内置 snippet（`BUILTIN_SQL_SNIPPETS`，7 条 `Object.freeze` 模板）≠ 用户 SQL 收藏 ≠ 执行历史。三者不要混模。
 > 但 `settings.sqlSnippets`（用户自建模板，落 `AppSettings.driverSettings` 加密通道）已证明"用户自撰 SQL 制品存 settings"是条可行先例。
+
+#### 文件夹 + 拖拽：功能详解与设计裁决
+> 2026-08-18 裁决：**做**，但锁死一层，且必须与 keyword 绑定同批交付。
+
+**它是什么。** 把收藏从一维列表升级成文件管理器式的两层组织：
+- 顶层是收藏文件（一条 SQL）
+- 可建**文件夹**把收藏归类
+- **拖拽**把文件拖进 / 拖出 / 跨文件夹移动
+- 右键 `New > File / Folder`（TablePlus 另有 `Add Folder to Favorites`）
+
+**为什么有辨识度。** TablePlus 的收藏体系建立在"收藏 = 磁盘上真实的 `.sql` 文件"之上，所以文件夹、拖拽、Show in Finder 是同一套心智模型的自然延伸，而非额外装饰。
+**我们已裁决保持 SQLite**（见 §6 裁决 4），因此文件夹在本方案里是**纯逻辑分组**，没有文件系统背书 —— 这一点直接决定了下面的设计取舍。
+
+**数据模型：同表自引用邻接表。** 现状（`history_db.rs:185-189`，v4 后 `config_id` 已改名 `connection_id`）：
+```sql
+CREATE TABLE favorite_queries (
+  id          TEXT PRIMARY KEY NOT NULL,
+  connection_id TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  sql         TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
+```
+schema v5 在同表追加：
+| 列 | 作用 |
+| --- | --- |
+| `kind TEXT NOT NULL DEFAULT 'file'` | `'file'` \| `'folder'` 判别列 |
+| `parent_id TEXT`（可空，自引用） | `NULL` = 未分类 |
+| `position INTEGER NOT NULL` | 同级手动排序 |
+| `updated_at TEXT` | 顺带补上（当前缺失） |
+
+用「同表 + kind 判别」而非两张表的理由：拖拽移动 = 改一个 `parent_id`，跨类型一致；读全树 = 一次查询；排序 = 一个 `position`。代价是查询时需 `WHERE kind='file'` —— 但这本来就要过滤（文件夹不是 SQL）。
+**不拆两张表**的额外好处：`get_favorite_queries` 的 **IPC 签名可保持不变**，只多返回 `kind`/`parent_id`/`position` 三个字段，由前端组装树 ⇒ 改动面显著收窄。
+
+**锁死一层的理由。** TablePlus 实际也只做一层（Folder 里只有 File，无子文件夹）。若支持无限层，拖拽需处理缩进、展开态、拖入子树、循环引用（拖到自身/拖到子孙），交互复杂度远超收益。**先用 20% 复杂度拿 80% 价值。** 第一版规则：`parent_id` 只能指向 `kind='folder'` 的行；不支持文件夹嵌套，不支持拖动文件夹本身。
+
+**Rust 侧命令增量**（全部并入 v5，一次做完）：
+- `add_favorite_folder(connection_id, title) -> id`
+- `update_favorite(id, { title?, sql?, parent_id? })` ← **一条命令同时解决"重命名"与"拖拽移动"**
+- `reorder_favorites(ordered_ids)`（或把 `position` 并入 `update_favorite`）
+- `delete_favorite(id)` **语义变更**：删文件夹 = 递归删，必须走二次确认（见下）
+- 顺带在 v5 做掉：`(connection_id, normalized sql)` 唯一索引、`database`/`schema` 补列
+
+**前端落地。**
+- `QuerySidebarSection.tsx:319-355` 收藏面板由扁平 `map` 改两段式：先渲顶层（`parent_id IS NULL`），文件夹渲染为可展开分组。展开集用组件内 `useState`，**第一版不落盘**。
+- **拖拽有现成先例可抄**：`schema-tree/schemaTreeDrag.ts`（102 行，**版本化拖拽载荷 + 自定义 MIME + 显式前向兼容约定**）、`NavigatorTreeRow.tsx`（733 行，树行交互）。约定：载荷走 `dataTransfer` 自定义 MIME（如 `application/datazen-favorite-item`），**绝不劫持 `text/plain`**（否则往编辑器里拖会乱插文本）；一切可点击/可拖目标带 `data-*`（AGENTS.md 硬性要求，E2E 不依赖几何坐标）。
+- 落点判定三区：行**上 25%** = 插到前面 / 行**中 50%** = 放入（仅当目标为文件夹）/ 行**下 25%** = 插到后面。阈值必须提为常量并有单测。
+- 右键菜单 `buildFavoriteSidebarContextMenuItems`（`querySidebarContextMenu.ts:70-80`，现为 4 项扁平数组）按 `kind` 分支出不同项集；面板头部加 `+` 入口（New > File / Folder）。
+
+**交互上必须提前定的 5 条规则**（这些是真正的成本所在，不能边写边定）：
+1. **删文件夹时里面的文件去哪？** TablePlus 是连内容一起删。必须二次确认并**显示受影响条数**（"该文件夹含 N 条收藏"）—— 因为 `panelStore` 无持久化、关 tab 即丢 SQL，**收藏往往���用户手上 SQL 的唯一副本**，误删不可逆。
+2. **拖出文件夹** = `parent_id = NULL`，需要一块可见的"未分类"落区。
+3. **同连接隔离**：`connection_id` 是所有权根，**文件夹跟随 `connection_id`**（与收藏同域）；"全连接"视图下按连接分组显示，否则语义混乱。
+4. **keyword 只挂在 file 上**，不引入文件夹级 keyword（否则会衍生出"输入某个词展开整个文件夹"另一套东西）。
+5. **搜索必须跨层级展平**：命中任意深度（忽略展开态），否则用户搜不到折叠起来的收藏。
+
+**成本与收益。** 收益上，这是 TablePlus 收藏区**唯一我们完全没有、且用户立刻能感知**的组织能力 —— 没有它，收藏就只是一个越来越长的列表。
+成本上，它**并非独立的一块**：搭在 P3-1 的 v5 迁移与 `update_favorite` 命令之上，而这两条本来就为"重命名 + 去重"必须做 ⇒ **边际成本远低于表面观感**。真正的成本在上面的 5 条边界规则。
+**排序：与 keyword 绑定同批交付** —— "怎么用"（keyword）与"怎么管"（文件夹）缺一个则价值减半，且两者共用同一次迁移与同一条 `update_favorite` 命令，拆两批等于迁移写两遍。
 
 ---
 
@@ -300,10 +359,12 @@ TablePlus 把历史/收藏存成真实 `.sql` 文件（所以有 Show in Finder�
 
 ### P3 — Query History / Favorite（宿主 Rust 迁移 + 前端动作面 + Pro 关键字）
 
-**P3-1 Rust schema v5**（`history_db.rs`，沿用既有"探针式、带数据保留"的迁移风格与 `migration_startpoint_tests` 回归骨架）：
-- `favorite_queries` 增加 `updated_at`；`database` / `schema`（使收藏能像 `openHistoryQuery` 一样还原执行上下文）。
-- 新增 `update_favorite_query(id, {title?, sql?})` 命令 ⇒ 顺带解决重命名与"重复保存产生重复行"。
-- `(connection_id, normalized sql)` 唯一性（`CREATE UNIQUE INDEX` + `ON CONFLICT DO UPDATE`）⇒ 收藏/加星幂等。
+**P3-1 Rust schema v5**（`history_db.rs`，沿用既有"探针式、带数据保留"的迁移风格与 `migration_startpoint_tests` 回归骨架）。**一次性做完文件夹所需的全部结构，拆两批等于迁移写两遍**：
+- `favorite_queries` 增加 `kind`（`'file'`\|`'folder'`）、`parent_id`（自引用）、`position`、`updated_at` —— 详见 §2.5「文件夹 + 拖拽」数据模型。**`get_favorite_queries` 的 IPC 签名保持不变**，只多返回三个字段，由前端组装树。
+- 增加 `database` / `schema`（使收藏能像 `openHistoryQuery` 一样还原执行上下文）。
+- 新增 `update_favorite_query(id, {title?, sql?, parent_id?})` ⇒ 一条命令同时覆盖**重命名**与**拖拽移动**。
+- 新增 `add_favorite_folder` / `reorder_favorites`；`delete_favorite` 语义扩展为**递归删文件夹**（前端必须二次确认并显示受影响条数）。
+- `(connection_id, normalized sql)` 唯一性（`CREATE UNIQUE INDEX` + `ON CONFLICT DO UPDATE`）⇒ 收藏/加星幂等，顺带消除当前"重复保存产生重复行"的缺陷。
 - （可选）`query_history` 加 `favorite_id` / `is_favorite`，让"给历史加星"无需重输 SQL。
 - （可选）超过 1000 行后的服务端搜索 ⇒ `fts5` 虚表（当前只有 `executed_at DESC` 排序，文本搜索是前端 `includes`）。
 - ⚠ **`history.sqlite` 明文存储**这一已记录在案的风险必须在任何"导出/同步"之前处置。
@@ -311,16 +372,19 @@ TablePlus 把历史/收藏存成真实 `.sql` 文件（所以有 Show in Finder�
 **P3-2 宿主前端动作面**（可与 3-3 并行，互不阻塞）：
 - 历史条目：单条删除、加星、新标签打开、**复制 favorites 已有的"开新标签"逻辑补齐到历史侧**（低垂果实）。
 - ⚠ 修正"单连接面板里的清空按钮执行全局清空"这一数据丢失风险。
-- 收藏面板：搜索框、全连接 scope（后端 `getFavoriteQueries(undefined)` 已支持，UI 未暴露）、重命名、拖拽入文件夹。
+- 收藏面板：搜索框（**跨层级展平命中，忽略展开态**）、全连接 scope（后端 `getFavoriteQueries(undefined)` 已支持，UI 未暴露）、重命名。
+- **文件夹树渲染 + 拖拽**（§2.5）：两段式渲染、25/50/25 落点判定常量、自定义 MIME 拖拽载荷（抄 `schemaTreeDrag.ts` 的版本化契约）、按 `kind` 分支的右键菜单、面板头 `+` 入口。
 - 补 `GlobalQueryHistoryDialog.tsx` 里**硬编码中文绕过 `t()`** 的 i18n 违规（会卡 `scripts/i18n-sync-check.mjs`）。
 - 统一"Save 按钮已表示『加入收藏』"的命名冲突。
 
-**P3-3 Pro：Favorite → keyword 绑定**
+**P3-3 Pro：Favorite → keyword 绑定**（与 P3-1/P3-2 的文件夹**同批交付**）
 - 新增 `createSavedQueryCompletionSource`，输出喂入宿主 `createSnippetCompletionSource({ snippets })`（`boost` 软排序，绝不硬过滤）。
 - 编辑器内输入 keyword + Enter 插入；复用 `settingsContributions` 暴露 keyword 配置（依赖 G3 才有效）。
+- keyword 挂在 file 上，不引入文件夹级 keyword（§2.5 规则 4）。
 - 零 Rust 改动（若 P3-1 已完成则可读取 keyword 字段）。
 
-**P3-4 超越点（可选）**：把历史/收藏导出为真实 `.sql` 文件以获得"Show in Finder"（见 §2.4 建议：先做壳，不迁存储形态）。
+**P3-4 存储形态保持 SQLite（裁决 4）**：不迁移为真实 `.sql` 文件。仅提供"导出为 `.sql` / 在文件管理器中显示目录"的外壳。
+⚠ 上线前必须先处置 `history.sqlite` 明文存储风险（`history_db.rs:1-11`）。
 
 ---
 
@@ -337,12 +401,16 @@ TablePlus 把历史/收藏存成真实 `.sql` 文件（所以有 Show in Finder�
 | **明文历史库** | 任何导出/同步 | SQL 与错误信息泄露 | P3-1 之前必须先定方案 |
 | **分屏放大"关 tab 丢 SQL"** | 无 dirty、无恢复 | 数据丢失面成倍增长 | P2-5 |
 
-### 待用户裁决
-1. **Split Pane 范围**：先做"对齐 TablePlus 的水平双 pane"（小、快、可对比），还是直接上"水平+垂直 N-Pane"（大、但一步到位且是超越点）？
-2. **宿主 vs Pro 的分界是否认可**（见 §3），特别是 Code Folding 归 Pro、Split Pane 全归宿主。
-3. **Favorite 是否要做文件夹 + 拖拽**（TablePlus 最有辨识度的组织方式，但需要 schema v5 + 树形 UI），还是先只做 keyword 绑定 + 重命名（低成本高感知）。
-4. **历史/收藏是否要"落盘为真实 `.sql` 文件"**，还是保持 SQLite + 增加一个"导出/在文件管理器中显示"的外壳。
-5. **营销口径**：`docs/blogs/editor-pro-features.md` 的"44 项功能"在实现前先对账，还是实现完再统一更新。
+### 裁决记录（2026-08-18，已确认）
+1. **Split Pane 范围**：采纳分阶段路线 —— P2-1 布局原语 → P2-2 状态分层（先解 1:1，再动 UI）→ P2-3 水平双 pane（对齐 TablePlus，可对比）→ P2-4 垂直与 N-Pane（TablePlus 无垂直，超越点）→ P2-5 持久化。**不一次性大爆炸。**
+2. **宿主 vs Pro 分界**：认可 §3 表。Code Folding 本体归 Pro（折叠 gutter 主题 token 归宿主）、Split Pane 全归宿主、Multi-cursor 修 bug 归宿主、History/Favorite 数据层与动作面归宿主、Favorite → keyword 补全源归 Pro。
+3. **Favorite 文件夹 + 拖拽**：**做**，锁死一层，与 keyword 绑定同批交付。详细设计见 §2.5「文件夹 + 拖拽」小节。
+4. **历史/收藏存储形态**：**保持 SQLite**，不迁移为真实 `.sql` 文件。仅在 P3-4 提供"导出为 `.sql` / 在文件管理器中显示目录"的外壳。
+   ⚠ 连带约束：`history.sqlite` 目前是**明文**存储（`history_db.rs:1-11` 已记录在案），导出功能上线前必须先定处置方案。
+5. **营销口径**：`docs/blogs/editor-pro-features.md` 的"44 项功能"**实现完成后统一更新**，本轮不预先对账。
+
+### 仍需在 P2 启动前确认
+- P2-2 的 `paneId` 分层是全局改造 `panelStore`，会影响 QueryPanel / ContentView / ContentToolbar / PanelTabBar 四处渲染路径。启动 P2 时需单独排一次影响面评审。
 
 ---
 
