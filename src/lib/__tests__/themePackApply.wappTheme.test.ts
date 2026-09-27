@@ -241,7 +241,9 @@ describe('applyWappTheme', () => {
     const createdBlobUrls: string[] = [];
     const originalCreateObjectURL = URL.createObjectURL;
     const originalRevokeObjectURL = URL.revokeObjectURL;
-    vi.spyOn(URL, 'createObjectURL').mockImplementation((blob: Blob) => {
+    // Typed as the real `URL.createObjectURL` parameter: the spy replaces the
+    // native method, so it must keep accepting every source the platform allows.
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((blob: Blob | MediaSource) => {
       const url = originalCreateObjectURL.call(URL, blob);
       createdBlobUrls.push(url);
       return url;

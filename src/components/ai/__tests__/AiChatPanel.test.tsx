@@ -243,7 +243,10 @@ describe('QuestionBlock', () => {
 });
 
 describe('AiChatPanel — AI Draft Bridge (S3-B2)', () => {
-  const makeDraft = (overrides?: Partial<Parameters<typeof AiChatPanel>[0]>) =>
+  // Overrides describe a *draft*, not panel props: the panel's `draftRequest`
+  // prop is typed `AiChatDraftRequest`, whose fields (`requestId`, `content`, …)
+  // are the ones each case varies.
+  const makeDraft = (overrides?: Partial<AiChatDraftRequest>) =>
     ({
       requestId: 'req-1',
       source: 'query-error' as const,

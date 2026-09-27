@@ -73,6 +73,7 @@ const conn: ConnectionConfig = {
   port: 5432,
   database: 'postgres',
   group: 'Development',
+  sslMode: 'prefer',
 };
 
 function historyEntry(offsetMs: number, id: string): QueryHistoryEntry {

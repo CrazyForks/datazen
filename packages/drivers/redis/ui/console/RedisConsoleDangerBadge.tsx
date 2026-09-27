@@ -10,7 +10,11 @@
 import { cn } from '@datazen/ui';
 import { dangerBadgeColor, type CommandAssessment, type DangerLevel } from './redisConsoleDanger';
 
-function dangerLevelLabel(level: DangerLevel, unknown: boolean, t: (key: string) => string): string {
+function dangerLevelLabel(
+  level: DangerLevel,
+  unknown: boolean,
+  t: (key: string) => string,
+): string {
   if (level === 'ultra-danger' && unknown) return t('redis.consoleSafety.badgeUnknown');
   switch (level) {
     case 'ultra-danger':

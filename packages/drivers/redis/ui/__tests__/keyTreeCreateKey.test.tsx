@@ -71,6 +71,10 @@ vi.mock('../observe/PubSubPanel', () => ({
 }));
 
 import { RedisConnectionView } from '../connection/RedisConnectionView';
+import { panelCloseStub } from '../__testing__/panelClose';
+
+// The view registers a close handler on mount; cases fire it explicitly.
+const panelClose = panelCloseStub();
 
 // The workbench reads the same host bridges a real panel would; jsdom has no
 // host, so the minimal stand-ins are bound here. Safe Mode off keeps the guard
@@ -87,6 +91,13 @@ bindSchemaStore(
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    // Host-store fields this suite never exercises; bound to satisfy the bridge
+    // contract so the Redis tree only ever reads `databases` / `loading`.
+    pathItems: {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -98,6 +109,8 @@ afterEach(() => {
 function renderView() {
   return render(
     <RedisConnectionView
+      panelId="panel-test"
+      onPanelClosed={panelClose.onPanelClosed}
       dbSessionId="sess-create"
       connectionId="cfg-create"
       connectionName="local"

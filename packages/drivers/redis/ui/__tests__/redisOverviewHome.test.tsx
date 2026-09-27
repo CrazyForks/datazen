@@ -131,7 +131,12 @@ function attr(root: HTMLElement, selector: string, name: string): string | null 
 }
 
 function ids(root: HTMLElement, selector: string): string[] {
-  return [...root.querySelectorAll(`[${selector}]`)].map((el) => el.getAttribute(selector));
+  // The attributes read through this helper are always rendered by the component
+  // under test, so the cast keeps the expectation lists plain `string[]`
+  // instead of widening every call site to `string | null`.
+  return [...root.querySelectorAll(`[${selector}]`)].map(
+    (el) => el.getAttribute(selector) as string,
+  );
 }
 
 function cardState(root: HTMLElement, card: string): string | null {
@@ -430,7 +435,7 @@ describe('内存 gauge（在 InstanceCard 内）', () => {
   });
 
   it('samples the connections configured database, not a hard-coded db0', async () => {
-    const { container } = render(<RedisOverviewHome {...baseProps({ initialDatabase: 'db3' })} />);
+    render(<RedisOverviewHome {...baseProps({ initialDatabase: 'db3' })} />);
     await waitFor(() => expect(redisInvoke).toHaveBeenCalledTimes(4));
 
     const sample = redisInvoke.mock.calls.find((call) => call[1] === 'memory_sample');

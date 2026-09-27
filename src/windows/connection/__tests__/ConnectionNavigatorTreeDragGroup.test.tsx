@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/react';
-import React from 'react';
 import { ConnectionNavigatorTree } from '../ConnectionNavigatorTree';
 import { SCHEMA_OBJECT_MIME } from '../schema-tree/schemaTreeDrag';
 import type { ConnectionConfig } from '../../../types';
@@ -96,8 +95,12 @@ describe('ConnectionNavigatorTree Group Drag & Drop', () => {
 
   const baseProps = {
     selectedConnectionId: null,
+    activeConnectionId: null,
     onSelectConnection: vi.fn(),
     onNewConnection: vi.fn(),
+    onEditConnection: vi.fn(),
+    onDeleteConnection: vi.fn(),
+    onDisconnect: vi.fn(),
     onExportConnections: vi.fn(),
     onImportConnections: vi.fn(),
     onRefresh: vi.fn(),
@@ -139,6 +142,8 @@ describe('ConnectionNavigatorTree Group Drag & Drop', () => {
         id: 'conn-1',
         name: 'Conn 1',
         driver: 'postgres',
+        databaseType: 'postgresql',
+        sslMode: 'prefer',
         host: 'localhost',
         port: 5432,
         database: 'db1',
@@ -209,6 +214,8 @@ describe('ConnectionNavigatorTree Group Drag & Drop', () => {
         id: 'conn-1',
         name: 'Conn 1',
         driver: 'postgres',
+        databaseType: 'postgresql',
+        sslMode: 'prefer',
         host: 'localhost',
         port: 5432,
         database: 'db1',
@@ -420,7 +427,7 @@ describe('ConnectionNavigatorTree Group Drag & Drop', () => {
     const childSpan = conn2El.querySelector('span')!;
 
     // In jsdom DragEvent doesn't carry relatedTarget by default, so attach it explicitly
-    const leaveEvent = fireEvent.dragLeave(conn2El);
+    fireEvent.dragLeave(conn2El);
     // Re-dragOver to restore target, then simulate dragLeave with relatedTarget
     fireEvent.dragOver(conn2El, { dataTransfer: dt, clientY: 100 });
     const customLeave = new MouseEvent('dragleave', { bubbles: true });

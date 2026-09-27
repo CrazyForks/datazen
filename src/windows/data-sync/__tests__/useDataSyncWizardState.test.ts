@@ -25,7 +25,10 @@ describe('[tester] useDataSyncWizardState', () => {
       result.current.setDisabledTables(new Set(['users']));
       result.current.setInspectionComplete(true);
       result.current.setSelectedTableKey('users');
-      result.current.setSyncState('running');
+      // 'executing' is the in-flight member of SyncState ('running' never
+      // existed there); resetCompareState clears it unconditionally, which is
+      // what this case pins down.
+      result.current.setSyncState('executing');
     });
 
     act(() => {

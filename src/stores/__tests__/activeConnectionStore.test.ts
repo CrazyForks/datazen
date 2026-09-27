@@ -21,6 +21,7 @@ function makeConfig(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig
     id: 'cfg-1',
     name: 'Test',
     databaseType: 'postgresql',
+    sslMode: 'prefer',
     database: 'mydb',
     ...overrides,
   };
@@ -88,8 +89,7 @@ describe('activeConnectionStore', () => {
     expect(useActiveConnectionStore.getState().connections['cfg-2'].dbSessionId).toBe('pool-xyz');
     expect(useActiveConnectionStore.getState().connections['cfg-2'].connectionId).toBe('cfg-2');
     expect(
-      useActiveConnectionStore.getState().connections['cfg-2'].capabilities
-        ?.supportsCancelQuery,
+      useActiveConnectionStore.getState().connections['cfg-2'].capabilities?.supportsCancelQuery,
     ).toBe(false);
 
     useActiveConnectionStore.getState().markError('cfg-2', 'timeout');

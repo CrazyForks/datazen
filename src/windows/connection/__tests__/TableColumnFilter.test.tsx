@@ -10,10 +10,10 @@ vi.mock('../../../hooks/useI18n', () => ({
 }));
 
 const mockColumns: ColumnSchema[] = [
-  { name: 'id', dataType: 'int', isPrimaryKey: true },
-  { name: 'username', dataType: 'varchar(50)', isPrimaryKey: false },
-  { name: 'email', dataType: 'varchar(100)', isPrimaryKey: false },
-  { name: 'created_at', dataType: 'timestamp', isPrimaryKey: false },
+  { name: 'id', dataType: 'int', nullable: false, isPrimaryKey: true },
+  { name: 'username', dataType: 'varchar(50)', nullable: false, isPrimaryKey: false },
+  { name: 'email', dataType: 'varchar(100)', nullable: true, isPrimaryKey: false },
+  { name: 'created_at', dataType: 'timestamp', nullable: true, isPrimaryKey: false },
 ];
 
 describe('TableColumnFilter', () => {

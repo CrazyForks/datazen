@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ComponentProps } from 'react';
-import type { KeyPropsSidebarProps } from '@datazen/driver-sdk';
+import type { KeyPropsSidebarProps, KvSlotState } from '@datazen/driver-sdk';
 import { ContentViewDrawers } from '../ContentViewDrawers';
 import { createKvSlotState } from '../../../lib/kvSlotState';
 import type { KvKeyPropsSidebarBinding } from '../useKvWorkspaceSlots';
@@ -62,12 +62,12 @@ function FixtureKeyPropsSidebar({
   );
 }
 
-const state = {
-  subscribe: () => () => {},
+// The fixture sidebar only reports whether a relay was handed down, so a real
+// KV slot atom pinned to a selected/dirty key stands in for the driver relay.
+const state: KvSlotState = {
+  ...createKvSlotState(),
   getSelectedKey: () => 'user:42',
-  selectKey: vi.fn(),
   getDirty: () => true,
-  setDirty: vi.fn(),
 };
 
 const slot: KvKeyPropsSidebarBinding = {
@@ -192,7 +192,7 @@ describe('ContentViewDrawers AI KV context (W3-A §1.3)', () => {
   });
 
   it('hands no KV context to a relational panel that has no relay', () => {
-    renderDrawers({ aiChatOpen: true, databaseType: 'postgres' });
+    renderDrawers({ aiChatOpen: true, databaseType: 'postgresql' });
     expect(screen.getByTestId('mock-ai-chat-panel').getAttribute('data-kv-key-name')).toBe('');
   });
 });

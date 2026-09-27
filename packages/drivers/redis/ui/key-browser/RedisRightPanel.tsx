@@ -9,20 +9,17 @@
  * previous panel and mounts the new one (same pattern as the host's
  * `PanelContentRenderer` which uses `key={panel.id}` + Zustand stores).
  *
- * Each panel's internal state is preserved across switches via a
- * `useRef<Map>` snapshot cache:
- *  - On mount, the panel reads its initial state from the cache.
- *  - On unmount (or any state change), the panel writes its state back.
- *
- * This avoids the hidden-keep-alive antipattern where all visited panels stay
- * mounted forever, accumulating memory and making DOM queries unreliable.
+ * Panels that need to survive the unmount keep their state in a module-level
+ * store rather than a `useRef<Map>` snapshot cache: the console's scrollback
+ * (`consoleTranscript.ts`) and the active tab (`rightTabState.ts`) both do this,
+ * so a sub-tab switch or a top-level tab switch restores the same view.
  *
  * State machine (AGENTS.md):
- *  - enter: panel mounts with `activeTab` defaulting to `'detail'`;
+ *  - enter: panel mounts; `activeTab` comes from the parent (module store);
  *  - state: switching tabs unmounts old panel, mounts new one;
  *  - exit: the panel is unmounted when the connection closes.
  */
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { cn, useI18n } from '@datazen/ui';
 import type { KeyDetail } from '../shared/types';
 import { DetailColumn } from './DetailColumn';
@@ -30,9 +27,7 @@ import { RedisConsole } from '../console/RedisConsole';
 import { PubSubPanel } from '../observe/PubSubPanel';
 import { SlowlogPanel } from '../observe/SlowlogPanel';
 import { requestDraftLeave } from '../shared/draftGuard';
-
-/** Right-panel tab ids — matches the prototype's tab order. */
-export type RightTab = 'detail' | 'console' | 'pubsub' | 'slowlog';
+import { useRightTab, writeRightTab, type RightTab } from '../shared/rightTabState';
 
 const RIGHT_TABS: RightTab[] = ['detail', 'console', 'pubsub', 'slowlog'];
 
@@ -55,7 +50,6 @@ export interface RedisRightPanelProps {
   onRefresh: () => void;
   onRenamed: (newKey: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
-  onClose: () => void;
   /** Console completion feed — the current key list from the left panel. */
   keySuggestions?: string[];
   /** Cluster node for console/monitor. */
@@ -64,6 +58,12 @@ export interface RedisRightPanelProps {
   /** Connection name shown in the header for context. */
   connectionName?: string;
   selectedDb?: string;
+  /**
+   * Identity of the owning top-level tab (`shared/panelId.ts`). Per-tab UI
+   * state is keyed by this and never by `dbSessionId`, which every db tab of one
+   * connection shares. Required so the console below is scoped per tab too.
+   */
+  panelId: string;
   /** Currently active tab (controlled by parent). */
   activeTab?: RightTab;
   /** Callback when the user clicks a tab (controlled by parent). */
@@ -84,19 +84,22 @@ export function RedisRightPanel({
   onRefresh,
   onRenamed,
   onDirtyChange,
-  onClose,
   keySuggestions,
   pinnedNodeAddr,
   onPinnedNodeAddrChange,
   connectionName,
   selectedDb,
+  panelId,
   activeTab: controlledTab,
   onTabChange,
 }: RedisRightPanelProps) {
   const { t } = useI18n();
-  // Support both controlled and uncontrolled tab mode.
-  const [internalTab, setInternalTab] = useState<RightTab>('detail');
-  const activeTab = controlledTab ?? internalTab;
+  // Both the controlled and the uncontrolled path read from the module-level
+  // store, keyed by panel scope. The uncontrolled fallback used to be a plain
+  // `useState('detail')`, which meant an uncontrolled caller silently lost its
+  // tab on every remount — the same bug as the controlled path had.
+  const storeTab = useRightTab(panelId);
+  const activeTab = controlledTab ?? storeTab;
 
   const handleTabClick = useCallback(
     async (tab: RightTab) => {
@@ -108,10 +111,10 @@ export function RedisRightPanel({
       if (onTabChange) {
         onTabChange(tab);
       } else {
-        setInternalTab(tab);
+        writeRightTab(panelId, tab);
       }
     },
-    [activeTab, onTabChange],
+    [activeTab, onTabChange, panelId],
   );
 
   return (
@@ -169,6 +172,7 @@ export function RedisRightPanel({
       <TabContent
         activeTab={activeTab}
         dbSessionId={dbSessionId}
+        panelId={panelId}
         dbIndex={dbIndex}
         selectedKey={selectedKey}
         detail={detail}
@@ -177,7 +181,6 @@ export function RedisRightPanel({
         onRefresh={onRefresh}
         onRenamed={onRenamed}
         onDirtyChange={onDirtyChange}
-        onClose={onClose}
         keySuggestions={keySuggestions}
         pinnedNodeAddr={pinnedNodeAddr}
         onPinnedNodeAddrChange={onPinnedNodeAddrChange}
@@ -193,6 +196,7 @@ export function RedisRightPanel({
 function TabContent({
   activeTab,
   dbSessionId,
+  panelId,
   dbIndex,
   selectedKey,
   detail,
@@ -201,13 +205,13 @@ function TabContent({
   onRefresh,
   onRenamed,
   onDirtyChange,
-  onClose,
   keySuggestions,
   pinnedNodeAddr,
   onPinnedNodeAddrChange,
 }: {
   activeTab: RightTab;
   dbSessionId: string;
+  panelId: string;
   dbIndex: number;
   selectedKey: string | null;
   detail: KeyDetail | null;
@@ -216,7 +220,6 @@ function TabContent({
   onRefresh: () => void;
   onRenamed: (newKey: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
-  onClose: () => void;
   keySuggestions?: string[];
   pinnedNodeAddr?: string;
   onPinnedNodeAddrChange?: (addr: string) => void;
@@ -237,7 +240,6 @@ function TabContent({
             onRefresh={onRefresh}
             onRenamed={onRenamed}
             onDirtyChange={onDirtyChange}
-            onClose={onClose}
           />
         </div>
       );
@@ -246,6 +248,7 @@ function TabContent({
         <div key="console" className="flex min-h-0 flex-1 flex-col">
           <RedisConsole
             dbSessionId={dbSessionId}
+            panelId={panelId}
             dbIndex={dbIndex}
             keySuggestions={keySuggestions}
             pinnedNodeAddr={pinnedNodeAddr}

@@ -80,22 +80,28 @@ globalThis.ResizeObserver ??= MockResizeObserver as unknown as typeof ResizeObse
  * on top of `redisCommandInvoke` (a cross-module import, so it IS interceptable)
  * — mocking the helper modules themselves would miss their internal calls.
  */
-const commands = vi.fn(async (_pluginId: string, command: string): Promise<unknown> => {
-  switch (command) {
-    case 'delete_keys':
-      return 1;
-    case 'batch_set_ttl':
-      return { updated: 1, errors: [] };
-    case 'batch_delete_pattern':
-      return { deleted: 0, errors: [] };
-    case 'batch_rename_prefix':
-      return { renamed: 0, errors: [] };
-    case 'count_matching':
-      return 1;
-    default:
-      return undefined;
-  }
-});
+const commands = vi.fn(
+  async (
+    _pluginId: string,
+    command: string,
+    _params: Record<string, unknown>,
+  ): Promise<unknown> => {
+    switch (command) {
+      case 'delete_keys':
+        return 1;
+      case 'batch_set_ttl':
+        return { updated: 1, errors: [] };
+      case 'batch_delete_pattern':
+        return { deleted: 0, errors: [] };
+      case 'batch_rename_prefix':
+        return { renamed: 0, errors: [] };
+      case 'count_matching':
+        return 1;
+      default:
+        return undefined;
+    }
+  },
+);
 
 const getKey = vi.fn();
 const getKeyRaw = vi.fn();
@@ -141,9 +147,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -197,14 +208,6 @@ async function selectAndDraft(key = 'user:1', draft = 'draft') {
   await waitFor(() => expect(input()).toBeTruthy());
   fireEvent.change(input(), { target: { value: draft } });
   await waitFor(() => expect(editor().getAttribute('data-string-dirty')).toBe('true'));
-}
-
-/** Check another key so the batch bar has a target without touching the draft. */
-async function checkOtherKey() {
-  const checkbox = screen.getByLabelText('other:2') as HTMLInputElement;
-  fireEvent.click(checkbox);
-  await flush(0);
-  expect(checkbox.checked).toBe(true);
 }
 
 beforeEach(() => {

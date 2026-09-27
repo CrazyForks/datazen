@@ -7,7 +7,6 @@ import {
   FinishExecutionEffect,
   matchesRunningTarget,
   isIdleOrCancelled,
-  INITIAL_EXECUTION_STATE,
 } from '../executionState';
 
 function stateWithExec(doc: string) {

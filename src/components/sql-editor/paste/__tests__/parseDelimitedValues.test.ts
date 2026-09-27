@@ -12,8 +12,8 @@ describe('parseDelimitedValues', () => {
   describe('basic delimiter detection', () => {
     it('detects comma-separated values', () => {
       const result = parseDelimitedValues('a,b,c');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b', 'c']);
         expect(result.delimiter).toBe(',');
       }
@@ -21,8 +21,8 @@ describe('parseDelimitedValues', () => {
 
     it('detects tab-separated values', () => {
       const result = parseDelimitedValues('a\tb\tc');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b', 'c']);
         expect(result.delimiter).toBe('\t');
       }
@@ -30,8 +30,8 @@ describe('parseDelimitedValues', () => {
 
     it('detects newline-separated values', () => {
       const result = parseDelimitedValues('a\nb\nc');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b', 'c']);
         expect(result.delimiter).toBe('\n');
       }
@@ -39,24 +39,24 @@ describe('parseDelimitedValues', () => {
 
     it('normalizes CRLF to LF', () => {
       const result = parseDelimitedValues('a\r\nb\r\nc');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b', 'c']);
       }
     });
 
     it('normalizes lone CR to LF', () => {
       const result = parseDelimitedValues('a\rb\rc');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b', 'c']);
       }
     });
 
     it('detects semicolon-separated values', () => {
       const result = parseDelimitedValues('a;b;c');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b', 'c']);
         expect(result.delimiter).toBe(';');
       }
@@ -66,8 +66,8 @@ describe('parseDelimitedValues', () => {
   describe('explicit delimiter option', () => {
     it('uses explicit comma delimiter', () => {
       const result = parseDelimitedValues('a,b,c', { delimiter: ',' });
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b', 'c']);
         expect(result.delimiter).toBe(',');
       }
@@ -75,8 +75,8 @@ describe('parseDelimitedValues', () => {
 
     it('uses explicit pipe delimiter', () => {
       const result = parseDelimitedValues('a|b|c', { delimiter: '|' });
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b', 'c']);
       }
     });
@@ -85,16 +85,16 @@ describe('parseDelimitedValues', () => {
   describe('trimming', () => {
     it('trims whitespace by default', () => {
       const result = parseDelimitedValues('  a  ,  b  ,  c  ');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b', 'c']);
       }
     });
 
     it('preserves whitespace when trim is false', () => {
       const result = parseDelimitedValues('  a  ,  b  ,  c  ', { trim: false });
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['  a  ', '  b  ', '  c  ']);
       }
     });
@@ -103,32 +103,32 @@ describe('parseDelimitedValues', () => {
   describe('empty items', () => {
     it('skips empty items by default', () => {
       const result = parseDelimitedValues('a,,b,,c');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b', 'c']);
       }
     });
 
     it('keeps empty items when configured', () => {
       const result = parseDelimitedValues('a,,b,,c', { emptyItems: 'keep-empty' });
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', '', 'b', '', 'c']);
       }
     });
 
     it('skips trailing empty items', () => {
       const result = parseDelimitedValues('a,b,');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b']);
       }
     });
 
     it('skips leading empty items', () => {
       const result = parseDelimitedValues(',a,b');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'b']);
       }
     });
@@ -137,16 +137,16 @@ describe('parseDelimitedValues', () => {
   describe('NULL handling', () => {
     it('preserves NULL as a value', () => {
       const result = parseDelimitedValues('a,NULL,b');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'NULL', 'b']);
       }
     });
 
     it('preserves null (lowercase) as a value', () => {
       const result = parseDelimitedValues('a,null,b');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['a', 'null', 'b']);
       }
     });
@@ -155,24 +155,24 @@ describe('parseDelimitedValues', () => {
   describe('numeric values', () => {
     it('preserves integer strings', () => {
       const result = parseDelimitedValues('1,2,3');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['1', '2', '3']);
       }
     });
 
     it('preserves float strings', () => {
       const result = parseDelimitedValues('1.5,2.7,3.14');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['1.5', '2.7', '3.14']);
       }
     });
 
     it('preserves negative numbers', () => {
       const result = parseDelimitedValues('-1,-2.5,3');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['-1', '-2.5', '3']);
       }
     });
@@ -185,7 +185,9 @@ describe('parseDelimitedValues', () => {
       expect('ok' in result).toBe(false);
       if (!('ok' in result)) {
         expect(result.kind).toBe('too-large');
-        expect(result.maxBytes).toBe(MAX_SOURCE_BYTES);
+        if (result.kind === 'too-large') {
+          expect(result.maxBytes).toBe(MAX_SOURCE_BYTES);
+        }
       }
     });
 
@@ -203,7 +205,9 @@ describe('parseDelimitedValues', () => {
       expect('ok' in result).toBe(false);
       if (!('ok' in result)) {
         expect(result.kind).toBe('too-many-values');
-        expect(result.maxCount).toBe(MAX_VALUE_COUNT);
+        if (result.kind === 'too-many-values') {
+          expect(result.maxCount).toBe(MAX_VALUE_COUNT);
+        }
       }
     });
 
@@ -238,8 +242,8 @@ describe('parseDelimitedValues', () => {
   describe('single value', () => {
     it('parses a single value', () => {
       const result = parseDelimitedValues('hello');
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(['hello']);
       }
     });
@@ -248,8 +252,8 @@ describe('parseDelimitedValues', () => {
   describe('quoted strings with delimiters', () => {
     it('preserves quotes in values', () => {
       const result = parseDelimitedValues("'hello', 'world'");
-      expect(result.ok).toBe(true);
-      if (result.ok) {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
         expect(result.values).toEqual(["'hello'", "'world'"]);
       }
     });

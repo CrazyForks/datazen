@@ -304,7 +304,8 @@ describe('buildBigKeyRows — PRD 卡 2 Top3', () => {
           bytes: 5,
           type: '',
           ttlMs: Number.NaN,
-          missing: 'yes',
+          // Deliberately off-contract: the normaliser must not treat it as true.
+          missing: 'yes' as unknown as boolean,
         },
       ],
     });

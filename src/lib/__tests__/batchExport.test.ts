@@ -8,6 +8,7 @@ import {
   type BatchExportTableInput,
 } from '../batchExport';
 import * as exportData from '../exportData';
+import type { ColumnSchema } from '../../types';
 
 const users: BatchExportTableInput = {
   tableName: 'users',
@@ -122,19 +123,22 @@ describe('buildBatchExportFiles data_only', () => {
   });
 
   it('accepts ColumnSchema-shaped columns', () => {
+    // A full `ColumnSchema` (not just `{ name }`) must pass through unchanged;
+    // the exporter widens it and fills only the fields the caller omitted.
+    // Named first so the literal is checked against `ColumnSchema` rather than
+    // against the deliberately minimal `BatchExportTableInput['columns']` type.
+    const idColumn: ColumnSchema = {
+      name: 'id',
+      dataType: 'int',
+      nullable: false,
+      isPrimaryKey: true,
+      isAutoIncrement: true,
+    };
     const files = buildBatchExportFiles({
       tables: [
         {
           tableName: 't',
-          columns: [
-            {
-              name: 'id',
-              dataType: 'int',
-              nullable: false,
-              isPrimaryKey: true,
-              isAutoIncrement: true,
-            },
-          ],
+          columns: [idColumn],
           rows: [{ id: 1 }],
         },
       ],

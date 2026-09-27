@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { QualifiedRelationId } from '../../semantic/types';
-import type { SqlDialectStrategy } from '../../../lib/sqlDialects';
-import type { DdlCacheIdentity } from '../../../lib/schemaCache';
+import type { SqlDialectStrategy } from '../../../../lib/sqlDialects';
+import type { DdlCacheIdentity } from '../../../../lib/schemaCache';
+import type { DatabaseType } from '../../../../types';
 import { copyRelationDdl, resolveDdlQuery } from '../copyDdl';
 
 function ident(namespace: string[], name: string): QualifiedRelationId {
@@ -112,7 +113,9 @@ describe('metadata copyDdl', () => {
   it('throws when the dialect cannot generate DDL', async () => {
     await expect(
       copyRelationDdl('s1', ident([], 'users'), 'table', {
-        databaseType: 'generic',
+        // Stand-in for "whatever the caller is connected to": this case injects
+        // `getDialect: () => null`, so the database type is never resolved.
+        databaseType: 'generic' as DatabaseType,
         database: 'app',
         getDialect: () => null,
       }),
