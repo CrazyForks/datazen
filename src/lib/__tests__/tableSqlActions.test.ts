@@ -24,6 +24,11 @@ const tableInput = {
   dbSessionId: 'session-1',
   databaseType: 'mysql' as DatabaseType,
   database: 'app',
+  // `schema` / `viewSchema` are required on `TableContextInput`; they stay null
+  // here so `buildTableContext` still resolves the schema through its
+  // `tableSchema` legacy fallback, which is what this fixture exercises.
+  schema: null,
+  viewSchema: null,
   tableSchema: 'sales',
   tableName: 'order`items',
 };

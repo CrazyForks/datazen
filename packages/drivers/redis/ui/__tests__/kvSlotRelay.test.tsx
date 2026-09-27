@@ -106,6 +106,13 @@ bindSchemaStore(
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    // Host-store fields this suite never exercises; bound to satisfy the bridge
+    // contract so the Redis tree only ever reads `databases` / `loading`.
+    pathItems: {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -143,6 +150,25 @@ function makeRelay(): KvSlotState & { published: Array<{ key: string | null; dir
       dirty = next;
       notify();
     },
+    /*
+     * W3-A widened members (status bar + context-bar scan cluster). The
+     * workbench under test only drives the five original members, so these are
+     * inert contract-fillers: nothing here reads them back.
+     */
+    getLoadedCount: () => 0,
+    setLoadedCount: () => {},
+    getScanCursor: () => '0',
+    setScanCursor: () => {},
+    isScanning: () => false,
+    setScanning: () => {},
+    getScanBudgetUsed: () => 0,
+    getScanBudgetTotal: () => 0,
+    setScanBudget: () => {},
+    getSelectionCount: () => 0,
+    setSelectionCount: () => {},
+    getLastWriteCommand: () => null,
+    getLastWriteDurationMs: () => null,
+    recordWrite: () => {},
   };
 }
 
@@ -168,7 +194,6 @@ function detailColumn(overrides: Partial<React.ComponentProps<typeof DetailColum
       modules={[]}
       onRefresh={() => {}}
       onRenamed={() => {}}
-      onClose={() => {}}
       {...overrides}
     />,
   );
@@ -189,9 +214,15 @@ afterEach(() => {
 beforeEach(() => {
   getKey.mockResolvedValue(stringDetail('user:1'));
   getKeyRaw.mockResolvedValue(null);
-  scanKeys.mockResolvedValue({ keys: [{ key: 'user:1', keyType: 'string' }], cursor: 0, dbSize: 1 });
+  scanKeys.mockResolvedValue({
+    keys: [{ key: 'user:1', keyType: 'string' }],
+    cursor: 0,
+    dbSize: 1,
+  });
   listChildren.mockResolvedValue({
-    children: [{ kind: 'key', key: 'user:1', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null }],
+    children: [
+      { kind: 'key', key: 'user:1', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null },
+    ],
     cursor: 0,
   });
   dbSizes.mockResolvedValue([{ db: 0, keys: 1 }]);
@@ -252,7 +283,6 @@ describe('DetailColumn → dirty signal (I-1 source)', () => {
         modules={[]}
         onRefresh={() => {}}
         onRenamed={() => {}}
-        onClose={() => {}}
         onDirtyChange={onDirtyChange}
       />,
     );
@@ -427,25 +457,6 @@ describe('[tester] RedisWorkbench relay exit paths', () => {
     expect(relay.getSelectedKey()).toBe('user:1');
   }
 
-  it('clears selection and dirty when the detail column is closed', async () => {
-    const relay = makeRelay();
-    renderWorkbench(relay);
-    await draftOnRelay(relay);
-
-    fireEvent.click(screen.getByTestId('redis-detail-close'));
-    // I-1: the close asks first; nothing has been cleared yet.
-    await screen.findByTestId('redis-draft-discard');
-    expect(relay.getDirty()).toBe(true);
-    expect(relay.getSelectedKey()).toBe('user:1');
-
-    fireEvent.click(screen.getByTestId('redis-draft-discard'));
-    await waitFor(() => expect(relay.getDirty()).toBe(false));
-    expect(relay.getSelectedKey()).toBeNull();
-    expect(screen.getByTestId('redis-detail-column').getAttribute('data-detail-state')).toBe(
-      'no-key',
-    );
-  });
-
   it('clears selection and dirty when the search field drops the selection', async () => {
     const relay = makeRelay();
     renderWorkbench(relay, 'sess-1', false);
@@ -472,12 +483,7 @@ describe('[tester] RedisWorkbench relay exit paths', () => {
     await draftOnRelay(relay);
 
     rerender(
-      <RedisWorkbench
-        dbSessionId="sess-2"
-        initialDatabase="db0"
-        hideSidebar
-        kvSlotState={relay}
-      />,
+      <RedisWorkbench dbSessionId="sess-2" initialDatabase="db0" hideSidebar kvSlotState={relay} />,
     );
 
     await waitFor(() => expect(relay.getSelectedKey()).toBeNull());

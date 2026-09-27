@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import React from 'react';
 import { ConsoleResultView, inferResultType } from '../console/consoleResultRenderer';
 import type { ConsoleResultItem } from '../console/consoleResultRenderer';
 
@@ -9,7 +8,7 @@ import type { ConsoleResultItem } from '../console/consoleResultRenderer';
 vi.mock('@datazen/ui', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@datazen/ui')>()),
   useI18n: () => ({
-    t: (key: string, params?: Record<string, string>) => {
+    t: (key: string) => {
       const map: Record<string, string> = {
         'redis.common.cancel': 'Cancel',
         'redis.common.confirm': 'Confirm',

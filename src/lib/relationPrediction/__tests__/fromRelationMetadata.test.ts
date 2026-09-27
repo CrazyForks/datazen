@@ -40,8 +40,8 @@ describe('toPredictionTable', () => {
           { name: 'code', dataType: 'varchar', nullable: false },
         ],
         indexes: [
-          { name: 'idx_user', columns: ['user_id'], isUnique: false },
-          { name: 'uq_code', columns: ['code'], isUnique: true },
+          { name: 'idx_user', columns: ['user_id'], isUnique: false, isPrimary: false },
+          { name: 'uq_code', columns: ['code'], isUnique: true, isPrimary: false },
         ],
       }),
     );
@@ -57,8 +57,8 @@ describe('toPredictionTable', () => {
       relation({
         primaryKey: ['id'],
         indexes: [
-          { name: 'uq_code', columns: ['tenant_id', 'code'], isUnique: true },
-          { name: 'idx_plain', columns: ['total'], isUnique: false },
+          { name: 'uq_code', columns: ['tenant_id', 'code'], isUnique: true, isPrimary: false },
+          { name: 'idx_plain', columns: ['total'], isUnique: false, isPrimary: false },
         ],
       }),
     );
@@ -77,7 +77,12 @@ describe('toPredictionTable', () => {
       'orders',
       relation({
         foreignKeys: [
-          { columns: ['user_id'], referencedTable: 'users', referencedColumns: ['id'] },
+          {
+            name: 'fk_orders_user',
+            columns: ['user_id'],
+            referencedTable: 'users',
+            referencedColumns: ['id'],
+          },
         ],
       }),
     );

@@ -88,7 +88,14 @@ describe('aiStore', () => {
       providers: [],
       configLoading: false,
       configError: null,
-      nl2sql: { input: '', generatedSql: '', isGenerating: false, requestId: null },
+      nl2sql: {
+        input: '',
+        streamingSql: '',
+        streamingPreview: '',
+        generatedSql: '',
+        isGenerating: false,
+        requestId: null,
+      },
       chatSession: null,
       workflowChat: null,
       workflows: [],
@@ -134,7 +141,14 @@ describe('aiStore', () => {
     });
 
     it('validateConfig and saveConfig', async () => {
-      const cfg = { provider: 'openai' as const, apiKey: 'k', model: 'gpt-4' };
+      // `providerType` is the field the store's `AiProviderConfig` actually uses;
+      // `provider` is kept because it is part of the payload under test.
+      const cfg = {
+        provider: 'openai' as const,
+        providerType: 'open_ai' as const,
+        apiKey: 'k',
+        model: 'gpt-4',
+      };
       mockAiCommands.validateConfig.mockResolvedValueOnce(undefined);
       expect(await useAiStore.getState().validateConfig(cfg)).toBe(true);
 
@@ -162,14 +176,14 @@ describe('aiStore', () => {
 
   describe('NL2SQL', () => {
     it('generateSql skips empty input', async () => {
-      await useAiStore.getState().generateSql({ connectionId: 'c', database: 'db' });
+      await useAiStore.getState().generateSql({ dbSessionId: 'c', database: 'db' });
       expect(mockAiCommands.generateSql).not.toHaveBeenCalled();
     });
 
     it('generateSql sets generating and handles error', async () => {
       useAiStore.getState().setNl2SqlInput('show users');
       mockAiCommands.generateSql.mockRejectedValueOnce(new Error('gen fail'));
-      await useAiStore.getState().generateSql({ connectionId: 'c', database: 'db' });
+      await useAiStore.getState().generateSql({ dbSessionId: 'c', database: 'db' });
       expect(useAiStore.getState().nl2sql.isGenerating).toBe(false);
       expect(useAiStore.getState().nl2sqlError).toBe('gen fail');
     });
@@ -233,7 +247,7 @@ describe('aiStore', () => {
     it('diagnoseError success and error', async () => {
       mockAiCommands.diagnoseError.mockResolvedValueOnce({ changes: [{ sql: 'fix' }] });
       await useAiStore.getState().diagnoseError({
-        connectionId: 'c',
+        dbSessionId: 'c',
         database: 'db',
         sql: 'SELECT',
         errorMessage: 'syntax',
@@ -242,7 +256,7 @@ describe('aiStore', () => {
 
       mockAiCommands.diagnoseError.mockRejectedValueOnce(new Error('diag fail'));
       await useAiStore.getState().diagnoseError({
-        connectionId: 'c',
+        dbSessionId: 'c',
         database: 'db',
         sql: 'SELECT',
         errorMessage: 'syntax',
@@ -251,7 +265,10 @@ describe('aiStore', () => {
     });
 
     it('clearDiagnosis resets', () => {
-      useAiStore.setState({ diagnosis: { changes: [] }, isDiagnosing: true });
+      useAiStore.setState({
+        diagnosis: { explanation: '', suggestedSql: null, changes: [] },
+        isDiagnosing: true,
+      });
       useAiStore.getState().clearDiagnosis();
       expect(useAiStore.getState().diagnosis).toBeNull();
     });
@@ -259,7 +276,7 @@ describe('aiStore', () => {
     it('analyzeExplain success and error', async () => {
       mockAiCommands.analyzeExplain.mockResolvedValueOnce({ bottlenecks: [], suggestions: [] });
       await useAiStore.getState().analyzeExplain({
-        connectionId: 'c',
+        dbSessionId: 'c',
         explainOutput: 'Seq Scan',
         originalSql: 'SELECT 1',
       });
@@ -267,7 +284,7 @@ describe('aiStore', () => {
 
       mockAiCommands.analyzeExplain.mockRejectedValueOnce(new Error('explain fail'));
       await useAiStore.getState().analyzeExplain({
-        connectionId: 'c',
+        dbSessionId: 'c',
         explainOutput: 'x',
         originalSql: 'y',
       });
@@ -283,7 +300,7 @@ describe('aiStore', () => {
   describe('smart filter', () => {
     it('parseFilter skips empty input', async () => {
       const result = await useAiStore.getState().parseFilter({
-        connectionId: 'c',
+        dbSessionId: 'c',
         database: 'db',
         table: 'users',
       });
@@ -296,7 +313,7 @@ describe('aiStore', () => {
         { column: 'age', operator: '>', value: 18 },
       ]);
       const filters = await useAiStore.getState().parseFilter({
-        connectionId: 'c',
+        dbSessionId: 'c',
         database: 'db',
         table: 'users',
       });
@@ -306,7 +323,7 @@ describe('aiStore', () => {
       mockAiCommands.parseFilter.mockRejectedValueOnce(new Error('parse fail'));
       expect(
         await useAiStore.getState().parseFilter({
-          connectionId: 'c',
+          dbSessionId: 'c',
           database: 'db',
           table: 'users',
         }),
@@ -345,7 +362,7 @@ describe('aiStore', () => {
             {
               role: 'assistant',
               content: '',
-              toolCalls: [{ id: 'tc-1', name: 'ask_questions', arguments: {} }],
+              toolCalls: [{ id: 'tc-1', name: 'ask_questions', arguments: '{}' }],
             },
           ],
         },
@@ -435,7 +452,7 @@ describe('aiStore', () => {
         requestId,
         content: '',
         done: false,
-        toolCalls: [{ id: 'tc-1', name: 'mcp/files/read_file', arguments: {} }],
+        toolCalls: [{ id: 'tc-1', name: 'mcp/files/read_file', arguments: '{}' }],
       });
       expect(useAiStore.getState().chatSession!.streamMcpToolName).toBe('mcp/files/read_file');
     });
@@ -446,7 +463,14 @@ describe('aiStore', () => {
       cleanup();
 
       useAiStore.setState({
-        nl2sql: { input: '', generatedSql: '', isGenerating: true, requestId: 'err-req' },
+        nl2sql: {
+          input: '',
+          streamingSql: '',
+          streamingPreview: '',
+          generatedSql: '',
+          isGenerating: true,
+          requestId: 'err-req',
+        },
       });
       streamErrorHandler({ requestId: 'err-req', error: 'stream error' });
       expect(useAiStore.getState().nl2sqlError).toBe('stream error');
@@ -476,7 +500,10 @@ describe('aiStore', () => {
     });
 
     it('clearWorkflowResult', () => {
-      useAiStore.setState({ workflowExecutionResult: { success: true }, workflowError: 'x' });
+      useAiStore.setState({
+        workflowExecutionResult: { success: true, finalOutput: '', steps: [], totalTimeMs: 0 },
+        workflowError: 'x',
+      });
       useAiStore.getState().clearWorkflowResult();
       expect(useAiStore.getState().workflowExecutionResult).toBeNull();
     });
@@ -485,7 +512,7 @@ describe('aiStore', () => {
   describe('schema doc and analysis', () => {
     it('generateSchemaDoc and clearSchemaDoc', async () => {
       mockAiCommands.generateSchemaDoc.mockResolvedValueOnce('# Schema');
-      await useAiStore.getState().generateSchemaDoc({ connectionId: 'c', database: 'db' });
+      await useAiStore.getState().generateSchemaDoc({ dbSessionId: 'c', database: 'db' });
       expect(useAiStore.getState().schemaDoc).toBe('# Schema');
       useAiStore.getState().clearSchemaDoc();
       expect(useAiStore.getState().schemaDoc).toBeNull();
@@ -503,7 +530,7 @@ describe('aiStore', () => {
 
     it('analyzeQueries and clearQueryAnalysis', async () => {
       mockAiCommands.analyzeQueries.mockResolvedValueOnce({ summary: 'ok' });
-      await useAiStore.getState().analyzeQueries({ connectionId: 'c' });
+      await useAiStore.getState().analyzeQueries({ dbSessionId: 'c' });
       expect(useAiStore.getState().queryAnalysis).not.toBeNull();
       useAiStore.getState().clearQueryAnalysis();
       expect(useAiStore.getState().queryAnalysis).toBeNull();

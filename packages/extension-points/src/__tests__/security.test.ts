@@ -41,22 +41,32 @@ function decodeBase64(value: string): Uint8Array {
   return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 }
 
+/**
+ * TS 5.7 made the typed-array buffer type parameterised: `crypto.subtle` still
+ * takes `BufferSource` (`ArrayBufferView<ArrayBuffer>`), while `TextEncoder`
+ * and `Uint8Array.from` hand back `Uint8Array<ArrayBufferLike>`. Both bytes
+ * objects here are really backed by a plain `ArrayBuffer`, so the narrowing is
+ * sound and keeps the crypto call sites free of inline casts.
+ */
+function asBufferSource(bytes: Uint8Array): BufferSource {
+  return bytes as Uint8Array<ArrayBuffer>;
+}
+
 async function importTestPrivateKey(): Promise<CryptoKey> {
   const der = decodeBase64(TEST_EP_PRIVATE_KEY_PKCS8_B64);
-  return crypto.subtle.importKey('pkcs8', der, { name: 'Ed25519' }, false, ['sign']);
+  return crypto.subtle.importKey('pkcs8', asBufferSource(der), { name: 'Ed25519' }, false, [
+    'sign',
+  ]);
 }
 
 async function signFiles(files: Record<string, { sha256: string }>): Promise<string> {
   const payload = buildSignaturePayload(files);
   const privateKey = await importTestPrivateKey();
-  const signature = await crypto.subtle.sign('Ed25519', privateKey, payload);
+  const signature = await crypto.subtle.sign('Ed25519', privateKey, asBufferSource(payload));
   return btoa(String.fromCharCode(...new Uint8Array(signature)));
 }
 
-async function buildSignedPackage(
-  manifestContent: string,
-  bundleContent: string,
-): Promise<string> {
+async function buildSignedPackage(manifestContent: string, bundleContent: string): Promise<string> {
   const files = {
     'manifest.json': { sha256: await sha256Hex(manifestContent) },
     'dist/index.esm.js': { sha256: await sha256Hex(bundleContent) },
@@ -199,7 +209,11 @@ describe('EP security gate (security.test.ts)', () => {
       'dist/index.esm.js': { sha256: await sha256Hex(SAMPLE_BUNDLE) },
     };
     const payload = buildSignaturePayload(files);
-    const signature = await crypto.subtle.sign('Ed25519', enterprise.privateKey, payload);
+    const signature = await crypto.subtle.sign(
+      'Ed25519',
+      enterprise.privateKey,
+      asBufferSource(payload),
+    );
     const enterpriseSig = JSON.stringify({
       version: EP_SIGNATURE_VERSION,
       algorithm: EP_SIGNATURE_ALGORITHM,
@@ -334,10 +348,14 @@ describe('EP security gate (security.test.ts)', () => {
     expect(() => parseSignatureFile('not-json')).toThrow(/malformed JSON/);
     expect(() => parseSignatureFile('null')).toThrow(/expected object/);
     expect(() =>
-      parseSignatureFile(JSON.stringify({ version: 99, algorithm: 'Ed25519', files: {}, signature: 'x' })),
+      parseSignatureFile(
+        JSON.stringify({ version: 99, algorithm: 'Ed25519', files: {}, signature: 'x' }),
+      ),
     ).toThrow(/unsupported version/);
     expect(() =>
-      parseSignatureFile(JSON.stringify({ version: 1, algorithm: 'RSA', files: {}, signature: 'x' })),
+      parseSignatureFile(
+        JSON.stringify({ version: 1, algorithm: 'RSA', files: {}, signature: 'x' }),
+      ),
     ).toThrow(/unsupported algorithm/);
     expect(() =>
       parseSignatureFile(JSON.stringify({ version: 1, algorithm: 'Ed25519', signature: 'x' })),
@@ -402,7 +420,11 @@ describe('EP security gate (security.test.ts)', () => {
       'dist/index.esm.js': { sha256: await sha256Hex(SAMPLE_BUNDLE) },
     };
     const payload = buildSignaturePayload(files);
-    const signature = await crypto.subtle.sign('Ed25519', foreign.privateKey, payload);
+    const signature = await crypto.subtle.sign(
+      'Ed25519',
+      foreign.privateKey,
+      asBufferSource(payload),
+    );
     const foreignSig = JSON.stringify({
       version: EP_SIGNATURE_VERSION,
       algorithm: EP_SIGNATURE_ALGORITHM,

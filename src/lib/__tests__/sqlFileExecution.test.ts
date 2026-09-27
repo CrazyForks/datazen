@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 const { invokeMock, listenMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
-  listenMock: vi.fn(async () => () => {}),
+  listenMock: vi.fn(async (..._args: unknown[]) => () => {}),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -14,11 +14,10 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 import { runSqlFileExecution } from '../sqlFileExecution';
+import type { I18nKey } from '../../locales';
 
-const t = ((key: string) => key) as unknown as (
-  key: never,
-  params?: Record<string, string | number>,
-) => string;
+/** Identity translator: the key is what the progress line would carry anyway. */
+const t = (key: I18nKey): string => key;
 
 function baseOptions() {
   return {
@@ -30,9 +29,7 @@ function baseOptions() {
 
 beforeEach(() => {
   invokeMock.mockReset();
-  invokeMock.mockImplementation(async (cmd: string) =>
-    cmd === 'get_tables' ? [] : true,
-  );
+  invokeMock.mockImplementation(async (cmd: string) => (cmd === 'get_tables' ? [] : true));
 });
 
 describe('runSqlFileExecution (decision 3+6 unified IPC)', () => {
@@ -97,9 +94,7 @@ describe('runSqlFileExecution (decision 3+6 unified IPC)', () => {
   it('returns false when the dialog is dismissed (backend reports not executed)', async () => {
     const ok = await runSqlFileExecution(baseOptions());
     expect(ok).toBe(true);
-    invokeMock.mockImplementation(async (cmd: string) =>
-      cmd === 'get_tables' ? [] : false,
-    );
+    invokeMock.mockImplementation(async (cmd: string) => (cmd === 'get_tables' ? [] : false));
     const cancelled = await runSqlFileExecution(baseOptions());
     expect(cancelled).toBe(false);
   });

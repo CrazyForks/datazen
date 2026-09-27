@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { WebContextMenuHost } from '../WebContextMenu';
 import { showWebContextMenu, useContextMenuStore } from '../../../stores/contextMenuStore';
+import type { NativeMenuItemDef } from '../../../lib/nativeContextMenu';
 
 /**
  * [tester] e2e-ops-menu-BUG-001 复测回归：closeAnyMenu 关闭派发机理。
@@ -13,7 +14,9 @@ import { showWebContextMenu, useContextMenuStore } from '../../../stores/context
  *  - window 派发（round-0 写法，BUG-001 根因）→ e.target === window 非 Node →
  *    rootRef.contains(window) 按 WebIDL 抛 TypeError → hide() 永不执行。
  */
-const ONE_ITEM = [{ kind: 'item', id: 'a', label: 'A', action: () => undefined }];
+const ONE_ITEM: NativeMenuItemDef[] = [
+  { kind: 'item', id: 'a', label: 'A', action: () => undefined },
+];
 
 function submenuItems() {
   return [
@@ -71,9 +74,9 @@ describe('[tester] closeAnyMenu close-dispatch contract (e2e-ops-menu-BUG-001)',
     // round-0 / BUG-001 的窗口派发：e.target === window 非 Node，
     // onDown 的 rootRef.contains(window) 抛 WebIDL TypeError → hide() 不执行。
     // 捕获 window error 事件取证并 preventDefault，避免其污染 vitest run。
-    let captured: ErrorEvent | null = null;
+    const captured: ErrorEvent[] = [];
     const onWindowError = (e: Event) => {
-      captured = e as ErrorEvent;
+      captured.push(e as ErrorEvent);
       e.preventDefault();
     };
     window.addEventListener('error', onWindowError);
@@ -90,9 +93,9 @@ describe('[tester] closeAnyMenu close-dispatch contract (e2e-ops-menu-BUG-001)',
       // 且 onDown 确实抛了 WebIDL TypeError（BUG-001 机理取证）。
       // 注意 jsdom realm 的 error 与测试 realm 跨 realm，不用 instanceof，
       // 按 name + WebIDL 消息断言。
-      expect(captured).toBeTruthy();
-      expect(captured?.error?.name).toBe('TypeError');
-      expect(String(captured?.error)).toContain("not of type 'Node'");
+      expect(captured.length).toBeGreaterThan(0);
+      expect(captured[0]?.error?.name).toBe('TypeError');
+      expect(String(captured[0]?.error)).toContain("not of type 'Node'");
     } finally {
       window.removeEventListener('error', onWindowError);
       useContextMenuStore.getState().hide();

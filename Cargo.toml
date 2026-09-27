@@ -24,6 +24,18 @@ lto = true
 codegen-units = 1
 opt-level = "z"
 
+# CI-only profile, selected by release.yml via `tauri build --profile ci-release`.
+# Same size-oriented settings as `release`; the only change is thin LTO with
+# parallel codegen units. Fat LTO + codegen-units=1 makes the final link the
+# single largest cost of a release build, and the release matrix pays it once
+# per variant (11 jobs) plus once per target in the driver warmup job. Thin LTO
+# keeps most of the `opt-level = "z"` size win at a fraction of the link time.
+# Local `pnpm tauri:build` still uses `release` and is unaffected.
+[profile.ci-release]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 # Driver patches — injected by resolve-drivers.mjs at build time; do NOT add manually.
 # <<driver-patches>>
 # <</driver-patches>>

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { WappManagementPage, ExtensionManagementPage } from '../WappManagementPage';
+// `WappManagementPage` is the same component under its legacy name; this suite
+// drives `ExtensionManagementPage` only.
+import { ExtensionManagementPage } from '../WappManagementPage';
 import { WAPP_API_VERSION, type WappSummary } from '../../../types/wapp';
 import { useWorkspacePanelStateStore } from '../../../stores/workspacePanelStateStore';
 
@@ -17,11 +19,11 @@ const {
   confirmSpy,
 } = vi.hoisted(() => ({
   wappState: {
-    _list: [] as Array<Record<string, unknown>>,
+    _list: [] as Array<WappSummary>,
     get wapps() {
       return this._list;
     },
-    set wapps(v: Array<Record<string, unknown>>) {
+    set wapps(v: Array<WappSummary>) {
       this._list = v;
     },
     loaded: true,
@@ -53,7 +55,7 @@ vi.mock('../../../stores/wappStore', () => ({
       fetch: fetchMock,
       setEnabled: setEnabledMock,
       remove: removeMock,
-      byId: (id: string) => (wappState.wapps as Array<{ id: string }>).find((p) => p.id === id),
+      byId: (id: string) => wappState.wapps.find((p) => p.id === id),
     }),
   }),
 }));

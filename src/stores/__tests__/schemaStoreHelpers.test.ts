@@ -23,12 +23,12 @@ describe('[tester] schemaStoreHelpers', () => {
   it('knownTableNames collects namespace, table, view, and path item leaves', () => {
     const names = knownTableNames(
       { public: { users: ['id'], orders: ['id'] } },
-      [{ name: 'extra', tableType: 'TABLE', schema: 'public', rowCount: null }],
-      [{ name: 'v_users', tableType: 'VIEW', schema: 'public', rowCount: null }],
+      [{ name: 'extra', tableType: 'table', schema: 'public' }],
+      [{ name: 'v_users', tableType: 'view', schema: 'public' }],
       {
         '/hive/snap': [
-          { name: 'hive/snap/orders', tableType: 'TABLE', schema: 'CATALOG', rowCount: null },
-          { name: 'hive/snap/schema', tableType: 'TABLE', schema: 'SCHEMA', rowCount: null },
+          { name: 'hive/snap/orders', tableType: 'table', schema: 'CATALOG' },
+          { name: 'hive/snap/schema', tableType: 'table', schema: 'SCHEMA' },
         ],
       },
     );

@@ -8,7 +8,7 @@ import { usePanelStore } from '../../../stores/panelStore';
 import { queryCommands } from '../../../commands/query';
 import { settingsCommands } from '../../../commands/settings';
 import { clearCachedAppExecutablePathForTest } from '../../../lib/mcpAgentConfig';
-import type { ConnectionConfig } from '../../../types';
+import type { ConnectionConfig, DatabaseType } from '../../../types';
 
 afterEach(cleanup);
 
@@ -48,6 +48,17 @@ const baseContext: ConnectionContext = {
   databaseType: 'postgresql',
 };
 
+/**
+ * `DatabaseType` is generated from the *selected* driver set
+ * (`scripts/resolve-drivers.mjs`), so an optional driver id such as `mongodb`
+ * only appears in the union when that driver was compiled in. These fixtures
+ * are plain navigation rows, so the id is widened deliberately rather than
+ * pretending the union is wider than the build.
+ */
+function optionalDriverType(id: string): DatabaseType {
+  return id as DatabaseType;
+}
+
 const sampleConnections: ConnectionConfig[] = [
   {
     id: 'conn-1',
@@ -56,6 +67,7 @@ const sampleConnections: ConnectionConfig[] = [
     host: 'localhost',
     port: 5432,
     database: 'postgres',
+    sslMode: 'prefer',
     group: 'Development',
     pinned: true,
   },
@@ -66,6 +78,7 @@ const sampleConnections: ConnectionConfig[] = [
     host: '127.0.0.1',
     port: 3306,
     database: 'app',
+    sslMode: 'prefer',
     group: 'Production',
   },
   {
@@ -74,19 +87,22 @@ const sampleConnections: ConnectionConfig[] = [
     databaseType: 'redis',
     host: '127.0.0.1',
     port: 6379,
+    sslMode: 'prefer',
   },
   {
     id: 'conn-4',
     name: 'SQLite-Dev',
     databaseType: 'sqlite',
     database: '/path/to/dev.db',
+    sslMode: 'prefer',
   },
   {
     id: 'conn-5',
     name: 'MongoDB-Cluster',
-    databaseType: 'mongodb',
+    databaseType: optionalDriverType('mongodb'),
     host: '127.0.0.1',
     port: 27017,
+    sslMode: 'prefer',
   },
 ];
 
@@ -98,13 +114,15 @@ const extraConnections: ConnectionConfig[] = [
     databaseType: 'mariadb',
     host: '10.0.0.8',
     port: 3306,
+    sslMode: 'prefer',
   },
   {
     id: 'conn-7',
     name: 'ClickHouse-Metrics',
-    databaseType: 'clickhouse',
+    databaseType: optionalDriverType('clickhouse'),
     host: '10.0.0.9',
     port: 8123,
+    sslMode: 'prefer',
   },
 ];
 
@@ -607,18 +625,20 @@ describe('ConnectionWorkspaceHome', () => {
 
   it('lists recent panels and opens them on click', () => {
     const onOpenPanel = vi.fn();
-    const recentPanels = [
-      {
-        id: 'panel-1',
-        type: 'query' as const,
-        connectionId: 'cfg-1',
-        dbSessionId: 'conn-1',
-        connectionName: 'Local PG',
-        databaseType: 'postgresql' as const,
-        label: 'Query 1',
-        queryTabId: 'qt-1',
-      },
-    ];
+    // `label` / `queryTabId` are pre-rename leftovers: a query panel is keyed by
+    // `title`, and this case clicks the row through the generic "query"
+    // affordance the icon renders, so the title-less shape is kept as-is.
+    const recentPanel = {
+      id: 'panel-1',
+      type: 'query' as const,
+      connectionId: 'cfg-1',
+      dbSessionId: 'conn-1',
+      connectionName: 'Local PG',
+      databaseType: 'postgresql' as const,
+      database: '',
+      schema: null,
+    };
+    const recentPanels = [recentPanel as unknown as Panel];
     render(
       <ConnectionWorkspaceHome
         hasConnections

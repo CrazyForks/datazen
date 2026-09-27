@@ -12,8 +12,8 @@ describe('[tester] tableData/connectionState', () => {
   it('rowsToRecords maps column names to row values', () => {
     const records = rowsToRecords(
       [
-        { name: 'id', dataType: 'int', isPrimaryKey: true, isNullable: false },
-        { name: 'name', dataType: 'text', isPrimaryKey: false, isNullable: true },
+        { name: 'id', dataType: 'int', isPrimaryKey: true, nullable: false },
+        { name: 'name', dataType: 'text', isPrimaryKey: false, nullable: true },
       ],
       [
         [1, 'Alice'],

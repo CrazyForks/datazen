@@ -6,6 +6,7 @@ const sampleRun: WidgetRun = {
   id: 'run-1',
   dashboardId: 'dash-1',
   widgetId: 'widget-1',
+  workflowId: 'wf-1',
   startedAt: '2026-08-09T00:00:00.000Z',
   finishedAt: '2026-08-09T00:00:01.000Z',
   status: 'ok',

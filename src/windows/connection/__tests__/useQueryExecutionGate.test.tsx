@@ -4,7 +4,6 @@ import { useQueryExecutionGate } from '../query/useQueryExecutionGate';
 import { usePanelStore } from '../../../stores/panelStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useConnectionStore } from '../../../stores/connectionStore';
-import { useActiveConnectionStore } from '../../../stores/activeConnectionStore';
 import { EMPTY_QUERY_EXEC } from '../../../stores/queryExecActions';
 import type { StatementResult } from '../../../types';
 
@@ -82,7 +81,7 @@ vi.mock('../../../components/SqlEditor', async () => {
   return {
     SqlEditor: forwardRef(
       (
-        props: {
+        _props: {
           onContextMenu?: (e: MouseEvent, sql: string) => void;
           onExecute?: () => void;
         },

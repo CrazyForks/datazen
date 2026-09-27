@@ -18,7 +18,6 @@ export interface RightPanelRenderProps {
   onRefresh: () => void;
   onRenamed: (newKey: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
-  onClose: () => void;
 }
 
 /**

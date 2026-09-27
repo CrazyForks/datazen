@@ -80,6 +80,9 @@ describe('useSchemaDiffEndpoints', () => {
     vi.mocked(invoke).mockResolvedValue(MOCK_CONNECTIONS);
     vi.mocked(listDatabasesDedicated).mockResolvedValue({
       databases: ['datazen_sync_src', 'datazen_sync_tgt'],
+      // Matches the real helper, which releases the dedicated session before
+      // returning and therefore reports `dbSessionId: null`.
+      dbSessionId: null,
     });
     vi.mocked(ensureDedicatedSession).mockImplementation(
       async (_current, connectionId, database) =>

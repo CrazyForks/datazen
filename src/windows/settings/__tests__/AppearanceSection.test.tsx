@@ -8,11 +8,11 @@ const { wappState, fetchMock, settingsState, updateSettingsMock } = vi.hoisted((
   const updateSettingsFn = vi.fn();
   return {
     wappState: {
-      _list: [] as Array<Record<string, unknown>>,
-      get wapps() {
+      _list: [] as WappSummary[],
+      get wapps(): WappSummary[] {
         return this._list;
       },
-      set wapps(v: Array<Record<string, unknown>>) {
+      set wapps(v: WappSummary[]) {
         this._list = v;
       },
       loaded: true,
@@ -32,7 +32,7 @@ const { wappState, fetchMock, settingsState, updateSettingsMock } = vi.hoisted((
 });
 
 vi.mock('../../../hooks/useI18n', () => ({
-  useI18n: () => ({ t: (key: string, params?: Record<string, string | number>) => key }),
+  useI18n: () => ({ t: (key: string, _params?: Record<string, string | number>) => key }),
 }));
 
 vi.mock('../../../stores/wappStore', () => ({

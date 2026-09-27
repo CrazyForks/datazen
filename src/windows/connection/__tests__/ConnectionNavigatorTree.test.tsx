@@ -9,6 +9,8 @@ import {
 import { useSchemaStore } from '../../../stores/schemaStore';
 import type { ConnectionConfig, TableInfo } from '../../../types';
 import { showWebContextMenu } from '../../../stores/contextMenuStore';
+import type { NativeMenuItemDef } from '../../../lib/nativeContextMenu';
+import type { SqlNamespace } from '../../../lib/sqlNamespace';
 
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const mockGetDatabaseObjects = vi.hoisted(() => vi.fn());
@@ -253,7 +255,7 @@ vi.mock('../../../stores/connectionStore', () => {
   return {
     useConnectionStore,
     EVENT_CONNECTIONS_CHANGED: 'datazen:connections-changed',
-    groupConnections: (connections: ConnectionConfig[], groups: string[], _query: string) => [
+    groupConnections: (connections: ConnectionConfig[], _groups: string[], _query: string) => [
       { group: '', connections },
     ],
     groupConnectionsWithPinnedSection: (connections: ConnectionConfig[], groups: string[]) => {
@@ -346,24 +348,11 @@ async function activateDatabaseContext(
   });
 }
 
-/** Expand a PG database → schema path until `tableName` is visible. */
-async function ensurePgSchemaTableVisible(
-  findByText: (text: string) => Promise<HTMLElement>,
-  queryAllByText: (text: string) => HTMLElement[],
-  dbName: string,
-  schemaName: string,
-  tableName: string,
-  dbSessionId = 'conn-pg',
-) {
-  await waitFor(() => findByText(dbName));
-  fireEvent.click((await findByText(dbName)).closest('button')!);
-  await waitFor(() => {
-    expect(mockGetTables).toHaveBeenCalledWith(dbSessionId, dbName);
-  });
-  fireEvent.click((await findByText(schemaName)).closest('button')!);
-  await waitFor(() => {
-    expect(queryAllByText(tableName).length).toBeGreaterThan(0);
-  });
+/** Context-menu items are a discriminated union; only `item` entries carry an id + action. */
+type MenuActionItem = Extract<NativeMenuItemDef, { kind: 'item' }>;
+
+function findActionItem(items: NativeMenuItemDef[], id: string): MenuActionItem | undefined {
+  return items.find((item): item is MenuActionItem => item.kind === 'item' && item.id === id);
 }
 
 async function triggerContextMenuAction(
@@ -374,10 +363,10 @@ async function triggerContextMenuAction(
   const { showWebContextMenu } = await import('../../../stores/contextMenuStore');
   await waitFor(() => {
     const items = vi.mocked(showWebContextMenu).mock.calls.at(-1)?.[0] ?? [];
-    expect(items.some((item) => item.id === actionId)).toBe(true);
+    expect(items.some((item) => item.kind === 'item' && item.id === actionId)).toBe(true);
   });
   const menuItems = vi.mocked(showWebContextMenu).mock.calls.at(-1)?.[0] ?? [];
-  const target = menuItems.find((item) => item.id === actionId);
+  const target = findActionItem(menuItems, actionId);
   expect(target).toBeDefined();
   target?.action?.();
   return vi.mocked(showWebContextMenu);
@@ -398,10 +387,10 @@ async function triggerContextMenuRefresh(element: HTMLElement): Promise<void> {
   // showing the menu — poll for the refresh item instead of reading syncly.
   await waitFor(() => {
     const items = vi.mocked(showWebContextMenu).mock.calls.at(-1)?.[0] ?? [];
-    expect(items.some((item) => item.id === 'refresh')).toBe(true);
+    expect(items.some((item) => item.kind === 'item' && item.id === 'refresh')).toBe(true);
   });
   const menuItems = vi.mocked(showWebContextMenu).mock.calls.at(-1)?.[0] ?? [];
-  const refreshItem = menuItems.find((item) => item.id === 'refresh');
+  const refreshItem = findActionItem(menuItems, 'refresh');
   expect(refreshItem).toBeDefined();
   refreshItem?.action?.();
 }
@@ -411,7 +400,7 @@ async function triggerConnectionRefresh(
   connName = 'Local MySQL',
 ) {
   const connLabel = await findByText(connName);
-  const connRow = connLabel.closest('[data-conn-item]')!;
+  const connRow = connLabel.closest<HTMLElement>('[data-conn-item]')!;
   await triggerContextMenuRefresh(connRow);
 }
 
@@ -462,14 +451,17 @@ type SessionSchemaPatch = {
   tables?: TableInfo[];
   views?: TableInfo[];
   schemaNames?: string[];
-  namespaceTree?: Record<string, unknown>;
+  namespaceTree?: SqlNamespace;
   loadedPaths?: Set<string>;
   pathItems?: Record<string, TableInfo[]>;
   loading?: boolean;
+  /** Bumped by the store whenever a schema reload invalidates loaded paths. */
+  schemaEpoch?: number;
 };
 
 const EMPTY_SESSION_SCHEMA = {
   currentDatabase: null,
+  currentSchema: null,
   databases: [],
   databaseType: null,
   isMultiDatabase: false,
@@ -477,6 +469,7 @@ const EMPTY_SESSION_SCHEMA = {
   views: [],
   schemaNames: [],
   columnMap: {},
+  typedColumnMap: {},
   namespaceTree: {},
   loadedPaths: new Set<string>(),
   pathItems: {},
@@ -1615,9 +1608,9 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
   it('renders tables and views for the auto-expanded sqlite database', async () => {
     const { container } = await renderWithSqlite(
       [
-        { name: 'settings', tableType: 'table', schema: null },
-        { name: 'v_app', tableType: 'view', schema: null },
-        { name: 'idx_log', tableType: 'systemTable', schema: null },
+        { name: 'settings', tableType: 'table', schema: undefined },
+        { name: 'v_app', tableType: 'view', schema: undefined },
+        { name: 'idx_log', tableType: 'systemTable', schema: undefined },
       ],
       {},
       {},
@@ -1694,7 +1687,7 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
   it('lazy-loads object categories and dispatches openObject by kind', async () => {
     const openObject = vi.fn();
     const { container, findByText } = await renderWithSqlite(
-      [{ name: 'settings', tableType: 'table', schema: null }],
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
       {},
       { viewActions: { openObject } },
     );
@@ -1748,7 +1741,7 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
 
   it('caches an empty list when an object category fails to refresh', async () => {
     const { container, findByText } = await renderWithSqlite(
-      [{ name: 'settings', tableType: 'table', schema: null }],
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
       {},
       {},
     );
@@ -1772,7 +1765,7 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
   it('activates the clicked database in local state when nothing is cached', async () => {
     const onSelectTable = vi.fn();
     const { container, findByText } = await renderWithSqlite(
-      [{ name: 'settings', tableType: 'table', schema: null }],
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
       {},
       { onSelectTable },
     );
@@ -1791,7 +1784,7 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
 
   it('refresh paths reload expanded categories and single-db tables', async () => {
     const { container, findByText } = await renderWithSqlite(
-      [{ name: 'settings', tableType: 'table', schema: null }],
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
       {},
       {},
     );
@@ -1832,7 +1825,7 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
 
   it('F1-BUG-005: connection refresh restores expanded object categories', async () => {
     const { container, findByText } = await renderWithSqlite(
-      [{ name: 'settings', tableType: 'table', schema: null }],
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
       {},
       {},
     );
@@ -1863,7 +1856,7 @@ describe('ConnectionNavigatorTree standard single-db trees', () => {
 
   it('F1-BUG-005: single-db database-node refresh restores expanded categories', async () => {
     const { container, findByText } = await renderWithSqlite(
-      [{ name: 'settings', tableType: 'table', schema: null }],
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
       {},
       {},
     );
@@ -2148,7 +2141,7 @@ async function renderWithSqlite(
   tableItems: TableInfo[],
   connOverrides: Partial<ConnectionConfig>,
   props: {
-    onSelectTable?: (name: string, schema?: string, db?: string) => void;
+    onSelectTable?: (name: string, schema: string | null, db: string) => void;
     onNodeContextMenu?: (payload: { kind: string; name: string }) => void;
     viewActions?: Record<string, (...args: unknown[]) => void>;
   },
@@ -2265,8 +2258,8 @@ describe('ConnectionNavigatorTree multi-db tree variants', () => {
     mockGetTables.mockImplementation((_c: string, db: string) =>
       db === 'db_visible'
         ? Promise.resolve([
-            { name: 'real_table', tableType: 'table', schema: null },
-            { name: 'internal', tableType: 'systemTable', schema: null },
+            { name: 'real_table', tableType: 'table', schema: undefined },
+            { name: 'internal', tableType: 'systemTable', schema: undefined },
           ] as TableInfo[])
         : Promise.resolve([]),
     );
@@ -2294,10 +2287,10 @@ describe('ConnectionNavigatorTree multi-db tree variants', () => {
     fireEvent.contextMenu(catButton);
     await waitFor(() => {
       const items = vi.mocked(showWebContextMenu).mock.calls.at(-1)?.[0] ?? [];
-      expect(items.some((item) => item.id === 'refresh')).toBe(true);
+      expect(items.some((item) => item.kind === 'item' && item.id === 'refresh')).toBe(true);
     });
     const items = vi.mocked(showWebContextMenu).mock.calls.at(-1)?.[0] ?? [];
-    items.find((item) => item.id === 'refresh')?.action?.();
+    findActionItem(items, 'refresh')?.action?.();
 
     await waitFor(() => {
       expect(mockGetTables).toHaveBeenCalledWith('conn-1', 'db_a');
@@ -2690,7 +2683,7 @@ describe('ConnectionNavigatorTree group management', () => {
     connectionsState.connections = [makeConn({ id: 'cfg-w', name: 'Work Conn', group: 'work' })];
     const { container, findByText } = render(<ConnectionNavigatorTree {...baseProps} />);
     await findByText('Work Conn');
-    const header = [...container.querySelectorAll('[data-group-header]')].find((el) =>
+    const header = [...container.querySelectorAll<HTMLElement>('[data-group-header]')].find((el) =>
       el.textContent?.includes('work'),
     )!;
     expect(header).toBeTruthy();
@@ -2779,7 +2772,7 @@ describe('ConnectionNavigatorTree group dialogs', () => {
     connectionsState.connections = [makeConn({ id: 'cfg-w', name: 'Work Conn', group: 'work' })];
     const { container, findByText } = render(<ConnectionNavigatorTree {...baseProps} />);
     await findByText('Work Conn');
-    const header = [...container.querySelectorAll('[data-group-header]')].find((el) =>
+    const header = [...container.querySelectorAll<HTMLElement>('[data-group-header]')].find((el) =>
       el.textContent?.includes('work'),
     )!;
     await openMenuAndPick(header, 'rename-group');

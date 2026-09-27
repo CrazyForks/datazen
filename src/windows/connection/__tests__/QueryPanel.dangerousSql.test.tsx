@@ -194,6 +194,8 @@ describe('[tester] QueryPanel dangerous SQL confirmation', () => {
           connectionName: 'Test connection',
           databaseType: 'postgresql',
           title: 'Test query',
+          database: 'app',
+          schema: 'public',
         } satisfies QueryPanelState,
       ],
       queryExec: new Map([[PANEL_ID, { ...EMPTY_QUERY_EXEC, sql: 'SELECT 1', running: false }]]),
@@ -225,6 +227,8 @@ describe('[tester] QueryPanel dangerous SQL confirmation', () => {
         dbSessionId="sess-conn-1"
         connectionId="cfg-1"
         databaseType="postgresql"
+        database="app"
+        schema="public"
       />,
     );
   }

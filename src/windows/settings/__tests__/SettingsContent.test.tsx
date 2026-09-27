@@ -2,17 +2,14 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, fireEvent, screen, within } from '@testing-library/react';
 import { SettingsContent } from '../SettingsContent';
 import { SETTINGS_SECTIONS } from '../settingsSections';
-import type { AppSettings, PromptScenario } from '../../../types';
-
-const onCloseMock = vi.fn();
+import type { AppSettings } from '../../../types';
+import type { PromptScenario } from '../../../commands/ai';
 
 const {
   loadSettingsMock,
   updateSettingsMock,
   loadProvidersMock,
   validateConfigMock,
-  saveConfigMock,
-  deleteConfigMock,
   fetchRemoteModelsMock,
   loadMcpServersMock,
   connectMcpServerMock,
@@ -55,14 +52,19 @@ const {
     mcpPermissionMode: 'read_only',
     contextDir: '/tmp/context',
     driverSettings: {},
+    wappSettings: {},
     mcpClientServers: [],
+    mcpAllowedConnectionIds: [],
+    confirmDangerousExecution: false,
+    autoChartOnQuery: false,
     aiStrictEgress: true,
     monitor: {
-      enabled: false,
-      pollIntervalSecs: 60,
-      retentionDays: 7,
       trayEnabled: false,
-      alertsEnabled: false,
+      closeToTray: false,
+      maxConcurrentQueries: 2,
+      exportIncludeDashboardRuns: true,
+      runRetentionCount: 100,
+      runRetentionDays: 7,
     },
   };
 
@@ -126,7 +128,12 @@ const {
     clearError: vi.fn(),
     setupEventListeners: vi.fn().mockResolvedValue(() => {}),
     mcpServers: [] as { serverId: string; serverName: string; toolsCount: number }[],
-    mcpTools: [] as { serverId: string; toolName: string; qualifiedName: string }[],
+    mcpTools: [] as {
+      serverId: string;
+      toolName: string;
+      qualifiedName: string;
+      description?: string;
+    }[],
     mcpConnecting: false,
     mcpConnectingServerId: null as string | null,
     mcpError: null as string | null,
@@ -327,13 +334,6 @@ function goToSection(label: string) {
   fireEvent.click(screen.getByText(label));
 }
 
-function getSaveButton() {
-  return (
-    screen.getAllByText('common.save').find((el) => el.closest('footer')) ??
-    screen.getByText('common.save')
-  );
-}
-
 /** Open a Select combobox and pick an option by visible label. */
 function pickSelectOption(comboboxIndex: number, optionLabel: string) {
   const triggers = screen
@@ -393,7 +393,11 @@ beforeEach(() => {
     mcpPermissionMode: 'read_only',
     contextDir: '/tmp/context',
     driverSettings: {},
+    wappSettings: {},
     mcpClientServers: [],
+    mcpAllowedConnectionIds: [],
+    confirmDangerousExecution: false,
+    autoChartOnQuery: false,
     aiStrictEgress: true,
     monitor: {
       enabled: false,

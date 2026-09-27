@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useI18n } from '../../hooks/useI18n';
 import { cn } from '../../lib/cn';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
@@ -8,6 +9,7 @@ import { resolveCreateTableSchema } from '../../lib/structureEditor/resolveCreat
 import { invalidateSchemaCache } from '../../lib/schemaCache';
 import { getConnectionView } from '../../lib/connectionViews';
 import { useSchemaStore } from '../../stores/schemaStore';
+import { onPanelClosed } from '../../stores/panelStore';
 import {
   type Panel,
   type SubTabId,
@@ -78,6 +80,15 @@ export function PanelContentRenderer({
   callbacks,
   kvSlotState,
 }: PanelContentRendererProps) {
+  // Bound before the early return below so the registrar keeps a stable identity
+  // across renders; a fresh function per render would re-run the driver's
+  // registration effect on every commit.
+  const panelId = activePanel?.id;
+  const registerPanelClose = useCallback(
+    (handler: () => void) => onPanelClosed(panelId ?? '', handler),
+    [panelId],
+  );
+
   if (!activePanel) {
     return null;
   }
@@ -90,6 +101,8 @@ export function PanelContentRenderer({
     return (
       <KvView
         key={activePanel.id}
+        panelId={activePanel.id}
+        onPanelClosed={registerPanelClose}
         dbSessionId={activePanel.dbSessionId}
         connectionId={activePanel.connectionId}
         connectionName={activePanel.connectionName}

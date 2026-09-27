@@ -7,7 +7,21 @@ import {
   getDbLabel,
   getDriverIconMap,
   getDriverIconParents,
+  type DatabaseTypeMeta,
 } from '../databaseTypes';
+import type { DatabaseType } from '../../types';
+
+/**
+ * `DatabaseType` and `DB_REGISTRY` are codegen'd from the drivers resolved into
+ * *this* SKU, so a driver documented below may legitimately be absent from the
+ * current build. The cases keep their `if (!entry) return;` guards and look the
+ * registry up by plain id instead of pinning the generated union.
+ */
+const REGISTRY_BY_ID = DB_REGISTRY as unknown as Record<string, DatabaseTypeMeta | undefined>;
+
+function dbTypeOf(id: string): DatabaseType {
+  return id as DatabaseType;
+}
 
 describe('DB_REGISTRY behavioral flags', () => {
   it('mysql and mariadb enable multi-database session capability', () => {
@@ -40,9 +54,10 @@ describe('DB_REGISTRY behavioral flags', () => {
   });
 
   it('native SQL engines advertise explain only when backend implements it', () => {
-    for (const id of ['clickhouse', 'duckdb', 'rqlite', 'turso', 'sqlserver'] as const) {
-      if (!DB_REGISTRY[id]) continue;
-      expect(DB_REGISTRY[id].supportsExplain).toBe(true);
+    for (const id of ['clickhouse', 'duckdb', 'rqlite', 'turso', 'sqlserver']) {
+      const entry = REGISTRY_BY_ID[id];
+      if (!entry) continue;
+      expect(entry.supportsExplain).toBe(true);
     }
   });
 
@@ -52,11 +67,12 @@ describe('DB_REGISTRY behavioral flags', () => {
   });
 
   it('mongodb uses document connection view', () => {
-    if (!DB_REGISTRY.mongodb) return;
-    expect(DB_REGISTRY.mongodb.connectionView).toBe('document');
-    expect(DB_REGISTRY.mongodb.category).toBe('document');
-    expect(DB_REGISTRY.mongodb.supportsSQL).toBe(false);
-    expect(DB_REGISTRY.mongodb.hasMultiDatabase).toBe(true);
+    const mongodb = REGISTRY_BY_ID.mongodb;
+    if (!mongodb) return;
+    expect(mongodb.connectionView).toBe('document');
+    expect(mongodb.category).toBe('document');
+    expect(mongodb.supportsSQL).toBe(false);
+    expect(mongodb.hasMultiDatabase).toBe(true);
   });
 });
 
@@ -103,7 +119,7 @@ describe('formatConnectionAddr', () => {
 
   it('formats url mode from host', () => {
     const addr = formatConnectionAddr({
-      databaseType: 'mongodb',
+      databaseType: dbTypeOf('mongodb'),
       host: 'mongodb://localhost',
     });
     expect(addr).toContain('mongodb://localhost');

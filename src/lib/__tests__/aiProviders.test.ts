@@ -24,6 +24,9 @@ describe('normalizeAiProviders', () => {
     defaultProtocol: 'open_ai_compatible',
   };
 
+  // Legacy `anthropic` entry the backend may still hand back: it is no longer a
+  // valid `AiProviderType`, so it is cast in deliberately — the whole point of
+  // these cases is that `normalizeAiProviders` drops it.
   const anthropic = {
     providerType: 'anthropic',
     displayName: 'Anthropic (Claude)',
@@ -31,7 +34,7 @@ describe('normalizeAiProviders', () => {
     supportsTools: true,
     defaultEndpoint: 'https://api.anthropic.com',
     defaultProtocol: 'anthropic_compatible',
-  } as ProviderListItem;
+  } as unknown as ProviderListItem;
 
   const custom: ProviderListItem = {
     providerType: 'custom',

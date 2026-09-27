@@ -48,7 +48,7 @@ vi.mock('../connectionEditor', () => ({
 
 describe('windowManager — browser', () => {
   beforeEach(() => {
-    delete (window as Record<string, unknown>).__TAURI_INTERNALS__;
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
     vi.clearAllMocks();
     vi.spyOn(window, 'open').mockReturnValue(null);
   });
@@ -189,7 +189,7 @@ describe('windowManager — browser', () => {
 
 describe('windowManager — Tauri', () => {
   beforeEach(() => {
-    (window as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
     vi.clearAllMocks();
     mockInvoke.mockResolvedValue(undefined);
     mockOpenPath.mockResolvedValue(undefined);
@@ -197,7 +197,7 @@ describe('windowManager — Tauri', () => {
   });
 
   afterEach(() => {
-    delete (window as Record<string, unknown>).__TAURI_INTERNALS__;
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
   });
 
   it('openDocsWindow uses open_path IPC and does not create a sub-window', async () => {
@@ -257,13 +257,11 @@ describe('windowManager — Tauri', () => {
           resolveInvoke = resolve;
         }),
     );
-    mockGetByLabel
-      .mockResolvedValueOnce(null)
-      .mockResolvedValue({
-        show: mockShow,
-        unminimize: mockUnminimize,
-        setFocus: mockSetFocus,
-      });
+    mockGetByLabel.mockResolvedValueOnce(null).mockResolvedValue({
+      show: mockShow,
+      unminimize: mockUnminimize,
+      setFocus: mockSetFocus,
+    });
     const { openDataSyncWindow } = await import('../windowManager');
     openDataSyncWindow();
     openDataSyncWindow();

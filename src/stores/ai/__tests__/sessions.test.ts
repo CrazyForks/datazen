@@ -28,26 +28,26 @@ describe('computeSessionKey', () => {
 
 describe('loadSessions / saveSessions', () => {
   beforeEach(() => {
+    // The methods close over `store` instead of reading `this.store`: the
+    // `as unknown as Storage` assertion on the literal erases `this` typing
+    // inside the `length` getter.
+    const store: Record<string, string> = {};
     vi.stubGlobal('localStorage', {
-      store: {} as Record<string, string>,
-      getItem: vi.fn(function (this: { store: Record<string, string> }, key: string) {
-        return this.store[key] ?? null;
+      store,
+      getItem: vi.fn((key: string) => store[key] ?? null),
+      setItem: vi.fn((key: string, val: string) => {
+        store[key] = val;
       }),
-      setItem: vi.fn(function (this: { store: Record<string, string> }, key: string, val: string) {
-        this.store[key] = val;
+      removeItem: vi.fn((key: string) => {
+        delete store[key];
       }),
-      removeItem: vi.fn(function (this: { store: Record<string, string> }, key: string) {
-        delete this.store[key];
-      }),
-      clear: vi.fn(function (this: { store: Record<string, string> }) {
-        this.store = {};
+      clear: vi.fn(() => {
+        for (const key of Object.keys(store)) delete store[key];
       }),
       get length() {
-        return Object.keys(this.store).length;
+        return Object.keys(store).length;
       },
-      key: vi.fn(function (this: { store: Record<string, string> }, i: number) {
-        return Object.keys(this.store)[i] ?? null;
-      }),
+      key: vi.fn((i: number) => Object.keys(store)[i] ?? null),
     } as unknown as Storage);
   });
 

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Loader2 } from 'lucide-react';
-import { cn } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import {
   useBoundSettingsStore,
@@ -9,19 +8,24 @@ import {
   readBooleanField,
 } from '@datazen/driver-sdk';
 import { redisCommandInvoke } from '../shared/redisInvoke';
-import { assessCommand, classifyDangerLevel, isFlushCommand } from './redisConsoleDanger';
+import { classifyDangerLevel, isFlushCommand } from './redisConsoleDanger';
 import {
   assessCommands,
   badgeAssessment,
   composeBlockedMessage,
   describeCommands,
 } from './consoleCommandBatch';
-import { RedisConsoleDangerBadge, dangerBorderClass } from './RedisConsoleDangerBadge';
+import { RedisConsoleDangerBadge } from './RedisConsoleDangerBadge';
+import { inferResultType, type ConsoleResultItem } from './consoleResultRenderer';
+import { ConsoleTranscriptView } from './ConsoleTranscriptView';
 import {
-  ConsoleResultView,
-  inferResultType,
-  type ConsoleResultItem,
-} from './consoleResultRenderer';
+  appendCommand,
+  appendError,
+  appendResult,
+  setDraft,
+  useTranscriptDraft,
+  useTranscriptEntries,
+} from './consoleTranscript';
 import { useRedisGate } from '../shared/useRedisGate';
 import { SafeModeBadge } from '../shared/SafeModeBadge';
 import {
@@ -37,6 +41,13 @@ import { readClusterRouting, resolvePinnedNodeAddr } from '../connection/setting
 
 export interface RedisConsoleProps {
   dbSessionId: string;
+  /**
+   * Identity of the owning top-level tab (`shared/panelId.ts`). The transcript
+   * and the ↑↓ recall list are keyed by this, never by `dbSessionId`, which every
+   * db tab of one connection shares — otherwise a sibling db would open showing
+   * another db's scrollback. `dbSessionId` stays the IPC session for the wire.
+   */
+  panelId: string;
   dbIndex?: number;
   keySuggestions?: string[];
   pinnedNodeAddr?: string;
@@ -83,13 +94,16 @@ function toConsoleResultItem(result: ExecResult): ConsoleResultItem {
     ok: result.ok,
     value: result.value,
     error: result.error,
-    resultType: (fromServer ? result.resultType : inferResultType(result.value)) as ConsoleResultItem['resultType'],
+    resultType: (fromServer
+      ? result.resultType
+      : inferResultType(result.value)) as ConsoleResultItem['resultType'],
     dangerLevel: classifyDangerLevel(result.command),
   };
 }
 
 export function RedisConsole({
   dbSessionId,
+  panelId,
   dbIndex = 0,
   keySuggestions = [],
   pinnedNodeAddr = '',
@@ -111,12 +125,16 @@ export function RedisConsole({
   const fontFamily = resolveEditorFontFamily(editorFontFamily, '', HOST_DEFAULT_EDITOR_FONT);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [commands, setCommands] = useState('');
-  const [cursor, setCursor] = useState(0);
+  // The input draft and the scrollback both live in the module-level transcript
+  // store, not in component state: the host unmounts this whole subtree every
+  // time the user switches panel, and component state would go with it.
+  const commands = useTranscriptDraft(panelId);
+  const setCommands = useCallback((next: string) => setDraft(panelId, next), [panelId]);
+  const entries = useTranscriptEntries(panelId);
   const [running, setRunning] = useState(false);
-  const [results, setResults] = useState<ExecResult[]>([]);
-  const [activeResultIdx, setActiveResultIdx] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  // Caret position stays in component state: it is view state, and losing it on
+  // a remount just means the caret returns to where the restored draft begins.
+  const [cursor, setCursor] = useState(0);
   const [historyState, setHistoryState] = useState<HistoryNavigationState>({
     index: null,
     draft: '',
@@ -126,12 +144,11 @@ export function RedisConsole({
   const [completionDismissed, setCompletionDismissed] = useState(false);
 
   useEffect(() => {
-    setHistory(loadConsoleHistory(dbSessionId));
-    setCommands('');
-    setResults([]);
-    setError(null);
+    // Command history is per-session and persisted; the transcript is not
+    // reset here because that would wipe the scrollback on every remount.
+    setHistory(loadConsoleHistory(panelId));
     setHistoryState({ index: null, draft: '' });
-  }, [dbSessionId]);
+  }, [panelId]);
 
   const completion = useCompletion({
     text: commands,
@@ -192,7 +209,10 @@ export function RedisConsole({
       // the blocked tier (task book §1.2 "不可仅弹确认放行"). FLUSHDB/FLUSHALL
       // keep their dedicated copy, which explains the Allow Flush opt-in.
       const flushOnly = batch.blocked.every((command) => isFlushCommand(command.name));
-      setError(flushOnly ? t('redis.console.flushBlocked') : composeBlockedMessage(batch, t));
+      appendError(
+        panelId,
+        flushOnly ? t('redis.console.flushBlocked') : composeBlockedMessage(batch, t),
+      );
       return;
     }
 
@@ -213,10 +233,13 @@ export function RedisConsole({
     }
 
     setRunning(true);
-    setError(null);
-    setResults([]);
-    setActiveResultIdx(0);
     setHistoryState({ index: null, draft: trimmed });
+
+    // Echo the command into the scrollback *before* the round trip, so the
+    // transcript reads like a real session rather than a result slot. A declined
+    // confirmation returns above and leaves no echo, matching shell behaviour
+    // where Ctrl-C does not print the line.
+    appendCommand(panelId, trimmed, dbIndex);
 
     try {
       const response = await redisCommandInvoke<ExecResponse>('redis', 'exec', {
@@ -225,14 +248,16 @@ export function RedisConsole({
         commands: trimmed,
         nodeAddr,
       });
-      setResults(response.results ?? []);
-      setHistory(pushConsoleHistory(dbSessionId, trimmed));
+      for (const result of response.results ?? []) {
+        appendResult(panelId, result.command, toConsoleResultItem(result));
+      }
+      setHistory(pushConsoleHistory(panelId, trimmed));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      appendError(panelId, err instanceof Error ? err.message : String(err));
     } finally {
       setRunning(false);
     }
-  }, [commands, dbSessionId, dbIndex, nodeAddr, running, allowFlush, gateWrite, t]);
+  }, [commands, panelId, dbSessionId, dbIndex, nodeAddr, running, allowFlush, gateWrite, t]);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -306,9 +331,6 @@ export function RedisConsole({
     ],
   );
 
-  const activeResult = results[activeResultIdx];
-  const failedCount = results.reduce((count, result) => (result.ok ? count : count + 1), 0);
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* ── top toolbar ──────────────────────────────────────────────── */}
@@ -327,109 +349,32 @@ export function RedisConsole({
         />
       </div>
 
-      {/* ── results area (scrollable, top) ───────────────────────────── */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+      {/* ── scrollback (scrollable, grows downward) ──────────────────── */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <ConsoleTranscriptView entries={entries} />
         {running && (
-          <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-            <Loader2 className="h-5 w-5 animate-spin" />
+          <div className="flex shrink-0 items-center gap-2 px-4 py-1 text-xs text-fg-muted">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
             {t('query.executing')}
-          </div>
-        )}
-
-        {error && !running && (
-          <div className="flex-1 overflow-auto p-4">
-            <div
-              className="whitespace-pre-line rounded-md border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger"
-              data-testid="redis-console-error"
-            >
-              {error}
-            </div>
-          </div>
-        )}
-
-        {results.length > 0 && !running && (
-          <>
-            {failedCount > 0 && (
-              <div
-                className="shrink-0 border-b border-danger/20 bg-danger/10 px-3 py-1 text-xs text-danger"
-                data-testid="redis-console-failed-count"
-              >
-                {t('redis.errorsCount', { count: String(failedCount) })}
-              </div>
-            )}
-            {results.length > 1 && (
-              <div className="flex shrink-0 items-center border-b border-edge bg-surface-alt px-1">
-                {results.map((result, idx) => (
-                  <button
-                    key={`${result.command}-${idx}`}
-                    type="button"
-                    className={cn(
-                      'relative max-w-[220px] truncate border-l-2 px-3 py-1.5 text-xs transition-colors',
-                      dangerBorderClass(assessCommand(result.command)),
-                      idx === activeResultIdx
-                        ? 'text-fg font-medium'
-                        : 'text-fg-muted hover:text-fg-secondary',
-                    )}
-                    title={result.command}
-                    onClick={() => setActiveResultIdx(idx)}
-                  >
-                    {t('query.result')} {idx + 1}
-                    <span
-                      className={cn(
-                        'ml-1.5 text-[10px]',
-                        result.ok ? 'text-success/80' : 'text-danger',
-                      )}
-                    >
-                      {result.ok ? 'OK' : 'ERR'}
-                    </span>
-                    <span
-                      className={cn(
-                        'absolute inset-x-0 bottom-0 h-0.5 bg-accent transition-opacity duration-300',
-                        idx === activeResultIdx ? 'opacity-100' : 'opacity-0',
-                      )}
-                    />
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {activeResult && (
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                <div
-                  className={cn(
-                    'flex items-center gap-3 border-b border-l-2 border-edge bg-surface-alt px-3 py-1.5 text-xs text-fg-secondary',
-                    dangerBorderClass(assessCommand(activeResult.command)),
-                  )}
-                >
-                  <span className="font-mono">{activeResult.command}</span>
-                  <span className="text-edge">|</span>
-                  <span className={activeResult.ok ? 'text-success/90' : 'text-danger'}>
-                    {activeResult.ok ? t('redis.console.ok') : t('redis.console.failed')}
-                  </span>
-                </div>
-                <div
-                  className="min-h-0 flex-1 overflow-auto p-4"
-                  data-testid="redis-console-result"
-                >
-                  <ConsoleResultView item={toConsoleResultItem(activeResult)} />
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-        {results.length === 0 && !running && !error && (
-          <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
-            {t('redis.console.empty')}
           </div>
         )}
       </div>
 
       {/* ── input bar (terminal-style, bottom) ───────────────────────── */}
-      <div className="relative shrink-0 border-t border-edge" style={{ minHeight: 48 }}>
-        <div className="flex items-stretch bg-surface">
+      {/* Exactly one line, always. The `dbN>` prompt and the field share `h-9`
+          and the same line-height so their text sits on one baseline row.
+
+          The field is a `textarea` rather than an `input` because a pasted
+          multi-line batch has to survive intact for `assessCommands` to grade
+          the whole thing (PRD I-7). What keeps it to one line is `wrap="off"`
+          plus the height clamp: the browser soft-wraps a textarea by default,
+          which is what made the field grow to three-plus lines and start
+          scrolling. A long command stays fully reachable by scrolling
+          horizontally, which is how a real shell line behaves. */}
+      <div className="relative shrink-0 border-t border-edge">
+        <div className="flex h-9 items-stretch bg-surface">
           <span
-            className="flex shrink-0 items-center pl-3 pr-1 font-mono text-[13px] text-accent select-none"
+            className="flex shrink-0 items-center pl-3 pr-1 font-mono text-[13px] leading-5 text-accent select-none"
             aria-hidden="true"
           >
             db{dbIndex}&gt;
@@ -451,11 +396,10 @@ export function RedisConsole({
             spellCheck={false}
             placeholder={t('redis.console.placeholder')}
             rows={1}
-            className="min-h-[48px] w-full resize-none bg-transparent py-3 pr-4 text-[13px] text-fg outline-none"
+            wrap="off"
+            className="h-9 w-full resize-none overflow-y-hidden overflow-x-auto bg-transparent py-2 pr-4 text-[13px] leading-5 text-fg outline-none"
             style={{
               fontFamily: `${fontFamily}, ui-monospace, SFMono-Regular, Menlo, monospace`,
-              height: 'auto',
-              overflowY: commands.split('\n').length > 3 ? 'auto' : 'hidden',
             }}
           />
         </div>
