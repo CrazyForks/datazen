@@ -1,4 +1,5 @@
 /** @vitest-environment node */
+import { execFileSync } from 'child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -484,7 +485,8 @@ describe('host shared module registry (G1 anti-drift guard)', () => {
   });
 
   it('sql-editor-pro peerDependencies stay inside the host shared set (when present)', () => {
-    const proPkg = join(ROOT, 'packages/pro-extensions/sql-editor-pro/package.json');
+    const proDir = join(ROOT, 'packages/pro-extensions/sql-editor-pro');
+    const proPkg = join(proDir, 'package.json');
     if (!existsSync(proPkg)) {
       return;
     }
@@ -492,11 +494,33 @@ describe('host shared module registry (G1 anti-drift guard)', () => {
     const peers = Object.keys(
       (parsed as { peerDependencies?: Record<string, string> }).peerDependencies ?? {},
     );
-    expect(peers).toContain('@codemirror/language');
-    expect(peers).toContain('@codemirror/commands');
+    // Pro 是**独立 git 仓库**，每个 worktree 各有一份检出，且由各轨自行建 worktree。
+    // 「目录存在」不等于「检出在匹配 commit」——陈旧检出会让本断言给出**看似代码缺陷的
+    // 红灯**（实测：集成分支的 Pro 检出停在 base 时，本例报 5 个 peer 缺 @codemirror/language，
+    // 而宿主代码毫无问题）。故把检出身份写进失败信息，让红灯自证来源。
+    const proBranch = ((): string => {
+      try {
+        return execFileSync('git', ['-C', proDir, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+      } catch {
+        return '(非 git 检出)';
+      }
+    })();
+    const proHint =
+      `Pro 检出 = ${proBranch}。若本断言失败而该检出并非本 initiative 的 Pro 集成分支` +
+      `（productivity/editor-productivity），则多半是本 worktree 的 Pro 检出陈旧，` +
+      `而非宿主代码缺陷 —— 请先对齐 Pro 检出再判定。`;
+
+    expect(peers, proHint).toContain('@codemirror/language');
+    expect(peers, proHint).toContain('@codemirror/commands');
     const hostSet = new Set(HOST_SHARED_MODULES);
     // A peer the host never publishes is a guaranteed missing key at load.
-    expect(peers.filter((peer) => !hostSet.has(peer))).toEqual([]);
+    expect(
+      peers.filter((peer) => !hostSet.has(peer)),
+      proHint,
+    ).toEqual([]);
   });
 });
 
@@ -544,30 +568,38 @@ describe('externalize / allow-list asymmetry probe (G1 red line)', () => {
     return new RegExp(literal[0].slice(1, -1));
   }
 
-  it.skipIf(!hasProViteConfig)('keeps the wide /^@codemirror\\// externalize rule on the Pro side', () => {
-    expect(readExternalizePredicate(proSource)).toContain('/^@codemirror\\//');
-    // `rollupOptions.external` must keep its regex entry too, not a string list.
-    expect(proSource).toContain('/^@codemirror\\/.*/');
-  });
+  it.skipIf(!hasProViteConfig)(
+    'keeps the wide /^@codemirror\\// externalize rule on the Pro side',
+    () => {
+      expect(readExternalizePredicate(proSource)).toContain('/^@codemirror\\//');
+      // `rollupOptions.external` must keep its regex entry too, not a string list.
+      expect(proSource).toContain('/^@codemirror\\/.*/');
+    },
+  );
 
   it.skipIf(!hasProViteConfig)('keeps HOST_SHARED_MODULES a literal list, free of regexes', () => {
     expect(HOST_SHARED_MODULES.every((entry: unknown) => typeof entry === 'string')).toBe(true);
     expect(HOST_SHARED_MODULES).not.toContain('/^@codemirror\\//');
   });
 
-  it.skipIf(!hasProViteConfig)('wide externalize range is still strictly wider than the narrow allow-list', () => {
-    const wide = readWideCodemirrorPattern(proSource);
-    const narrow = new Set(HOST_SHARED_MODULES);
-    // Specifiers the wide rule externalizes but the host table never publishes.
-    const admitted = ['@codemirror/search', '@codemirror/lang-sql', '@codemirror/theme-one-dark'].filter(
-      (spec) => wide.test(spec) && !narrow.has(spec),
-    );
-    expect(admitted.length).toBeGreaterThan(0);
-    // The probe is live: each of them must still hard-fail at pack time.
-    for (const spec of admitted) {
-      expect(() =>
-        rewriteEpImportsToHostGlobals(`import { probe } from "${spec}";`),
-      ).toThrow(new RegExp(`unmapped bare import from "${spec.replace('/', '\\/')}"`));
-    }
-  });
+  it.skipIf(!hasProViteConfig)(
+    'wide externalize range is still strictly wider than the narrow allow-list',
+    () => {
+      const wide = readWideCodemirrorPattern(proSource);
+      const narrow = new Set(HOST_SHARED_MODULES);
+      // Specifiers the wide rule externalizes but the host table never publishes.
+      const admitted = [
+        '@codemirror/search',
+        '@codemirror/lang-sql',
+        '@codemirror/theme-one-dark',
+      ].filter((spec) => wide.test(spec) && !narrow.has(spec));
+      expect(admitted.length).toBeGreaterThan(0);
+      // The probe is live: each of them must still hard-fail at pack time.
+      for (const spec of admitted) {
+        expect(() => rewriteEpImportsToHostGlobals(`import { probe } from "${spec}";`)).toThrow(
+          new RegExp(`unmapped bare import from "${spec.replace('/', '\\/')}"`),
+        );
+      }
+    },
+  );
 });
