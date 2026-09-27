@@ -84,6 +84,8 @@ export function ContentView({
   const activePanelId = usePanelStore((s) => s.activePanelId);
   const setActivePanel = usePanelStore((s) => s.setActivePanel);
   const storeUpdatePanel = usePanelStore((s) => s.updatePanel);
+  // Pane that editor actions route to; `null` = the tab has not been split.
+  const focusedPaneId = usePanelStore((s) => s.focusedPaneId);
 
   const activePanel = allPanels.find((p) => p.id === activePanelId) ?? null;
 
@@ -555,6 +557,7 @@ export function ContentView({
           ) : (
             <PanelContentRenderer
               activePanel={activePanel}
+              focusedPaneId={focusedPaneId}
               currentDatabase={currentDatabase}
               lastTableSchema={lastTableSchema}
               onSetSubTab={handlers.handleSetSubTab}

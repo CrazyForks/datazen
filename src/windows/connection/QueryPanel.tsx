@@ -8,7 +8,7 @@ import {
   tableClauseFingerprint,
   tablesReferencedInSql,
 } from '../../lib/sqlEditorDefaults';
-import { usePanelStore } from '../../stores/panelStore';
+import { paneArgs, paneKey, resolveFocusedPaneId, usePanelStore } from '../../stores/panelStore';
 import { useActiveConnectionStore } from '../../stores/activeConnectionStore';
 import { useQueryExec } from '../../hooks/useQueryExec';
 import { useSchemaStore } from '../../stores/schemaStore';
@@ -61,6 +61,7 @@ const EDITOR_HEIGHT_STORAGE_KEY = 'query-editor-height';
 
 export function QueryPanel({
   panelId,
+  focusedPaneId,
   dbSessionId,
   connectionId,
   databaseType,
@@ -72,7 +73,11 @@ export function QueryPanel({
 }: QueryPanelProps) {
   const { t } = useI18n();
   const [confirmRetry, confirmRetryDialog] = useConfirmDialog();
-  const exec = useQueryExec(panelId);
+  // Every editor action this panel issues targets the focused pane; until a tab is
+  // split that is the pane keyed by the bare panel id, i.e. exactly the
+  // pre-pane behavior.
+  const paneId = resolveFocusedPaneId(focusedPaneId);
+  const exec = useQueryExec(panelId, paneId);
   const { openPanelId } = useQueryBuilderContribution();
   // While the visual builder is up it replaces the whole query content area,
   // so the result pane yields its height to the canvas (PRD §6.4 / G2).
@@ -103,6 +108,7 @@ export function QueryPanel({
   const setResultDetailRow = usePanelStore((s) => s.setResultDetailRow);
   const setChartConfig = usePanelStore((s) => s.setChartConfig);
   const setResultViewModeStore = usePanelStore((s) => s.setResultViewMode);
+  const togglePinResult = usePanelStore((s) => s.togglePinResult);
 
   const editorRef = useRef<SqlEditorHandle>(null);
   const enhanced = useExtension(sqlEditorEnhancedEP);
@@ -346,6 +352,7 @@ export function QueryPanel({
 
   const executionGate = useQueryExecutionGate({
     panelId,
+    paneId,
     dbSessionId,
     databaseType,
     connectionId,
@@ -367,6 +374,7 @@ export function QueryPanel({
 
   const workflows = useQueryPanelWorkflows({
     panelId,
+    paneId,
     connectionId,
     dbSessionId,
     databaseType,
@@ -550,24 +558,24 @@ export function QueryPanel({
     const unlisten = listen('menu:add-favorite', () => {
       workflows.openAddFavoriteDialog(
         workflows.pendingFavSqlRef.current ||
-          usePanelStore.getState().queryExec.get(panelId)?.sql ||
+          usePanelStore.getState().queryExec.get(paneKey(panelId, paneId))?.sql ||
           '',
       );
     });
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [panelId, workflows.openAddFavoriteDialog, workflows.pendingFavSqlRef]);
+  }, [panelId, paneId, workflows.openAddFavoriteDialog, workflows.pendingFavSqlRef]);
 
   const handleFormat = useCallback(() => {
     if (!exec.sql.trim()) return;
     try {
       const options = useSettingsStore.getState().settings.sqlFormatOptions;
-      updateSql(panelId, formatSql(exec.sql, databaseType, options));
+      updateSql(panelId, formatSql(exec.sql, databaseType, options), ...paneArgs(paneId));
     } catch {
       /* keep original SQL if formatter rejects dialect-specific syntax */
     }
-  }, [exec.sql, panelId, databaseType, updateSql]);
+  }, [exec.sql, panelId, paneId, databaseType, updateSql]);
 
   const { results, activeResultIdx } = exec;
   const activeResult = results[activeResultIdx];
@@ -663,10 +671,10 @@ export function QueryPanel({
             favoritesVisible={favoritesVisible}
             onToggleHistory={toggleHistory}
             onToggleFavorites={toggleFavorites}
-            onUpdateSql={(v) => updateSql(panelId, v)}
+            onUpdateSql={(v) => updateSql(panelId, v, ...paneArgs(paneId))}
             onExecute={executionGate.handleExecute}
             onExecuteSelection={executionGate.handleExecuteSelection}
-            onCancel={() => void cancelQuery(panelId)}
+            onCancel={() => void cancelQuery(panelId, ...paneArgs(paneId))}
             onFormat={handleFormat}
             onCompletionRefreshed={(message) => showMessageDialog(message, 'success')}
             onExplain={workflows.handleExplain}
@@ -720,16 +728,16 @@ export function QueryPanel({
                 onExplainError={workflows.handleExplainError}
                 retryActionEnabled={workflows.retryAction.enabled}
                 addToDashboardOpen={workflows.addToDashboardOpen}
-                onApplyAiSql={(v) => updateSql(panelId, v)}
+                onApplyAiSql={(v) => updateSql(panelId, v, ...paneArgs(paneId))}
                 onApplyFixSql={workflows.handleApplyFixSql}
                 onRetry={workflows.handleRetry}
-                onSetActiveResult={(idx) => setActiveResult(panelId, idx)}
-                onTogglePinResult={(idx) => usePanelStore.getState().togglePinResult(panelId, idx)}
+                onSetActiveResult={(idx) => setActiveResult(panelId, idx, ...paneArgs(paneId))}
+                onTogglePinResult={(idx) => togglePinResult(panelId, idx, ...paneArgs(paneId))}
                 onSetResultViewMode={(mode) => {
-                  setResultViewModeStore(panelId, mode);
+                  setResultViewModeStore(panelId, mode, ...paneArgs(paneId));
                 }}
-                onChartConfigChange={(cfg) => setChartConfig(panelId, cfg)}
-                onRowDetail={(rowIndex) => setResultDetailRow(panelId, rowIndex)}
+                onChartConfigChange={(cfg) => setChartConfig(panelId, cfg, ...paneArgs(paneId))}
+                onRowDetail={(rowIndex) => setResultDetailRow(panelId, rowIndex, ...paneArgs(paneId))}
                 onShowExplain={workflows.setShowExplain}
                 onDiagnosisVisible={workflows.setDiagnosisVisible}
                 onAddToDashboardOpen={workflows.setAddToDashboardOpen}

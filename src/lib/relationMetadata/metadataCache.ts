@@ -432,7 +432,25 @@ export function createMetadataCache(deps: MetadataCacheDeps = {}): MetadataCache
   };
 }
 
-/** Default process-wide editor metadata cache, wired to schema/DDL invalidations. */
+/**
+ * Default process-wide editor metadata cache, wired to schema/DDL invalidations.
+ *
+ * KNOWN MULTI-PANE HAZARD — deliberately not fixed in the pane-layout wave.
+ * This is a process-level singleton (one instance for the whole app), and its
+ * sessions are keyed by `dbSessionId` alone: `switchContext()` overwrites the
+ * `database` / `schema` / `dialectId` of that session and clears its relation
+ * maps in place. Once one tab is split into several panes, two editors on the
+ * same `dbSessionId` share a single context slot, so focusing pane B after
+ * pane A changed its context silently invalidates A's cached snapshot and every
+ * completion A triggers afterwards re-queries under B's context.
+ *
+ * The fix belongs to the next pane wave and is a real state-model change, not a
+ * cosmetic one: either key the cache by `dbSessionId::paneId` (a pane-key
+ * dimension, mirroring `src/stores/paneKeys.ts`) or make the cache reference
+ * counted per pane and tear a session down when its last pane closes. Until then
+ * only one pane per tab may exist, so this hazard is currently unreachable.
+ * See `docs/development/coordination/tracks/pane-layout/progress.md` §三.
+ */
 export const metadataCache = createMetadataCache({
   subscribeInvalidation: subscribeSchemaInvalidation,
 });

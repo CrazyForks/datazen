@@ -40,6 +40,8 @@ import type { KvSlotState } from '@datazen/driver-sdk';
 
 export interface PanelContentRendererProps {
   activePanel: Panel | null;
+  /** Pane the active tab's editor actions route to; `null` = not split yet. */
+  focusedPaneId?: string | null;
   currentDatabase: string | null;
   lastTableSchema: string | null;
   onSetSubTab: (panelId: string, subTab: SubTabId) => void;
@@ -64,6 +66,7 @@ export interface PanelContentRendererProps {
 
 export function PanelContentRenderer({
   activePanel,
+  focusedPaneId,
   currentDatabase,
   lastTableSchema,
   onSetSubTab,
@@ -106,6 +109,7 @@ export function PanelContentRenderer({
   return (
     <SqlPanelContent
       panel={activePanel}
+      focusedPaneId={focusedPaneId}
       currentDatabase={currentDatabase}
       lastTableSchema={lastTableSchema}
       onSetSubTab={onSetSubTab}
@@ -124,6 +128,8 @@ export function PanelContentRenderer({
 
 interface SqlPanelContentProps {
   panel: Panel;
+  /** Pane the tab's editor actions route to; `null` = not split yet. */
+  focusedPaneId?: string | null;
   currentDatabase: string | null;
   lastTableSchema: string | null;
   onSetSubTab: (panelId: string, subTab: SubTabId) => void;
@@ -140,6 +146,7 @@ interface SqlPanelContentProps {
 
 function SqlPanelContent({
   panel,
+  focusedPaneId,
   currentDatabase,
   lastTableSchema,
   onSetSubTab,
@@ -300,6 +307,7 @@ function SqlPanelContent({
     return (
       <QueryPanel
         panelId={panel.id}
+        focusedPaneId={focusedPaneId}
         dbSessionId={panel.dbSessionId}
         connectionId={panel.connectionId}
         connectionName={panel.connectionName}

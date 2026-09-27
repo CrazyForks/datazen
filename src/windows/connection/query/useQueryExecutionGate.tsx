@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState, type MutableRefObject } from 'react';
 import { queryCommands } from '../../../commands/query';
 import { usePanelStore } from '../../../stores/panelStore';
+import { paneArgs, paneKey } from '../../../stores/paneKeys';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useConnectionStore } from '../../../stores/connectionStore';
 import { useI18n } from '../../../hooks/useI18n';
@@ -35,6 +36,11 @@ export interface ExecutionSnapshot {
 
 export interface UseQueryExecutionGateOptions {
   panelId: string;
+  /**
+   * Pane the editor actions target. Optional: omitted means the panel's own
+   * (pre-split) pane, which is what `ContentView` passes until a tab is split.
+   */
+  paneId?: string;
   dbSessionId: string;
   databaseType?: string;
   connectionId: string;
@@ -53,6 +59,7 @@ export interface UseQueryExecutionGateOptions {
 
 export function useQueryExecutionGate({
   panelId,
+  paneId,
   dbSessionId,
   databaseType,
   connectionId,
@@ -116,7 +123,7 @@ export function useQueryExecutionGate({
   /** Check whether a snapshot is still fresh by comparing against live state. */
   const isSnapshotStale = useCallback(
     (snapshot: ExecutionSnapshot): boolean => {
-      const liveSql = usePanelStore.getState().queryExec.get(panelId)?.sql ?? '';
+      const liveSql = usePanelStore.getState().queryExec.get(paneKey(panelId, paneId))?.sql ?? '';
       if (liveSql !== snapshot.sql) return true;
 
       // Compare bound payload by reference (same object means unchanged)
@@ -138,7 +145,7 @@ export function useQueryExecutionGate({
 
       return false;
     },
-    [panelId, connectionId],
+    [panelId, paneId, connectionId],
   );
 
   // ── Core execution ────────────────────────────────────────────
@@ -181,18 +188,18 @@ export function useQueryExecutionGate({
       const targetSubstitutedSql = substituteSqlParams(targetRawSql, rawValues);
 
       if (kind === 'selection' && selectionSql != null) {
-        await storeExecuteSelection(panelId, targetSubstitutedSql, boundPayload);
+        await storeExecuteSelection(panelId, targetSubstitutedSql, boundPayload, ...paneArgs(paneId));
       } else {
         const sel = editorRef.current?.getSelection()?.trim();
         if (sel) {
-          await storeExecuteSelection(panelId, targetSubstitutedSql, boundPayload);
+          await storeExecuteSelection(panelId, targetSubstitutedSql, boundPayload, ...paneArgs(paneId));
         } else if (targetSubstitutedSql !== targetRawSql) {
-          await storeExecuteSelection(panelId, targetSubstitutedSql, boundPayload);
+          await storeExecuteSelection(panelId, targetSubstitutedSql, boundPayload, ...paneArgs(paneId));
         } else {
-          await storeExecuteQuery(panelId, boundPayload);
+          await storeExecuteQuery(panelId, boundPayload, ...paneArgs(paneId));
         }
       }
-      const execState = usePanelStore.getState().queryExec.get(panelId);
+      const execState = usePanelStore.getState().queryExec.get(paneKey(panelId, paneId));
       const err = execState?.error ?? null;
       if (err) {
         await maybeOfferAbortedDialog(err);
@@ -205,6 +212,7 @@ export function useQueryExecutionGate({
       sql,
       databaseType,
       panelId,
+      paneId,
       autoCommit,
       inTransaction,
       dbSessionId,
