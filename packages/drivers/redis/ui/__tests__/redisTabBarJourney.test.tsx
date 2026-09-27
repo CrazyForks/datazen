@@ -53,6 +53,7 @@ vi.mock('../observe/PubSubPanel', () => ({
 
 import { RedisConnectionView } from '../connection/RedisConnectionView';
 import { resetRightTab } from '../shared/rightTabState';
+import { panelScopeKey } from '../shared/panelScope';
 
 afterEach(() => cleanup());
 
@@ -60,7 +61,7 @@ beforeEach(() => {
   // The active sub-tab lives in a module-level store so it survives the remount
   // a top-level tab switch causes. Both cases render `sess-tabs`, so without this
   // the tab chosen by one case leaks into the next.
-  resetRightTab('sess-tabs');
+  resetRightTab(panelScopeKey('cfg-tabs', 'db2'));
 });
 
 function rightTabActive(tab: string): string | null {

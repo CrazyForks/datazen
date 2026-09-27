@@ -40,6 +40,7 @@ vi.mock('../shared/redisInvoke', () => ({
 
 import { RedisConsole } from '../console/RedisConsole';
 import { resetTranscript } from '../console/consoleTranscript';
+import { panelScopeKey } from '../shared/panelScope';
 
 function setDriverSettings(redis: Record<string, unknown>) {
   useBoundSettingsStore.setState((s) => ({
@@ -85,6 +86,9 @@ afterEach(() => {
   useBoundSettingsStore.setState((s) => ({ settings: { ...s.settings, safeMode: false } }));
 });
 
+// Per-tab UI state key. Distinct from `dbSessionId`, which is the wire id.
+const SCOPE = panelScopeKey('cfg-safety', 'db0');
+
 beforeEach(() => {
   commandInvoke.mockResolvedValue({ results: [] });
   scanKeys.mockResolvedValue({ keys: [], cursor: 0, done: true });
@@ -92,12 +96,12 @@ beforeEach(() => {
   // The transcript is a module-level store (it has to outlive the unmount that
   // a panel switch causes), so it is not reset by cleanup() the way component
   // state is. Every case shares `sess-1`, so reset it explicitly.
-  resetTranscript('sess-1');
+  resetTranscript(SCOPE);
 });
 
 describe('typing journey — the badge leaves the unknown state as the command completes', () => {
   it('walks KEYS from a half-typed token to a known destructive command and back out', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     // 'K' / 'KE' are not commands: fail-closed means the badge already refuses.
@@ -127,7 +131,7 @@ describe('typing journey — the badge leaves the unknown state as the command c
   });
 
   it('grades a multi-line batch by its strictest line', () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nSET b 1');
@@ -144,7 +148,7 @@ describe('typing journey — the badge leaves the unknown state as the command c
 
 describe('blocked commands never reach the server', () => {
   it('refuses a known destructive command with the destructive copy key', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'KEYS *');
@@ -160,7 +164,7 @@ describe('blocked commands never reach the server', () => {
   });
 
   it('refuses an unrecognised command with its own copy key', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'JSON.GET doc');
@@ -174,7 +178,7 @@ describe('blocked commands never reach the server', () => {
   });
 
   it('refuses the whole batch when one line is blocked, but keeps the good lines typed', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nEVAL "return 1" 0');
@@ -188,7 +192,7 @@ describe('blocked commands never reach the server', () => {
   });
 
   it('keeps the dedicated FLUSHDB copy without the allowFlush opt-in', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'FLUSHDB');
@@ -204,7 +208,7 @@ describe('blocked commands never reach the server', () => {
 
 describe('batch gate semantics (R-3)', () => {
   it('asks once for a mixed batch and lists every danger-tier-and-above command', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nDEL b\nEXPIRE c 1');
@@ -220,7 +224,7 @@ describe('batch gate semantics (R-3)', () => {
 
   it('cancelling the single confirmation stops the whole batch', async () => {
     stubConfirm(() => false);
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nDEL b');
@@ -232,7 +236,7 @@ describe('batch gate semantics (R-3)', () => {
 
   it('asks twice for an allowFlush FLUSHDB (destructive second brake)', async () => {
     setDriverSettings({ allowFlush: true });
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'SET a 1\nFLUSHDB');
@@ -250,7 +254,7 @@ describe('batch gate semantics (R-3)', () => {
   it('stops before the server when the second confirmation is refused', async () => {
     setDriverSettings({ allowFlush: true });
     stubConfirm((index) => index === 0);
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'FLUSHDB');
@@ -262,7 +266,7 @@ describe('batch gate semantics (R-3)', () => {
 
   it('keeps Safe Mode in front of the write path (I-6 unchanged)', async () => {
     useBoundSettingsStore.setState((s) => ({ settings: { ...s.settings, safeMode: true } }));
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'SET a 1');
@@ -284,7 +288,7 @@ describe('per-command results (P0-3 / R-3.2)', () => {
         { command: 'PING', ok: true, value: 'PONG', resultType: 'ok' },
       ],
     });
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nGET hash:1\nPING');
@@ -309,7 +313,7 @@ describe('per-command results (P0-3 / R-3.2)', () => {
         { command: 'GET z', ok: true, value: 'scalar-looking', resultType: 'scalar' },
       ],
     });
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'HGETALL h');
@@ -330,7 +334,7 @@ describe('per-command results (P0-3 / R-3.2)', () => {
     commandInvoke.mockResolvedValue({
       results: [{ command: 'HGETALL h', ok: true, value: '{a => 1}' }],
     });
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelScope={SCOPE} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'HGETALL h');

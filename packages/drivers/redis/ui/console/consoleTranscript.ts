@@ -1,17 +1,22 @@
 /**
- * In-memory REPL transcript for the Redis console, keyed by `dbSessionId`.
+ * In-memory REPL transcript for the Redis console, keyed by panel scope (see
+ * `shared/panelScope.ts`).
  *
  * ## Why this lives in module scope instead of `useState`
  *
  * The host renders only the *active* panel: `PanelContentRenderer` returns
  * `null` for every other panel and remounts the incoming one with
  * `key={activePanel.id}`. Switching top-level tabs therefore destroys the whole
- * `RedisConnectionView → RedisRightPanel → RedisConsole` subtree, and any
+ * `RedisConnectionView -> RedisRightPanel -> RedisConsole` subtree, and any
  * component state with it. A module-level store outlives that unmount, which is
  * what makes each tab's console keep its scrollback when the user comes back.
  *
- * Keying by `dbSessionId` is what gives every db its own independent console:
- * one session per panel, so `db0` and `db1` never share entries or drafts.
+ * ## Why keyed by scope and not `dbSessionId`
+ *
+ * `dbSessionId` is the *connection* session, and every db tab of one connection
+ * shares it - so keying by it gave db0 and db1 the same scrollback, the exact
+ * opposite of what was intended. The panel scope keys one store per top-level
+ * tab, so a sibling db opens with an empty console.
  *
  * Memory-only by design. This is session scratch that dies with the app; the
  * command *history* used for ↑↓ recall is a separate concern and stays in
@@ -50,29 +55,43 @@ function nextId(prefix: string): string {
   return `${prefix}-${idCounter}`;
 }
 
-function readSession(dbSessionId: string): SessionState {
-  return sessions.get(dbSessionId) ?? EMPTY;
+function readSession(scope: string): SessionState {
+  return sessions.get(scope) ?? EMPTY;
 }
 
-function writeSession(dbSessionId: string, next: SessionState): void {
-  sessions.set(dbSessionId, next);
-  for (const listener of listeners.get(dbSessionId) ?? []) listener();
+function writeSession(scope: string, next: SessionState): void {
+  sessions.set(scope, next);
+  for (const listener of listeners.get(scope) ?? []) listener();
 }
 
-/** Subscribe a component to one session's transcript. */
-function subscribe(dbSessionId: string): (listener: () => void) => () => void {
-  return (listener) => {
-    let set = listeners.get(dbSessionId);
-    if (!set) {
-      set = new Set();
-      listeners.set(dbSessionId, set);
-    }
-    set.add(listener);
-    return () => {
-      set.delete(listener);
-      if (set.size === 0) listeners.delete(dbSessionId);
+/**
+ * Bound subscribe, cached per scope.
+ *
+ * `useSyncExternalStore` compares `subscribe` by identity and re-subscribes
+ * whenever it changes. A freshly built closure on every render would therefore
+ * unsubscribe/resubscribe on each commit - churn during render, and lost
+ * notifications if a write lands in the gap.
+ */
+const subscribes = new Map<string, (listener: () => void) => () => void>();
+
+function subscribe(scope: string): (listener: () => void) => () => void {
+  let sub = subscribes.get(scope);
+  if (!sub) {
+    sub = (listener) => {
+      let set = listeners.get(scope);
+      if (!set) {
+        set = new Set();
+        listeners.set(scope, set);
+      }
+      set.add(listener);
+      return () => {
+        set.delete(listener);
+        if (set.size === 0) listeners.delete(scope);
+      };
     };
-  };
+    subscribes.set(scope, sub);
+  }
+  return sub;
 }
 
 function trim(entries: TranscriptEntry[]): TranscriptEntry[] {
@@ -83,18 +102,18 @@ function trim(entries: TranscriptEntry[]): TranscriptEntry[] {
 }
 
 /** Append one executed command line, echoed with its `dbN>` prompt. */
-export function appendCommand(dbSessionId: string, text: string, dbIndex: number): void {
-  const current = readSession(dbSessionId);
-  writeSession(dbSessionId, {
+export function appendCommand(scope: string, text: string, dbIndex: number): void {
+  const current = readSession(scope);
+  writeSession(scope, {
     ...current,
     entries: trim([...current.entries, { kind: 'command', id: nextId('c'), text, dbIndex }]),
   });
 }
 
 /** Append one successful/failed server result beneath its command. */
-export function appendResult(dbSessionId: string, command: string, item: ConsoleResultItem): void {
-  const current = readSession(dbSessionId);
-  writeSession(dbSessionId, {
+export function appendResult(scope: string, command: string, item: ConsoleResultItem): void {
+  const current = readSession(scope);
+  writeSession(scope, {
     ...current,
     entries: trim([...current.entries, { kind: 'result', id: nextId('r'), command, item }]),
   });
@@ -105,43 +124,45 @@ export function appendResult(dbSessionId: string, command: string, item: Console
  * failure). Server-signalled errors travel as a `result` with `ok: false`; this
  * is for everything the server never got to answer.
  */
-export function appendError(dbSessionId: string, message: string): void {
-  const current = readSession(dbSessionId);
-  writeSession(dbSessionId, {
+export function appendError(scope: string, message: string): void {
+  const current = readSession(scope);
+  writeSession(scope, {
     ...current,
     entries: trim([...current.entries, { kind: 'error', id: nextId('e'), message }]),
   });
 }
 
 /** Drop a session's scrollback. Called when the console is cleared explicitly. */
-export function clearTranscript(dbSessionId: string): void {
-  writeSession(dbSessionId, { entries: [], draft: '' });
+export function clearTranscript(scope: string): void {
+  writeSession(scope, { entries: [], draft: '' });
 }
 
 /** Persist the in-progress input so it survives a tab switch, like a shell line. */
-export function setDraft(dbSessionId: string, draft: string): void {
-  const current = readSession(dbSessionId);
+export function setDraft(scope: string, draft: string): void {
+  const current = readSession(scope);
   if (current.draft === draft) return;
-  writeSession(dbSessionId, { ...current, draft });
+  writeSession(scope, { ...current, draft });
 }
 
-export function useTranscriptEntries(dbSessionId: string): TranscriptEntry[] {
+export function useTranscriptEntries(scope: string): TranscriptEntry[] {
   return useSyncExternalStore(
-    subscribe(dbSessionId),
-    () => readSession(dbSessionId).entries,
+    subscribe(scope),
+    () => readSession(scope).entries,
     () => EMPTY.entries,
   );
 }
 
-export function useTranscriptDraft(dbSessionId: string): string {
+export function useTranscriptDraft(scope: string): string {
   return useSyncExternalStore(
-    subscribe(dbSessionId),
-    () => readSession(dbSessionId).draft,
+    subscribe(scope),
+    () => readSession(scope).draft,
     () => EMPTY.draft,
   );
 }
 
 /** Test-only: forget a session so a case starts from a clean console. */
-export function resetTranscript(dbSessionId: string): void {
-  sessions.delete(dbSessionId);
+export function resetTranscript(scope: string): void {
+  sessions.delete(scope);
+  subscribes.delete(scope);
+  listeners.delete(scope);
 }

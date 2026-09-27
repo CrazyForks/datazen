@@ -59,6 +59,12 @@ export interface RedisRightPanelProps {
   /** Connection name shown in the header for context. */
   connectionName?: string;
   selectedDb?: string;
+  /**
+   * Identity of the owning top-level tab (`shared/panelScope.ts`). Per-tab UI
+   * state is keyed by this and never by `dbSessionId`, which every db tab of one
+   * connection shares. Required so the console below is scoped per tab too.
+   */
+  panelScope: string;
   /** Currently active tab (controlled by parent). */
   activeTab?: RightTab;
   /** Callback when the user clicks a tab (controlled by parent). */
@@ -85,15 +91,16 @@ export function RedisRightPanel({
   onPinnedNodeAddrChange,
   connectionName,
   selectedDb,
+  panelScope,
   activeTab: controlledTab,
   onTabChange,
 }: RedisRightPanelProps) {
   const { t } = useI18n();
   // Both the controlled and the uncontrolled path read from the module-level
-  // store, keyed by session. The uncontrolled fallback used to be a plain
+  // store, keyed by panel scope. The uncontrolled fallback used to be a plain
   // `useState('detail')`, which meant an uncontrolled caller silently lost its
   // tab on every remount — the same bug as the controlled path had.
-  const storeTab = useRightTab(dbSessionId);
+  const storeTab = useRightTab(panelScope);
   const activeTab = controlledTab ?? storeTab;
 
   const handleTabClick = useCallback(
@@ -106,10 +113,10 @@ export function RedisRightPanel({
       if (onTabChange) {
         onTabChange(tab);
       } else {
-        writeRightTab(dbSessionId, tab);
+        writeRightTab(panelScope, tab);
       }
     },
-    [activeTab, onTabChange, dbSessionId],
+    [activeTab, onTabChange, panelScope],
   );
 
   return (
@@ -167,6 +174,7 @@ export function RedisRightPanel({
       <TabContent
         activeTab={activeTab}
         dbSessionId={dbSessionId}
+        panelScope={panelScope}
         dbIndex={dbIndex}
         selectedKey={selectedKey}
         detail={detail}
@@ -191,6 +199,7 @@ export function RedisRightPanel({
 function TabContent({
   activeTab,
   dbSessionId,
+  panelScope,
   dbIndex,
   selectedKey,
   detail,
@@ -206,6 +215,7 @@ function TabContent({
 }: {
   activeTab: RightTab;
   dbSessionId: string;
+  panelScope: string;
   dbIndex: number;
   selectedKey: string | null;
   detail: KeyDetail | null;
@@ -244,6 +254,7 @@ function TabContent({
         <div key="console" className="flex min-h-0 flex-1 flex-col">
           <RedisConsole
             dbSessionId={dbSessionId}
+            panelScope={panelScope}
             dbIndex={dbIndex}
             keySuggestions={keySuggestions}
             pinnedNodeAddr={pinnedNodeAddr}

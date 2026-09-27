@@ -41,6 +41,13 @@ import { readClusterRouting, resolvePinnedNodeAddr } from '../connection/setting
 
 export interface RedisConsoleProps {
   dbSessionId: string;
+  /**
+   * Identity of the owning top-level tab (`shared/panelScope.ts`). The transcript
+   * and the ↑↓ recall list are keyed by this, never by `dbSessionId`, which every
+   * db tab of one connection shares — otherwise a sibling db would open showing
+   * another db's scrollback. `dbSessionId` stays the IPC session for the wire.
+   */
+  panelScope: string;
   dbIndex?: number;
   keySuggestions?: string[];
   pinnedNodeAddr?: string;
@@ -96,6 +103,7 @@ function toConsoleResultItem(result: ExecResult): ConsoleResultItem {
 
 export function RedisConsole({
   dbSessionId,
+  panelScope,
   dbIndex = 0,
   keySuggestions = [],
   pinnedNodeAddr = '',
@@ -120,9 +128,9 @@ export function RedisConsole({
   // The input draft and the scrollback both live in the module-level transcript
   // store, not in component state: the host unmounts this whole subtree every
   // time the user switches panel, and component state would go with it.
-  const commands = useTranscriptDraft(dbSessionId);
-  const setCommands = useCallback((next: string) => setDraft(dbSessionId, next), [dbSessionId]);
-  const entries = useTranscriptEntries(dbSessionId);
+  const commands = useTranscriptDraft(panelScope);
+  const setCommands = useCallback((next: string) => setDraft(panelScope, next), [panelScope]);
+  const entries = useTranscriptEntries(panelScope);
   const [running, setRunning] = useState(false);
   // Caret position stays in component state: it is view state, and losing it on
   // a remount just means the caret returns to where the restored draft begins.
@@ -138,9 +146,9 @@ export function RedisConsole({
   useEffect(() => {
     // Command history is per-session and persisted; the transcript is not
     // reset here because that would wipe the scrollback on every remount.
-    setHistory(loadConsoleHistory(dbSessionId));
+    setHistory(loadConsoleHistory(panelScope));
     setHistoryState({ index: null, draft: '' });
-  }, [dbSessionId]);
+  }, [panelScope]);
 
   const completion = useCompletion({
     text: commands,
@@ -202,7 +210,7 @@ export function RedisConsole({
       // keep their dedicated copy, which explains the Allow Flush opt-in.
       const flushOnly = batch.blocked.every((command) => isFlushCommand(command.name));
       appendError(
-        dbSessionId,
+        panelScope,
         flushOnly ? t('redis.console.flushBlocked') : composeBlockedMessage(batch, t),
       );
       return;
@@ -231,7 +239,7 @@ export function RedisConsole({
     // transcript reads like a real session rather than a result slot. A declined
     // confirmation returns above and leaves no echo, matching shell behaviour
     // where Ctrl-C does not print the line.
-    appendCommand(dbSessionId, trimmed, dbIndex);
+    appendCommand(panelScope, trimmed, dbIndex);
 
     try {
       const response = await redisCommandInvoke<ExecResponse>('redis', 'exec', {
@@ -241,15 +249,15 @@ export function RedisConsole({
         nodeAddr,
       });
       for (const result of response.results ?? []) {
-        appendResult(dbSessionId, result.command, toConsoleResultItem(result));
+        appendResult(panelScope, result.command, toConsoleResultItem(result));
       }
-      setHistory(pushConsoleHistory(dbSessionId, trimmed));
+      setHistory(pushConsoleHistory(panelScope, trimmed));
     } catch (err) {
-      appendError(dbSessionId, err instanceof Error ? err.message : String(err));
+      appendError(panelScope, err instanceof Error ? err.message : String(err));
     } finally {
       setRunning(false);
     }
-  }, [commands, dbSessionId, dbIndex, nodeAddr, running, allowFlush, gateWrite, t]);
+  }, [commands, panelScope, dbSessionId, dbIndex, nodeAddr, running, allowFlush, gateWrite, t]);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
