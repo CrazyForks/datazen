@@ -11,7 +11,7 @@ title: 多目标协调计划（hub 静态段落来源）
 
 | Track | 工作区 | 任务摘要 |
 | --- | --- | --- |
-| ep-runtime-globals | .worktrees/datazen-ep-runtime-globals | G1 补齐 EP 运行时共享模块（`@codemirror/language`、`@codemirror/commands`）并加防漂移测试守住宽/窄探针不对称 |
+| ep-runtime-globals | 已合流 `46be145af`（Tester FAILED，见 BUG-002/003） | G1 补齐 EP 运行时共享模块（`@codemirror/language`、`@codemirror/commands`）并加防漂移测试守住宽/窄探针不对称 |
 | ep-hooks-settings | .worktrees/datazen-ep-hooks-settings | G2 通用契约钩子 + G3 打通设置生效 + G4 契约版本 bump |
 | pane-layout | .worktrees/datazen-pane-layout | G5 pane 维度布局模型与焦点路由（不含 UI） |
 | multi-cursor | .worktrees/datazen-multi-cursor | 解 `Shift-Alt-ArrowUp/Down` 多光标死键（macOS 被 `defaultKeymap` 抢占） |
@@ -59,6 +59,13 @@ title: 多目标协调计划（hub 静态段落来源）
   从「构建期硬报错」退化为「静默打进产物」。`ep-runtime-globals` / `ep-hooks-settings` / `pane-layout`
   三轨先行；`multi-cursor` 按用户裁决并入 Wave 1；`code-folding` 因与 `ep-hooks-settings`
   争用 `editorExtensions.ts` 的 compartment 闭集而排在其后建轨。
+- **Track A 合流**（`46be145af`，Tester 判定 **FAILED**）：8 条验收标准**全部实测通过**，
+  代码交付物正确可合入；4 次变异测试（删白名单项 / 删宿主表项 / 删 Pro 宽正则 / 白名单塞正则）
+  证明两侧列表漂移方向的守卫是真闸门，其中「删 Pro 宽正则」在补测前是**漏的**。
+  判定 FAILED 的唯一原因是发现两个**既有**结构性缺口（BUG-002 / BUG-003），均非本轨引入。
+  合流时另发现两处基础设施缺口并已修复：Pro 侧**根本没有集成分支**（宿主集成态无法与 Pro 对齐），
+  以及跨仓断言的 skip 条件把「目录存在」误当「检出在匹配 commit」——陈旧检出会给出
+  看似代码缺陷的红灯，现已改为失败时自证出处（`d53b8f0bb`）。
 - 协调者自有基建修复：hub 聚合器三个同源解析缺陷（`状态` 因 Markdown 强调标记恒不匹配、
   `Pro 分支` 子串覆盖宿主分支、开放 Bug 正则把 `(?:`\*\*`)` 放在冒号之后导致按规程登记的 Bug 一条都数不到），
   修复于 `9a9027531` 并补 5 例回归测试；pre-commit 钩子此后自动执行该测试。
@@ -109,6 +116,23 @@ title: 多目标协调计划（hub 静态段落来源）
   新增槽位（如 code-folding 的 `fold`）会改动所有轨共用的 `editorExtensions.ts`。
   这是 `code-folding` 必须排在 `ep-hooks-settings` 之后的唯一原因；单实例测试不足，
   需覆盖多实例共享该单例的场景。
+- **【高】窄白名单闸门被 Pro 侧 `renderChunk` 旁路（Track A Tester 实证，BUG-002）**：
+  spec §二 声称的「unmapped 包构建期硬失败」在真实流水线里**对具名/默认/命名空间导入不成立**。
+  Pro `vite.config.ts` 的 `renderChunk` **先**把任何 `/^@codemirror/*` 改写成
+  `__DATAZEN_HOST__['…']` 而**不查白名单**；宿主窄闸门**后**跑时输入已被清空
+  （日志「rewrote bare imports:」**恒为空**）。实测注入
+  `import { foldGutter } from '@codemirror/search'` 后 `resolve-pro --edition=pro`
+  **exit 0**，产物含宿主表没有的键且**签名照签**，运行期解构得 `undefined` → EP 加载即 TypeError。
+  35 个测试全绿，无一发现。对照组（副作用导入）正常 exit 1 ⇒ 闸门没坏，只是被旁路。
+  **直接后果：Track E（代码折叠）开工前必须先落 BUG-002** —— 它要写的
+  `import { foldService } from '@codemirror/language'` 正是具名导入，恰好落进旁路区。
+  Tester 给出的三个方向里，**方向 2（在 pack-ep 加产物级「键集合 ⊆ 白名单」不变量）最省**。
+- **【中】测试文件事实上不在类型门禁内（BUG-003）**：`tsconfig.json:27-34` 的 `exclude`
+  仍在排除 `src/**/__tests__/**` 与 `*.test.ts(x)`，但 `AGENTS.md` 明写「测试文件参与类型检查」
+  —— **文档声称的改动从未落到配置**。协调者实测：放开 exclude 后全仓 **2281 条**错误，
+  其中 **1980 条在测试文件**（主因 TS2339 属性不存在 1638 条，即 AGENTS.md 举例的
+  「mock 与真实类型长期漂移」）。当前基线 `tsc --noEmit` 是 **0 错**，
+  改 exclude 会一次性砸进 4 条在跑轨道的 Tester 信号里，故本轮不动，已升级为待裁决项。
 - **B × D 相邻但未交叠**（协调者交叉校验）：`ep-hooks-settings` 改了
   `src/components/sql-editor/paste/createPasteExtensions.ts`（为 G3 通用路径新增 `proSettings`
   选项并透传给 EP），`multi-cursor` 改的是同目录的 `multipleSelections.ts`。两文件不重叠，
@@ -140,6 +164,9 @@ title: 多目标协调计划（hub 静态段落来源）
 - [ ] 合流后强制走一次完整 Pro 打包：`rm -rf src-tauri/resources/builtin-ep/sql-editor-pro &&
       node scripts/resolve-pro.mjs --edition=pro`，确认产物带 `signature.sig` 且
       `engines.extensionPointsVersion` 与宿主 `EXTENSION_POINTS_VERSION` **同步 bump 后**一致。
+- [ ] **裁决 BUG-003**：`tsconfig.json` 的 exclude 与 `AGENTS.md` 声称的「测试参与类型检查」矛盾；
+      放开后 1980 条历史错误待清。需用户裁决是修文档还是清债。
+- [ ] **合流前须落 BUG-002**（Track E 的前置）：否则 Track E 的具名导入会静默打进已签名产物。
 - [ ] `src/components/sql-editor/**` 位于 `vitest.config.ts` 覆盖率门禁**之外**，
       故该目录「测试通过」是弱证据；每个涉及该目录的轨道，Tester 必须显式测量改动行覆盖率。
 
