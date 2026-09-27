@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import {
+  BUILD_PROFILE,
   buildTauriArgs,
   checkProStagingReady,
   resolveTauriCli,
@@ -49,13 +50,14 @@ describe('ci-tauri-build args', () => {
     expect(args).toEqual(['build', '--config', join(dir, 'test-pro.json'), '-f', 'driver-redis']);
   });
 
-  it('forwards a custom cargo profile and orders it before --config', () => {
-    // Tauri puts the output in target/<triple>/<profile>, so a typo here is
-    // what makes the workflow look for binaries in a directory that never
-    // gets written.
+  it('never passes --profile, which tauri-cli 2.10.1 rejects', () => {
+    // Regression guard: `tauri build` in tauri-cli 2.10.1 has no `--profile`
+    // flag at all (only `--debug` vs release). Emitting it aborts every matrix
+    // job in under a second with `error: unexpected argument '--profile' found`,
+    // and it cannot be worked around by a different flag name — a custom Cargo
+    // profile simply is not reachable through `tauri build`.
     const args = buildTauriArgs({
       target: 'aarch64-apple-darwin',
-      profile: 'ci-release',
       updater: true,
       updaterConfigPath: '/tmp/updater.json',
     });
@@ -63,15 +65,16 @@ describe('ci-tauri-build args', () => {
       'build',
       '--target',
       'aarch64-apple-darwin',
-      '--profile',
-      'ci-release',
       '--config',
       '/tmp/updater.json',
     ]);
   });
 
-  it('defaults to no profile so local release builds keep full fat LTO', () => {
-    expect(buildTauriArgs({ features: ['driver-redis'] })).not.toContain('--profile');
+  it('agrees with BUILD_PROFILE on the directory tauri build actually writes to', () => {
+    // upx-compress and the release workflow's bundle paths look under
+    // target/<triple>/<profile>; if that ever drifts from what tauri builds,
+    // the matrix looks for binaries in a directory that never gets written.
+    expect(BUILD_PROFILE).toBe('release');
   });
 });
 
