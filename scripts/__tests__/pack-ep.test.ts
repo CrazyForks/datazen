@@ -499,3 +499,75 @@ describe('host shared module registry (G1 anti-drift guard)', () => {
     expect(peers.filter((peer) => !hostSet.has(peer))).toEqual([]);
   });
 });
+
+/**
+ * [tester] Probe-integrity guard for the G1 red line.
+ *
+ * The two layers are *supposed* to disagree: the Pro build externalizes every
+ * `@codemirror/*` (wide regex) while `HOST_SHARED_MODULES` stays a narrow
+ * literal list. That gap is the probe — it is what makes a newly imported
+ * shared package fail the build instead of being silently bundled as a second
+ * copy of a host singleton (cross-realm identity split, no error at load).
+ *
+ * The registry-parity tests above read only `src/main.tsx` and
+ * `scripts/pack-ep.mjs`, so they stay green if someone "tidies up" the two
+ * sides into one rule. These cases close that hole. They read the Pro
+ * `vite.config.ts` as text and rebuild the predicate from the source, so the
+ * assertion is about what the repo actually ships, not a copy of it.
+ */
+describe('externalize / allow-list asymmetry probe (G1 red line)', () => {
+  const proViteConfig = join(ROOT, 'packages/pro-extensions/sql-editor-pro/vite.config.ts');
+  const hasProViteConfig = existsSync(proViteConfig);
+  const proSource = hasProViteConfig ? readFileSync(proViteConfig, 'utf8') : '';
+
+  /** Body of `const isBareExternal = (s) => …;` — the externalize predicate. */
+  function readExternalizePredicate(source: string): string {
+    const decl = source.match(/const isBareExternal[^=]*=\s*([\s\S]*?);/);
+    if (!decl) {
+      throw new Error('vite.config.ts: isBareExternal declaration not found');
+    }
+    return decl[1];
+  }
+
+  /**
+   * Rebuild the wide CodeMirror regex from the source text (not from a local
+   * copy) so a narrowed or deleted predicate cannot be masked by the test.
+   */
+  function readWideCodemirrorPattern(source: string): RegExp {
+    const literal = readExternalizePredicate(source).match(/\/\^@codemirror\\?\/\//);
+    if (!literal) {
+      throw new Error(
+        'vite.config.ts: isBareExternal no longer externalizes via /^@codemirror\\// — ' +
+          'the narrow-list probe has been removed',
+      );
+    }
+    return new RegExp(literal[0].slice(1, -1));
+  }
+
+  it.skipIf(!hasProViteConfig)('keeps the wide /^@codemirror\\// externalize rule on the Pro side', () => {
+    expect(readExternalizePredicate(proSource)).toContain('/^@codemirror\\//');
+    // `rollupOptions.external` must keep its regex entry too, not a string list.
+    expect(proSource).toContain('/^@codemirror\\/.*/');
+  });
+
+  it.skipIf(!hasProViteConfig)('keeps HOST_SHARED_MODULES a literal list, free of regexes', () => {
+    expect(HOST_SHARED_MODULES.every((entry: unknown) => typeof entry === 'string')).toBe(true);
+    expect(HOST_SHARED_MODULES).not.toContain('/^@codemirror\\//');
+  });
+
+  it.skipIf(!hasProViteConfig)('wide externalize range is still strictly wider than the narrow allow-list', () => {
+    const wide = readWideCodemirrorPattern(proSource);
+    const narrow = new Set(HOST_SHARED_MODULES);
+    // Specifiers the wide rule externalizes but the host table never publishes.
+    const admitted = ['@codemirror/search', '@codemirror/lang-sql', '@codemirror/theme-one-dark'].filter(
+      (spec) => wide.test(spec) && !narrow.has(spec),
+    );
+    expect(admitted.length).toBeGreaterThan(0);
+    // The probe is live: each of them must still hard-fail at pack time.
+    for (const spec of admitted) {
+      expect(() =>
+        rewriteEpImportsToHostGlobals(`import { probe } from "${spec}";`),
+      ).toThrow(new RegExp(`unmapped bare import from "${spec.replace('/', '\\/')}"`));
+    }
+  });
+});
