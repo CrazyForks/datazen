@@ -10,17 +10,18 @@
  *  - DEFECT-B clipboard rollback. The two flipped contracts live in
  *    `CopyableError.test.tsx` / `ResultMessageDialog.test.tsx`; this file adds
  *    the parts neither covers — that no unhandled rejection escapes, and the
- *    two races the rollback logic still gets wrong.
+ *    races the rollback logic used to get wrong (a stale rejection erasing a
+ *    newer confirmation, a second click inheriting a shortened window, and a
+ *    timer outliving the component).
  *
  * Why a probe locale: `Dialog`'s own default is `closeLabel = 'Close'` and the
  * English `common.close` is also `'Close'`, so an English-only assertion cannot
  * distinguish "the caller overrode it" from "it fell back and happened to match".
  * `CUSTOM::Close` differs from both the probe copy and every library default.
  *
- * `it.fails` marks the still-broken behaviour the way this repo already does
- * (see the contracts these replaced): the assertion is the correct contract, it
- * is red today, and it flips to green automatically the moment the component is
- * corrected.
+ * These cases arrived as `it.fails` while the races above were still broken
+ * and flipped to `it` once the components were corrected; they stay as `it` so
+ * a reintroduced race goes red again.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -152,18 +153,19 @@ describe('DEFECT-A: closeLabel is an override, not a decoration', () => {
     expect(headerCloseNames()).toEqual([PROBE_CLOSE]);
   });
 
-  it('documents that `closeLabel ?? t(...)` does NOT fall back on an empty string', () => {
-    // `??` only falls back on null/undefined. Passing `closeLabel=""` yields a
-    // header close button with an EMPTY accessible name — an a11y regression
-    // waiting for any caller that computes the label from optional state.
-    // This matches the pre-move host `Dialog` shim (`props.closeLabel ??
-    // t('common.close')`), so it is a pre-existing trap, not a new one — it is
-    // pinned here so a future `||` change is a deliberate, visible edit.
+  it('falls back to the localized label when closeLabel is an empty string', () => {
+    // Round-2 behaviour change: the three dialogs now use `closeLabel ||
+    // t('common.close')` rather than `??`, so an empty string is treated as
+    // "no label supplied" instead of "the label is the empty string". The
+    // pre-move host shim had the same `??` trap, so this is not a new defect —
+    // it is a deliberate one-character fix, pinned here so that reverting to
+    // `??` is a visible edit rather than a silent regression. No caller can
+    // want a close button with an empty accessible name.
     render(
       <ResultMessageDialog open kind="success" message="done" closeLabel="" onClose={() => {}} />,
     );
-    expect(headerCloseNames()).toEqual(['']);
-    expect(screen.queryByRole('button', { name: PROBE_CLOSE })).not.toBeInTheDocument();
+    expect(headerCloseNames()).toEqual([PROBE_CLOSE]);
+    expect(screen.getByRole('button', { name: PROBE_CLOSE })).toBeInTheDocument();
   });
 });
 
@@ -203,51 +205,47 @@ describe('DEFECT-B: clipboard rejection handling', () => {
     }
   });
 
-  it.fails(
-    '[tester] a stale rejection must not erase the confirmation of a LATER successful copy',
-    async () => {
-      // Click #1 is still in flight; click #2 lands and succeeds. The label
-      // shows "Copied" for #2 — then #1 finally rejects and its unconditional
-      // `setCopied(false)` wipes #2's (correct) confirmation. Today:
-      //   after #2 resolved = "PROBE::Copied"; after #1's rollback = "PROBE::Copy"
-      const rejecters: Array<(e: Error) => void> = [];
-      let call = 0;
-      stubClipboard(
-        () =>
-          new Promise<void>((_resolve, reject) => {
-            call += 1;
-            if (call === 1) rejecters.push(reject);
-          }),
-      );
-      render(<CopyableError message="connection refused" copyButton />);
+  it('[tester] a stale rejection must not erase the confirmation of a LATER successful copy', async () => {
+    // Click #1 is still in flight; click #2 lands and succeeds. The label
+    // shows "Copied" for #2 — then #1 finally rejects. The rollback is bound
+    // to the request that started it, so #1's late rejection is dropped and
+    // #2's (correct) confirmation survives.
+    const rejecters: Array<(e: Error) => void> = [];
+    let call = 0;
+    stubClipboard(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          call += 1;
+          if (call === 1) rejecters.push(reject);
+        }),
+    );
+    render(<CopyableError message="connection refused" copyButton />);
 
-      fireEvent.click(copyBtn());
-      await act(async () => {
-        await Promise.resolve();
-      });
-      fireEvent.click(copyBtn());
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(copyBtn()).toHaveTextContent(COPIED);
+    fireEvent.click(copyBtn());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    fireEvent.click(copyBtn());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(copyBtn()).toHaveTextContent(COPIED);
 
-      // Now the FIRST write finally rejects.
-      await act(async () => {
-        rejecters[0]?.(new Error('clipboard denied'));
-        await Promise.resolve();
-        await Promise.resolve();
-      });
+    // Now the FIRST write finally rejects.
+    await act(async () => {
+      rejecters[0]?.(new Error('clipboard denied'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
-      expect(copyBtn()).toHaveTextContent(COPIED);
-    },
-  );
+    expect(copyBtn()).toHaveTextContent(COPIED);
+  });
 
-  it.fails('[tester] a second click must restart the full 1.5s feedback window', () => {
-    // Two successful clicks 1400ms apart. Each schedules its own 1500ms timer
-    // and neither cancels the other, so click #1's timer fires 200ms into
-    // click #2's window and resets the flag. Today, at t=1600 the label is
-    // already back to "Copy" even though click #2 landed 200ms earlier.
+  it('[tester] a second click must restart the full 1.5s feedback window', () => {
+    // Two successful clicks 1400ms apart. Each click cancels the other's timer
+    // and starts its own, so click #1's deadline never fires inside click #2's
+    // window: at t=1600 the label still reads "Copied".
     vi.useFakeTimers();
     stubClipboard(() => Promise.resolve());
     render(<CopyableError message="connection refused" copyButton />);
@@ -264,7 +262,7 @@ describe('DEFECT-B: clipboard rejection handling', () => {
     expect(copyBtn()).toHaveTextContent(COPIED);
   });
 
-  it.fails('[tester] CopyableError clears the feedback timer on unmount', () => {
+  it('[tester] CopyableError clears the feedback timer on unmount', () => {
     vi.useFakeTimers();
     stubClipboard(() => Promise.resolve());
     const { unmount } = render(<CopyableError message="connection refused" copyButton />);
@@ -274,24 +272,35 @@ describe('DEFECT-B: clipboard rejection handling', () => {
 
     unmount();
 
-    // No `useEffect` cleanup exists, so the 1500ms timer (and the closure it
-    // holds) outlives the component and later calls setState on a dead fiber.
+    // The `useEffect` cleanup cancels the 1500ms timer, so neither it nor the
+    // closure it holds outlives the component to call setState on a dead fiber.
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.fails('[tester] ResultMessageDialog clears the feedback timer on unmount', () => {
+  it('[tester] ResultMessageDialog clears the feedback timer on unmount', () => {
     vi.useFakeTimers();
     stubClipboard(() => Promise.resolve());
     const { unmount } = render(
       <ResultMessageDialog open kind="error" message="boom" onClose={() => {}} />,
     );
 
+    // Measured against this component's own baseline rather than zero: mounting
+    // a `Dialog` focuses its first focusable element, and jsdom's
+    // `HTMLButtonElement.focus()` internally schedules a selection bookkeeping
+    // timer of its own (SelectionImpl._associateRange). That timer is an
+    // artifact of the test environment, not of the component, and it is
+    // neither created nor cancellable by us. The contract under test is "the
+    // copy feedback timer does not outlive the component", so the assertion is
+    // that the pending count returns to where it was before the click. It still
+    // goes red without the `useEffect` cleanup (baseline + 1, not baseline).
+    const baseline = vi.getTimerCount();
+
     fireEvent.click(rmdCopyBtn());
-    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    expect(vi.getTimerCount()).toBe(baseline + 1);
 
     unmount();
 
-    expect(vi.getTimerCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(baseline);
   });
 });
 

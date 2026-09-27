@@ -1,7 +1,8 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { useI18n } from './i18n';
 import { cn } from './cn';
+import { useCopyFeedback } from './useCopyFeedback';
 
 export interface CopyableErrorProps {
   message: string;
@@ -28,21 +29,9 @@ export function CopyableError({
   'data-testid': testId = 'copyable-error-message',
 }: Readonly<CopyableErrorProps>) {
   const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
 
-  const handleCopy = useCallback(() => {
-    // Optimistic: flip the label synchronously so the click reads as instant,
-    // then roll back if the write rejects. Telling the user "Copied" for a
-    // write that never landed is a lie, and the previous bare `void writeText()`
-    // also leaked an unhandled rejection on top of it. Matches the guard style
-    // already used by ConfirmDialog.handleCopy in this package.
-    setCopied(true);
-    const timer = window.setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS);
-    void navigator.clipboard.writeText(message).catch(() => {
-      window.clearTimeout(timer);
-      setCopied(false);
-    });
-  }, [message]);
+  const handleCopy = useCallback(() => copy(message), [copy, message]);
 
   const textClass = cn(
     'selectable select-text whitespace-pre-wrap break-words',

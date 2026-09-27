@@ -16,7 +16,7 @@ export interface LimitationsDialogProps {
   testIdPrefix: string;
   /**
    * Accessible label for the header close button. Defaults to the localized
-   * `common.close`; pass an explicit value to override it.
+   * `common.close`; pass an explicit non-empty value to override it.
    */
   closeLabel?: string;
   /** Called when user checks "don't show again" and closes */
@@ -50,7 +50,7 @@ export function LimitationsDialog({
       onClose={handleClose}
       title={t(titleKey)}
       testId={`${testIdPrefix}-limitations-dialog`}
-      closeLabel={closeLabel ?? t('common.close')}
+      closeLabel={closeLabel || t('common.close')}
       footer={
         <Button
           variant="primary"
