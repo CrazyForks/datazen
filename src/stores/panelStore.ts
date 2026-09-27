@@ -73,12 +73,24 @@ interface PanelState {
    */
   queryExec: Map<string, QueryExecState>;
   /**
-   * Pane that editor actions (execute / format / save …) route to. `null` means
-   * "not split yet" and resolves to the panel's default pane.
+   * Source of truth: which pane editor actions (execute / format / save …)
+   * route to, **per tab**. A tab sitting on its default pane has no entry; the
+   * presence of a key means "this tab is split and its focus is on that pane".
    *
-   * It lives in the store rather than in component state because `ContentView`
-   * unmounts every inactive tab's panel: component state would not survive a
-   * tab switch and the focus would silently reset.
+   * Focus has to be per tab because a pane belongs to a *panel*: with one global
+   * value, splitting tab A handed tab B a pane id B never opened, so B's editor
+   * resolved to an `addPanel`-unseeded key and its SQL and results became
+   * unreachable. See `paneFocusScope` regression tests.
+   */
+  focusedPaneIdByPanel: Record<string, string>;
+  /**
+   * Mirror of `focusedPaneIdByPanel[activePanelId]` — the focused pane of the
+   * tab on screen, or `null` when that tab is not split. This is the value the
+   * view layer hands down; the map above answers per-tab questions.
+   *
+   * It is written **only** by `syncPaneFocus`, which every focus/activation
+   * action goes through, so it cannot drift from the map. That single-writer
+   * rule is what `panelStore.panes.test.ts` pins.
    */
   focusedPaneId: string | null;
   queryHistory: QueryHistoryEntry[];
@@ -124,8 +136,11 @@ interface PanelActions {
   closePanelsToTheRight: (panelId: string) => void;
   closePanelsToTheLeft: (panelId: string) => void;
 
-  /** Route editor actions to `paneId`; `null` restores the default pane. */
-  setFocusedPane: (paneId: string | null) => void;
+  /**
+   * Route editor actions of `panelId` (the active tab by default) to `paneId`;
+   * `null` restores that tab's default pane.
+   */
+  setFocusedPane: (paneId: string | null, panelId?: string) => void;
   /** Add a second pane to an existing query tab and focus it (Split Pane seam). */
   openPane: (panelId: string, paneId: string) => void;
   /** Close one pane of a query tab, cancelling its run and dropping its state. */
@@ -172,10 +187,46 @@ interface PanelActions {
   reset: () => void;
 }
 
+/** The two focus fields an action has to write, plus the new activation. */
+type PaneFocusPatch = Pick<PanelState, 'focusedPaneIdByPanel' | 'focusedPaneId' | 'activePanelId'>;
+
+/**
+ * The one writer of pane focus.
+ *
+ * It drops entries whose tab is gone (a pane cannot outlive its panel), applies
+ * `paneId` to `panelId` when given, and re-derives the `focusedPaneId` mirror
+ * from whichever tab ends up active. Routing the mirror through the map — rather
+ * than letting each action assign it — is what keeps a tab from inheriting
+ * another tab's pane id, and what keeps closing a pane in one tab from stealing
+ * the focus of another.
+ *
+ * `paneId` of `null` / `undefined` means "this tab's default pane": the entry is
+ * removed rather than stored, so an unsplit tab is simply absent from the map.
+ */
+function syncPaneFocus(
+  prev: Pick<PanelState, 'focusedPaneIdByPanel'>,
+  panels: Panel[],
+  activePanelId: string | null,
+  focus?: { panelId: string; paneId: string | null },
+): PaneFocusPatch {
+  const live = new Set(panels.map((p) => p.id));
+  const next: Record<string, string> = {};
+  for (const [panelId, paneId] of Object.entries(prev.focusedPaneIdByPanel)) {
+    if (live.has(panelId) && panelId !== focus?.panelId) next[panelId] = paneId;
+  }
+  if (focus?.paneId) next[focus.panelId] = focus.paneId;
+  return {
+    focusedPaneIdByPanel: next,
+    focusedPaneId: activePanelId ? (next[activePanelId] ?? null) : null,
+    activePanelId,
+  };
+}
+
 export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
   panels: [],
   activePanelId: null,
   queryExec: new Map(),
+  focusedPaneIdByPanel: {},
   focusedPaneId: null,
   queryHistory: [],
   queryFavorites: [],
@@ -193,8 +244,10 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       : get().queryExec;
     set((s) => ({
       panels: [...s.panels, panel],
-      activePanelId: activate ? panel.id : s.activePanelId,
       queryExec: nextExec,
+      // A freshly opened tab starts on its own default pane, so activating it
+      // must not inherit the pane id the previously active tab had focused.
+      ...syncPaneFocus(s, [...s.panels, panel], activate ? panel.id : s.activePanelId),
     }));
   },
 
@@ -203,11 +256,12 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const panel = panels.find((p) => p.id === panelId);
     const nextExec = panel ? cancelAndCleanupExec([panel], queryExec) : queryExec;
     const nextActive = resolveNextActive(panels, panelId, activePanelId);
-    set({
-      panels: panels.filter((p) => p.id !== panelId),
-      activePanelId: nextActive,
+    const nextPanels = panels.filter((p) => p.id !== panelId);
+    set((s) => ({
+      panels: nextPanels,
       queryExec: nextExec,
-    });
+      ...syncPaneFocus(s, nextPanels, nextActive),
+    }));
   },
 
   removeAllForConnection: (connectionId) => {
@@ -216,11 +270,12 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const remaining = panels.filter((p) => p.connectionId !== connectionId);
     const nextExec = cancelAndCleanupExec(toRemove, queryExec);
     const activeStillExists = remaining.some((p) => p.id === activePanelId);
-    set({
+    const nextActive = activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null);
+    set((s) => ({
       panels: remaining,
-      activePanelId: activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null),
       queryExec: nextExec,
-    });
+      ...syncPaneFocus(s, remaining, nextActive),
+    }));
   },
 
   removePanelsForRelation: (connectionId, tableName, database) => {
@@ -244,11 +299,15 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const remaining = panels.filter((p) => !toRemove.some((r) => r.id === p.id));
     const nextExec = cancelAndCleanupExec(toRemove, queryExec);
     const activeStillExists = remaining.some((p) => p.id === activePanelId);
-    set({
+    set((s) => ({
       panels: remaining,
-      activePanelId: activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null),
       queryExec: nextExec,
-    });
+      ...syncPaneFocus(
+        s,
+        remaining,
+        activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null),
+      ),
+    }));
   },
 
   removePanelsForDatabase: (connectionId, database, sessionDatabase) => {
@@ -283,15 +342,21 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const remaining = panels.filter((p) => !toRemove.some((r) => r.id === p.id));
     const nextExec = cancelAndCleanupExec(toRemove, queryExec);
     const activeStillExists = remaining.some((p) => p.id === activePanelId);
-    set({
+    set((s) => ({
       panels: remaining,
-      activePanelId: activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null),
       queryExec: nextExec,
-    });
+      ...syncPaneFocus(
+        s,
+        remaining,
+        activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null),
+      ),
+    }));
   },
 
   setActivePanel: (panelId) => {
-    set({ activePanelId: panelId ?? null });
+    // Switching tabs hands the screen that tab's own focus — never the one the
+    // tab being left had.
+    set((s) => syncPaneFocus(s, s.panels, panelId ?? null));
   },
 
   updatePanel: (panelId, patch) => {
@@ -304,17 +369,18 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const { panels, queryExec } = get();
     const toRemove = panels.filter((p) => p.id !== panelId);
     const nextExec = cancelAndCleanupExec(toRemove, queryExec);
-    set({
-      panels: panels.filter((p) => p.id === panelId),
-      activePanelId: panelId,
+    const kept = panels.filter((p) => p.id === panelId);
+    set((s) => ({
+      panels: kept,
       queryExec: nextExec,
-    });
+      ...syncPaneFocus(s, kept, panelId),
+    }));
   },
 
   closeAllPanels: () => {
     const { panels, queryExec } = get();
     const nextExec = cancelAndCleanupExec(panels, queryExec);
-    set({ panels: [], activePanelId: null, queryExec: nextExec });
+    set((s) => ({ panels: [], queryExec: nextExec, ...syncPaneFocus(s, [], null) }));
   },
 
   closePanelsToTheRight: (panelId) => {
@@ -327,8 +393,8 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       const activeStillExists = kept.some((p) => p.id === s.activePanelId);
       return {
         panels: kept,
-        activePanelId: activeStillExists ? s.activePanelId : panelId,
         queryExec: nextExec,
+        ...syncPaneFocus(s, kept, activeStillExists ? s.activePanelId : panelId),
       };
     });
   },
@@ -343,16 +409,20 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       const activeStillExists = kept.some((p) => p.id === s.activePanelId);
       return {
         panels: kept,
-        activePanelId: activeStillExists ? s.activePanelId : panelId,
         queryExec: nextExec,
+        ...syncPaneFocus(s, kept, activeStillExists ? s.activePanelId : panelId),
       };
     });
   },
 
   // ── Panes ─────────────────────────────────────────────────────
 
-  setFocusedPane: (paneId) => {
-    set({ focusedPaneId: paneId || null });
+  setFocusedPane: (paneId, panelId) => {
+    const s = get();
+    // Without a tab there is nothing to focus; the default is the tab on screen.
+    const target = panelId ?? s.activePanelId;
+    if (!target) return;
+    set((cur) => syncPaneFocus(cur, cur.panels, cur.activePanelId, { panelId: target, paneId }));
   },
 
   openPane: (panelId, paneId) => {
@@ -360,11 +430,11 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     if (!panel || panel.type !== 'query' || !paneId) return;
     const key = paneKey(panelId, paneId);
     set((s) => {
-      if (s.queryExec.has(key)) return s;
-      return {
-        queryExec: new Map(s.queryExec).set(key, emptyQueryExecState()),
-        focusedPaneId: paneId,
-      };
+      // Splitting a tab focuses the pane it just opened, and a tab you split is
+      // the tab you are working in, so it becomes the active one.
+      const focus = syncPaneFocus(s, s.panels, panelId, { panelId, paneId });
+      if (s.queryExec.has(key)) return focus;
+      return { queryExec: new Map(s.queryExec).set(key, emptyQueryExecState()), ...focus };
     });
   },
 
@@ -372,11 +442,21 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const panel = get().panels.find((p) => p.id === panelId);
     if (!panel || panel.type !== 'query') return;
     const nextExec = cancelAndCleanupPaneExec(panel, paneId, get().queryExec);
-    set((s) => ({
-      queryExec: nextExec,
-      // A closed pane cannot stay focused; fall back to the panel's own pane.
-      focusedPaneId: s.focusedPaneId === paneId ? DEFAULT_PANE_ID : s.focusedPaneId,
-    }));
+    set((s) => {
+      // A closed pane cannot stay focused, but only *its own* tab loses focus:
+      // the mirror is re-derived from the active tab, so closing a pane in a
+      // background tab leaves the focus on screen untouched.
+      const clearsFocus = s.focusedPaneIdByPanel[panelId] === paneId;
+      return {
+        queryExec: nextExec,
+        ...syncPaneFocus(
+          s,
+          s.panels,
+          s.activePanelId,
+          clearsFocus ? { panelId, paneId: null } : undefined,
+        ),
+      };
+    });
   },
 
   // ── Query execution ────────────────────────────────────────────
@@ -605,6 +685,7 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       panels: [],
       activePanelId: null,
       queryExec: new Map(),
+      focusedPaneIdByPanel: {},
       focusedPaneId: null,
       queryHistory: [],
       queryFavorites: [],

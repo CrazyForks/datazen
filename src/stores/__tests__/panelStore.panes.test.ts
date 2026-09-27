@@ -62,6 +62,8 @@ vi.mock('../../stores/activeConnectionStore', () => ({
 
 const PANE_1 = 'main';
 const PANE_2 = 'p2';
+const PANE_3 = 'p3';
+const PANEL_B = 'panel-q-2';
 
 describe('panelStore pane dimension', () => {
   let usePanelStore: typeof import('../panelStore').usePanelStore;
@@ -202,6 +204,37 @@ describe('panelStore pane dimension', () => {
     expect(usePanelStore.getState().queryExec.size).toBe(2);
   });
 
+  it('keeps the focusedPaneId mirror equal to the active tab own focus', () => {
+    const s = usePanelStore.getState();
+    const mirrorFollowsActiveTab = () => {
+      const st = usePanelStore.getState();
+      expect(st.focusedPaneId).toBe(
+        st.activePanelId ? (st.focusedPaneIdByPanel[st.activePanelId] ?? null) : null,
+      );
+    };
+
+    s.addPanel(makeQueryPanel(PANEL_ID));
+    s.addPanel(makeQueryPanel(PANEL_B));
+    mirrorFollowsActiveTab();
+    s.openPane(PANEL_ID, PANE_2);
+    mirrorFollowsActiveTab();
+    s.openPane(PANEL_B, PANE_3);
+    mirrorFollowsActiveTab();
+    s.setActivePanel(PANEL_ID);
+    mirrorFollowsActiveTab();
+    s.setFocusedPane(PANE_3);
+    mirrorFollowsActiveTab();
+    s.closePane(PANEL_B, PANE_3);
+    mirrorFollowsActiveTab();
+    s.setActivePanel(null);
+    mirrorFollowsActiveTab();
+    s.setActivePanel(PANEL_B);
+    s.closePanelsToTheRight(PANEL_ID);
+    mirrorFollowsActiveTab();
+    s.reset();
+    mirrorFollowsActiveTab();
+  });
+
   it('openPane ignores unknown panels and non-query panels', () => {
     const s = usePanelStore.getState();
     s.addPanel({
@@ -234,7 +267,12 @@ describe('panelStore pane dimension', () => {
 
     expect(execOf(KEY_2)).toBeUndefined();
     expect(execOf(KEY_1)?.sql).toBe('SELECT 1');
-    expect(usePanelStore.getState().focusedPaneId).toBe(DEFAULT_PANE_ID);
+    // Focus falls back to the tab's own pane: the per-tab entry is dropped, so
+    // the focus resolves to the default pane and the editor reads that pane.
+    const focus = resolveFocusedPaneId(usePanelStore.getState().focusedPaneId);
+    expect(usePanelStore.getState().focusedPaneIdByPanel[PANEL_ID]).toBeUndefined();
+    expect(focus).toBe(DEFAULT_PANE_ID);
+    expect(execOf(paneKey(PANEL_ID, focus))?.sql).toBe('SELECT 1');
     // The tab itself survives a pane close.
     expect(usePanelStore.getState().panels).toHaveLength(1);
   });
