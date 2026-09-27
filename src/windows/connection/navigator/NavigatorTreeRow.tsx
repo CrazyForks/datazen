@@ -29,6 +29,17 @@ function dbIndexFromName(dbName: string): number {
   return Number(dbName.replace(/^db/, ''));
 }
 
+/**
+ * ARIA tree levels are 1-based while `UnifiedRow.depth` is 0-based, and the
+ * section/group headers that own those children carry no `depth` at all — they
+ * are the tree's top level, so their depth-1 children become level 2.
+ */
+const TOP_LEVEL = 1;
+
+function treeItemLevel(depth: number): number {
+  return depth + TOP_LEVEL;
+}
+
 export type GroupDropTarget = { groupName: string; target: 'header' | 'empty' };
 
 export interface NavigatorTreeRowProps {
@@ -158,7 +169,8 @@ export function NavigatorTreeRow({
         <div
           data-section-header
           data-section={row.section}
-          role="button"
+          role="treeitem"
+          aria-level={TOP_LEVEL}
           tabIndex={0}
           aria-expanded={row.expanded}
           className={cn(
@@ -198,6 +210,8 @@ export function NavigatorTreeRow({
         <div
           data-group-header
           data-group-name={row.groupName}
+          role="treeitem"
+          aria-level={TOP_LEVEL}
           className={cn(
             'flex cursor-pointer select-none items-center gap-1.5 px-2 py-1 transition-colors hover:bg-surface-raised/50',
             isDropTarget && 'bg-accent/20 ring-1 ring-accent rounded-sm',
@@ -250,6 +264,8 @@ export function NavigatorTreeRow({
             data-conn-item
             data-conn-name={row.conn.name}
             data-conn-group={row.sectionGroup}
+            role="treeitem"
+            aria-level={treeItemLevel(row.depth)}
             draggable
             onDragStart={(e) => handleDragStart(e, row.conn.id)}
             onDragOver={(e) => handleDragOver(e, row.conn.id, row.sectionGroup)}
@@ -311,6 +327,8 @@ export function NavigatorTreeRow({
           data-testid="schema-tree-node"
           data-tree-node="db"
           data-db-name={row.dbName}
+          role="treeitem"
+          aria-level={treeItemLevel(row.depth)}
           aria-expanded={row.expanded}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] hover:bg-surface-raised text-fg-secondary"
           style={{ paddingLeft: depthPadding(row.depth) }}
@@ -352,6 +370,8 @@ export function NavigatorTreeRow({
           data-testid="schema-tree-node"
           data-tree-node="schema"
           data-schema-name={row.schemaName}
+          role="treeitem"
+          aria-level={treeItemLevel(row.depth)}
           aria-expanded={row.expanded}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] hover:bg-surface-raised text-fg-secondary"
           style={{ paddingLeft: depthPadding(row.depth) }}
@@ -382,6 +402,8 @@ export function NavigatorTreeRow({
           data-testid="schema-tree-node"
           data-tree-node="category"
           data-cat-id={row.cat.id}
+          role="treeitem"
+          aria-level={treeItemLevel(row.depth)}
           aria-expanded={row.expanded}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] text-fg-secondary hover:bg-surface-raised"
           style={{ paddingLeft: depthPadding(row.depth) }}
@@ -419,6 +441,8 @@ export function NavigatorTreeRow({
           data-testid="schema-tree-node"
           data-tree-node={row.catId === 'views' ? 'view' : 'table'}
           data-item-name={row.item.name}
+          role="treeitem"
+          aria-level={treeItemLevel(row.depth)}
           draggable
           onDragStart={(e) => {
             const sel = window.getSelection();
@@ -480,6 +504,8 @@ export function NavigatorTreeRow({
           data-testid="schema-tree-node"
           data-tree-node={row.catId}
           data-item-name={row.obj.name}
+          role="treeitem"
+          aria-level={treeItemLevel(row.depth)}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] text-fg-secondary hover:bg-surface-raised"
           style={{ paddingLeft: depthPadding(row.depth) }}
           onClick={() => {
@@ -507,6 +533,8 @@ export function NavigatorTreeRow({
           data-testid="schema-tree-node"
           data-tree-node="kv-db"
           data-db-name={row.dbName}
+          role="treeitem"
+          aria-level={treeItemLevel(row.depth)}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] hover:bg-surface-raised text-fg-secondary"
           style={{ paddingLeft: depthPadding(row.depth) }}
           onClick={() => {
@@ -538,6 +566,8 @@ export function NavigatorTreeRow({
     case 'db-loading':
       return (
         <div
+          role="treeitem"
+          aria-level={treeItemLevel(row.depth)}
           className="flex items-center gap-2 py-1 text-xs text-fg-muted"
           style={{ paddingLeft: depthPadding(row.depth) }}
         >
@@ -563,6 +593,8 @@ export function NavigatorTreeRow({
             data-testid="schema-tree-node"
             data-tree-node={menuKind}
             data-item-name={row.name}
+            role="treeitem"
+            aria-level={treeItemLevel(row.depth)}
             draggable
             onDragStart={(e) => {
               const sel = window.getSelection();
@@ -659,6 +691,8 @@ export function NavigatorTreeRow({
           type="button"
           data-testid="schema-tree-node"
           data-tree-node="namespace"
+          role="treeitem"
+          aria-level={treeItemLevel(row.depth)}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] text-fg-secondary hover:bg-surface-raised"
           style={{ paddingLeft: depthPadding(row.depth) }}
           onClick={() => {
