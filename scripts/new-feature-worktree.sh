@@ -402,6 +402,36 @@ read_pro_ep_version() {
   node -e 'try{const m=require(process.argv[1]);process.stdout.write(String((m.engines||{}).extensionPointsVersion||""))}catch(e){}' "$f" 2>/dev/null || printf ''
 }
 
+# 契约版本交叉核对：Pro 落在 main（ep 1.0.0）上会让 1.0.0 manifest 撞上 1.1.0 宿主。
+# **两条路径都必须做，判定与措辞都收敛到这里**：
+#   实测（修前）：核对只挂在克隆路径上。Pro 检出**已存在**（跳过克隆）时，
+#   同一处版本不匹配会让报告**零条 ⚠** —— 用户看到一条 ✅ 且带着
+#   manifest extensionPointsVersion=1.0.0，却没有任何一处说它和宿主 1.1.0 对不上；
+#   而 security.test.ts 的「the Pro manifest declares the same version」照样
+#   **断言失败**（不是 ENOENT）。有无其他环节兜住：没有（实测）。
+#   共用一份文案 ⇒ 两条路径对同一处不匹配给出同一个 ⚠，读起来是同一个问题。
+#   $1 = Pro 检出目录；$2 = 措辞里指代 Pro 分支的名字（两条路径各自的真实分支）
+#
+# 关于「读不到」：修前克隆路径把「读不到」和「一致」并进同一个 else，印出
+# 「Pro/宿主 EP 契约版本一致：<未声明> = 1.1.0」—— 实测（预存 Pro 无 manifest.json
+# / manifest.json 为空两种夹具）这行既自相矛盾又是对用户**断言了一句为假的话**。
+# 直接把这段照搬给预存路径，等于把该缺陷复制到一条原本静默的路径上 ⇒ 这里拆成三态。
+# 注意：「读不到」**不算**不一致，因此这里只出一条 ✅，不制造 ⚠ 噪声。
+check_ep_contract() {
+  local dir=$1 label=$2 pro_ep host_ep
+  pro_ep=$(read_pro_ep_version "$dir")
+  host_ep=$(read_host_ep_version)
+  if [ -n "$host_ep" ] && [ -n "$pro_ep" ] && [ "$host_ep" != "$pro_ep" ]; then
+    skipped "Pro/宿主 EP 契约版本一致性" "Pro ${label} 的 manifest 声明 extensionPointsVersion=${pro_ep}，宿主 security.ts 为 ${host_ep}" \
+      "cd ${dir} && git log --oneline -5 manifest.json   # 找一个已同步的 Pro 分支后 git -C ${dir} checkout <那个分支>" \
+      "packages/extension-points/src/__tests__/security.test.ts 的「the Pro manifest declares the same version」会**断言失败**（不是 ENOENT），极易被误记为自己的缺陷。"
+  elif [ -n "$host_ep" ] && [ -n "$pro_ep" ]; then
+    ok "Pro/宿主 EP 契约版本一致：${pro_ep} = ${host_ep}"
+  else
+    ok "Pro/宿主 EP 契约版本**未核对**（读不到即无法断言一致）：Pro=${pro_ep:-<未声明>} 宿主=${host_ep:-<未声明>}"
+  fi
+}
+
 PRO_N=$(count_pro_manifest_tests)
 if [ "$PRO_N" -gt 0 ]; then
   PRO_CONSEQUENCE="packages/extension-points/src/__tests__/security.test.ts 中读取该 manifest 的 ${PRO_N} 个用例会 ENOENT 失败（ENOENT: .../${PRO_REL}/manifest.json）——该失败与你的改动无关，请勿记为缺陷。"
@@ -420,6 +450,9 @@ if [ -e "$PRO_DEST" ]; then
   _pro_exist_branch=$(git -C "$PRO_DEST" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
   _pro_exist_ep=$(read_pro_ep_version "$PRO_DEST")
   ok "Pro 检出已存在：${PRO_DEST}（跳过克隆；分支 ${_pro_exist_branch:-<未知>}，manifest extensionPointsVersion=${_pro_exist_ep:-<未声明>}）"
+  # 预存检出与克隆件是**同一个** EP 契约版本问题 ⇒ 用同一个核对、同一份措辞。
+  # 跳过克隆不代表版本就对：预存检出停在未同步的分支上时，报告同样必须把它推进「⚠ 未铺成」。
+  check_ep_contract "$PRO_DEST" "${_pro_exist_branch:-<未知>}"
 elif maybe_fail "pro" && [ -d "$PRO_SRC/.git" ]; then
   # local remote：主检出的 Pro 检出持有 productivity/* 等**仅本地**分支
   _pro_branch="${DATAZEN_PRO_BRANCH:-}"
@@ -461,15 +494,7 @@ elif maybe_fail "pro" && [ -d "$PRO_SRC/.git" ]; then
         "cd ${PRO_SRC} && npm install   # 仅 Pro 仓；宿主 worktree 仍靠根级软链" \
         "Pro 自身测试（pnpm test:pro）无法解析依赖；宿主测试不受影响。"
     fi
-    # 契约版本交叉核对：Pro 落在 main 上会让 1.0.0 manifest 撞上 1.1.0 宿主
-    _host_ep=$(read_host_ep_version)
-    if [ -n "$_host_ep" ] && [ -n "$_pro_ep" ] && [ "$_host_ep" != "$_pro_ep" ]; then
-      skipped "Pro/宿主 EP 契约版本一致性" "Pro ${_pro_branch} 的 manifest 声明 extensionPointsVersion=${_pro_ep}，宿主 security.ts 为 ${_host_ep}" \
-        "cd ${PRO_DEST} && git log --oneline -5 manifest.json   # 找一个已同步的 Pro 分支后 git -C ${PRO_DEST} checkout <那个分支>" \
-        "packages/extension-points/src/__tests__/security.test.ts 的「the Pro manifest declares the same version」会**断言失败**（不是 ENOENT），极易被误记为自己的缺陷。"
-    else
-      ok "Pro/宿主 EP 契约版本一致：${_pro_ep:-<未声明>} = ${_host_ep:-<未声明>}"
-    fi
+    check_ep_contract "$PRO_DEST" "$_pro_branch"
   else
     skipped "Pro 检出" "从 ${PRO_SRC} 克隆或 checkout ${_pro_branch} 失败（磁盘/权限/仓库损坏）" \
       "$PRO_MANUAL" \
