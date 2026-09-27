@@ -78,6 +78,19 @@ title: 多目标协调计划（hub 静态段落来源）
   一处 `Partial<PanelState>` 转换）——**恰是 AGENTS.md 新门禁要防的「mock 与真实类型长期漂移」**。
   生产代码 0 错、1199 运行期用例全绿，纯夹具问题，已回退 Coder 修正。
   Track B 在真门禁下 **0 新增错误**（其 Coder 用临时 tsconfig 自验「本轨 0 错」属实）。
+- **Track D 交付**（`c37bc0848`，3 文件 +612/−17，未合流）：红→绿证据扎实——源码回退 HEAD 后
+  `9 failed | 11 passed`，Down 那条 `from: 13` 正是 `copyLineDown` 吃掉按键的指纹。
+  copy-line 未被放弃：Win/Linux 走 `Mod-Shift-Arrow*`（不提权），macOS **主动让位**给原生
+  `Cmd+Shift+↑/↓`（selectDocStart/End），另给四修饰键 `Alt-Shift-Mod-Arrow*`。
+  **Coder 实测推翻了协调者先前的 Mod-d 裁定**：真正恒不命中的是 `Shift-Mod-d` / `Shift-Mod-D`，
+  而 `Mod-d` / `Mod-D` 都活着——因字符键在 `runHandlers` 主查表**排除 Shift**，带 Shift 前缀的
+  键名根本没机会被查。处置：四条全留、零行为改动。**另修正 spec §1**：`Shift-Alt-ArrowUp` 无
+  mac 变体，冲突在**所有平台**存在，不只 macOS。
+- **codegen 缺失的跨 worktree 陷阱**：Track D 的 worktree 缺整个 `src/extensions/` 目录，
+  导致 174 个文件级失败 + 28 条 tsc 错**全是假阳性**。Coder 归因正确（禁 `pnpm install`），
+  但「未新增失败」一度只是推断。协调者已从集成 worktree 补入 `generated.ts` + `generated-pro.ts`
+  （gitignored，不污染 git；`generated.ts` 全仓 md5 一致，`generated-pro.ts` 各 worktree 不同、
+  反映各自合并态）。**教训：新建 worktree 后必须先核 codegen 存在再让代理跑全量**。
 - **Track B 合流**（`1837096f0`）：宿主 12 文件 + Pro 4 文件；Pro 侧 `63b212a`
   已合入 Pro 集成分支 `productivity/editor-productivity`（现 `967fdbd`，含 A+B 两侧）。
   双侧 `extensionPointsVersion` 均 `1.1.0`（已实测核验），合流后 `resolve-pro --edition=pro` 打包正常。
