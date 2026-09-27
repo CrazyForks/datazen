@@ -321,7 +321,9 @@ pub fn run() {
             crate::commands::execute_query_stream,
             crate::commands::get_explain,
             crate::commands::get_favorite_queries,
+            crate::commands::get_favorites_root,
             crate::commands::get_query_history,
+            crate::commands::refresh_favorites,
             crate::commands::rollback_session_transaction,
             crate::commands::session_transaction_status,
             // ── 查询历史维护 ──

@@ -16,11 +16,19 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use super::models::{FavoriteQuery, QueryHistoryEntry};
+use super::favorites::migrate::LegacyFavoriteRow;
+use super::models::QueryHistoryEntry;
 use crate::workflow::workflows::WorkflowExecutionResult;
 
 pub const MAX_QUERY_HISTORY: usize = 1000;
 pub const MAX_WORKFLOW_HISTORY: usize = 100;
+
+/// Name of the retired favorites table. Never created again; only read.
+pub const LEGACY_FAVORITES_TABLE: &str = "favorite_queries";
+
+/// Where those rows go once they have been exported to `.sql` files. Keeping
+/// them (instead of dropping) is what makes the migration reversible.
+pub const LEGACY_FAVORITES_ARCHIVE_TABLE: &str = "favorite_queries_legacy_v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -182,18 +190,15 @@ impl HistoryDb {
                     "
                     CREATE INDEX IF NOT EXISTS idx_query_history_config_id
                         ON query_history(config_id);
-                    CREATE TABLE IF NOT EXISTS favorite_queries (
-                        id TEXT PRIMARY KEY NOT NULL,
-                        config_id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        sql TEXT NOT NULL,
-                        created_at TEXT NOT NULL
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_favorite_queries_config_id
-                        ON favorite_queries(config_id);
                     INSERT OR IGNORE INTO schema_version (version) VALUES (2);
                     ",
                 )?;
+                // `favorite_queries` used to be created here. It is not
+                // created any more: favorites live in files under the
+                // favorites root, and an install that still has the table
+                // gets it exported and archived instead (see
+                // `read_legacy_favorites`). Creating it here would hand every
+                // new install a table the app has no writer for.
                 tracing::info!("Database schema migrated to version 2");
             }
 
@@ -236,23 +241,35 @@ impl HistoryDb {
                     Ok(())
                 };
                 rename_column(conn, "query_history", "config_id", "connection_id")?;
-                rename_column(conn, "favorite_queries", "config_id", "connection_id")?;
+                if table_exists(conn, LEGACY_FAVORITES_TABLE)? {
+                    rename_column(conn, LEGACY_FAVORITES_TABLE, "config_id", "connection_id")?;
+                }
 
-                conn.execute_batch(
+                // The favorites index is only rebuilt when the table still
+                // exists. A database that never had one (every install from
+                // now on) would otherwise fail this batch outright, since
+                // SQLite cannot index a table that was never created.
+                let favorites_index_ddl = if table_exists(conn, LEGACY_FAVORITES_TABLE)? {
+                    "CREATE INDEX IF NOT EXISTS idx_favorite_queries_connection_id
+                        ON favorite_queries(connection_id);"
+                } else {
+                    ""
+                };
+                conn.execute_batch(&format!(
                     "
                     DROP INDEX IF EXISTS idx_query_history_connection_id;
                     DROP INDEX IF EXISTS idx_query_history_config_id;
                     DROP INDEX IF EXISTS idx_query_history_config_db;
                     DROP INDEX IF EXISTS idx_favorite_queries_config_id;
+                    DROP INDEX IF EXISTS idx_favorite_queries_connection_id;
                     CREATE INDEX IF NOT EXISTS idx_query_history_connection_id
                         ON query_history(connection_id);
                     CREATE INDEX IF NOT EXISTS idx_query_history_connection_db
                         ON query_history(connection_id, database);
-                    CREATE INDEX IF NOT EXISTS idx_favorite_queries_connection_id
-                        ON favorite_queries(connection_id);
+                    {favorites_index_ddl}
                     INSERT OR IGNORE INTO schema_version (version) VALUES (4);
-                    ",
-                )?;
+                    "
+                ))?;
                 tracing::info!("Database schema migrated to version 4");
             }
             Ok(())
@@ -391,56 +408,80 @@ impl HistoryDb {
         })
     }
 
-    // ── Favorite queries ──────────────────────────────────────────────────
+    // ── Legacy favorite queries (retired) ─────────────────────────────────
+    //
+    // Favorites moved to plain `.sql` files under the favorites root (plan
+    // §2.6). These two methods exist only to get the old rows out of SQLite;
+    // there is no write path here any more, and `favorite_queries` is never
+    // created again for a new install.
 
-    pub fn add_favorite_query(&self, fav: FavoriteQuery) -> Result<(), HistoryDbError> {
-        self.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO favorite_queries (id, connection_id, title, sql, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    fav.id,
-                    fav.connection_id,
-                    fav.title,
-                    fav.sql,
-                    fav.created_at.to_rfc3339(),
-                ],
-            )?;
-            Ok(())
-        })
+    /// Run `f` against the raw SQLite connection.
+    ///
+    /// Test-only: production code goes through the typed methods above, so that
+    /// schema shape stays an implementation detail of this module.
+    #[cfg(test)]
+    pub(crate) fn with_raw_conn<T, F>(&self, f: F) -> T
+    where
+        F: FnOnce(&Connection) -> T,
+    {
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        f(&conn)
     }
 
-    pub fn get_favorite_queries(
-        &self,
-        connection_id: Option<&str>,
-    ) -> Result<Vec<FavoriteQuery>, HistoryDbError> {
+    /// Read every row still sitting in `favorite_queries`.
+    ///
+    /// `None` means the table is absent — a fresh install, or an install that
+    /// already exported and archived. Both are a no-op, so the common case
+    /// costs one `sqlite_master` probe per launch.
+    pub fn read_legacy_favorites(&self) -> Result<Option<Vec<LegacyFavoriteRow>>, HistoryDbError> {
         self.with_conn(|conn| {
-            if let Some(cid) = connection_id {
-                let mut stmt = conn.prepare(
-                    "SELECT id, connection_id, title, sql, created_at
-                     FROM favorite_queries
-                     WHERE connection_id = ?1
-                     ORDER BY created_at DESC",
-                )?;
-                let rows = stmt.query_map(params![cid], map_favorite_row)?;
-                rows.collect::<Result<Vec<_>, _>>()
-                    .map_err(HistoryDbError::from)
-            } else {
-                let mut stmt = conn.prepare(
-                    "SELECT id, connection_id, title, sql, created_at
-                     FROM favorite_queries
-                     ORDER BY created_at DESC",
-                )?;
-                let rows = stmt.query_map([], map_favorite_row)?;
-                rows.collect::<Result<Vec<_>, _>>()
-                    .map_err(HistoryDbError::from)
+            if !table_exists(conn, LEGACY_FAVORITES_TABLE)? {
+                return Ok(None);
             }
+            // A v1-era database reached without passing through the v2/v4
+            // renames still calls the column `config_id`.
+            let connection_col = if has_column(conn, LEGACY_FAVORITES_TABLE, "connection_id")? {
+                "connection_id"
+            } else {
+                "config_id"
+            };
+            let sql = format!(
+                "SELECT id, {connection_col}, title, sql, created_at FROM {LEGACY_FAVORITES_TABLE}"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([], map_legacy_favorite_row)?;
+            let parsed = rows
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(HistoryDbError::from)?;
+            Ok(Some(parsed))
         })
     }
 
-    pub fn delete_favorite_query(&self, id: &str) -> Result<(), HistoryDbError> {
+    /// Rename `favorite_queries` out of the way, keeping its rows.
+    ///
+    /// An `ALTER ... RENAME` is preferred over a `DROP` (this is the
+    /// "保留原库备份" of plan §2.6.6) and over copying a live SQLite file: the
+    /// rename is transactional, so either the table is archived or the export
+    /// is retried next launch — never both half-done.
+    pub fn archive_legacy_favorites_table(&self) -> Result<(), HistoryDbError> {
         self.with_conn(|conn| {
-            conn.execute("DELETE FROM favorite_queries WHERE id = ?1", params![id])?;
+            if !table_exists(conn, LEGACY_FAVORITES_TABLE)? {
+                return Ok(());
+            }
+            if table_exists(conn, LEGACY_FAVORITES_ARCHIVE_TABLE)? {
+                // Already archived by an earlier run that died before this
+                // one could start; nothing to do.
+                return Ok(());
+            }
+            conn.execute_batch(&format!(
+                "ALTER TABLE {LEGACY_FAVORITES_TABLE} RENAME TO {LEGACY_FAVORITES_ARCHIVE_TABLE};"
+            ))?;
+            tracing::info!(
+                "Archived {LEGACY_FAVORITES_TABLE} → {LEGACY_FAVORITES_ARCHIVE_TABLE} after exporting favorites"
+            );
             Ok(())
         })
     }
@@ -585,6 +626,45 @@ impl HistoryDb {
     }
 }
 
+/// Whether `name` exists as a table. Used to keep migrations tolerant of
+/// databases that predate a given table.
+fn table_exists(conn: &Connection, name: &str) -> Result<bool, HistoryDbError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![name],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// Whether `table` has a column named `column`.
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, HistoryDbError> {
+    if !table_exists(conn, table)? {
+        return Ok(false);
+    }
+    // A `SELECT <column> FROM <table> LIMIT 0` is the cheapest portable way to
+    // ask; table and column names here are compile-time constants.
+    let probe = format!("SELECT {column} FROM {table} LIMIT 0");
+    Ok(conn.prepare(&probe).is_ok())
+}
+
+fn map_legacy_favorite_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LegacyFavoriteRow> {
+    let created_at: String = row.get(4)?;
+    // A row with an unparseable timestamp must not abort the whole export —
+    // that would strand every other favorite behind one bad row. It becomes
+    // the epoch, which sorts last, and the id stays stable.
+    let created_at = DateTime::parse_from_rfc3339(&created_at)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| DateTime::<Utc>::from(std::time::UNIX_EPOCH));
+    Ok(LegacyFavoriteRow {
+        id: row.get(0)?,
+        connection_id: row.get(1)?,
+        title: row.get(2)?,
+        sql: row.get(3)?,
+        created_at,
+    })
+}
+
 fn open_connection(db_path: &Path) -> Result<Connection, HistoryDbError> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -666,20 +746,6 @@ fn map_query_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueryHistoryEntry>
         rows_affected: rows_affected.map(|v| v as u64),
         success: row.get::<_, i32>(8)? != 0,
         error_message: row.get(9)?,
-    })
-}
-
-fn map_favorite_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FavoriteQuery> {
-    let created_at: String = row.get(4)?;
-    let created_at = DateTime::parse_from_rfc3339(&created_at)
-        .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-    Ok(FavoriteQuery {
-        id: row.get(0)?,
-        connection_id: row.get(1)?,
-        title: row.get(2)?,
-        sql: row.get(3)?,
-        created_at,
     })
 }
 
@@ -1117,39 +1183,100 @@ mod tests {
     }
 
     #[test]
-    fn favorite_queries_crud() {
+    fn a_fresh_install_never_creates_the_retired_favorites_table() {
         let dir = tempfile::tempdir().unwrap();
         let db = HistoryDb::open(dir.path()).unwrap();
+        // Nothing to export on a fresh install, and nothing to clean up later.
+        assert!(db.read_legacy_favorites().unwrap().is_none());
+    }
 
-        assert!(db.get_favorite_queries(None).unwrap().is_empty());
+    #[test]
+    fn legacy_favorites_are_readable_then_archived_not_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = HistoryDb::open(dir.path()).unwrap();
+        seed_legacy_favorites(&db, 3);
 
-        let fav = FavoriteQuery {
-            id: "fav1".into(),
-            connection_id: "cfg-a".into(),
-            title: "My query".into(),
-            sql: "SELECT 1".into(),
-            created_at: Utc::now(),
-        };
-        db.add_favorite_query(fav).unwrap();
+        let rows = db.read_legacy_favorites().unwrap().expect("table exists");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].title, "legacy 0");
 
-        let fav2 = FavoriteQuery {
-            id: "fav2".into(),
-            connection_id: "cfg-b".into(),
-            title: "Other".into(),
-            sql: "SELECT 2".into(),
-            created_at: Utc::now(),
-        };
-        db.add_favorite_query(fav2).unwrap();
+        db.archive_legacy_favorites_table().unwrap();
 
-        let all = db.get_favorite_queries(None).unwrap();
-        assert_eq!(all.len(), 2);
+        // Gone as a live table...
+        assert!(db.read_legacy_favorites().unwrap().is_none());
+        // ...but the rows are still in the database for rollback.
+        let conn = db.conn.lock().unwrap();
+        let archived: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {LEGACY_FAVORITES_ARCHIVE_TABLE}"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived, 3);
+    }
 
-        let a_only = db.get_favorite_queries(Some("cfg-a")).unwrap();
-        assert_eq!(a_only.len(), 1);
-        assert_eq!(a_only[0].title, "My query");
+    #[test]
+    fn archiving_twice_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = HistoryDb::open(dir.path()).unwrap();
+        seed_legacy_favorites(&db, 1);
+        db.archive_legacy_favorites_table().unwrap();
+        db.archive_legacy_favorites_table().unwrap();
+        assert!(db.read_legacy_favorites().unwrap().is_none());
+    }
 
-        db.delete_favorite_query("fav1").unwrap();
-        assert_eq!(db.get_favorite_queries(None).unwrap().len(), 1);
+    #[test]
+    fn a_row_with_a_broken_timestamp_does_not_strand_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = HistoryDb::open(dir.path()).unwrap();
+        seed_legacy_favorites(&db, 2);
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE favorite_queries SET created_at = 'not-a-date' WHERE title = 'legacy 0'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let rows = db.read_legacy_favorites().unwrap().expect("table exists");
+        assert_eq!(rows.len(), 2, "one bad row must not abort the export");
+        let broken = rows.iter().find(|r| r.title == "legacy 0").unwrap();
+        assert_eq!(
+            broken.created_at,
+            DateTime::<Utc>::from(std::time::UNIX_EPOCH)
+        );
+    }
+
+    /// Recreate the exact v4 table shape a pre-§2.6 install has on disk.
+    fn seed_legacy_favorites(db: &HistoryDb, count: usize) {
+        let conn = db.conn.lock().unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE {LEGACY_FAVORITES_TABLE} (
+                 id TEXT PRIMARY KEY NOT NULL,
+                 connection_id TEXT NOT NULL,
+                 title TEXT NOT NULL,
+                 sql TEXT NOT NULL,
+                 created_at TEXT NOT NULL
+             );"
+        ))
+        .unwrap();
+        for i in 0..count {
+            conn.execute(
+                &format!(
+                    "INSERT INTO {LEGACY_FAVORITES_TABLE}
+                     (id, connection_id, title, sql, created_at) VALUES (?1, ?2, ?3, ?4, ?5)"
+                ),
+                params![
+                    format!("fav{i}"),
+                    format!("cfg-{}", i % 2),
+                    format!("legacy {i}"),
+                    format!("SELECT {i}"),
+                    (Utc::now() - Duration::hours(i as i64)).to_rfc3339()
+                ],
+            )
+            .unwrap();
+        }
     }
 
     #[test]
@@ -1371,10 +1498,14 @@ mod migration_startpoint_tests {
         assert_eq!(history.len(), 2, "history rows must be preserved");
         assert!(history.iter().any(|e| e.sql == "SELECT 1"));
         assert!(history.iter().any(|e| e.sql == "SELECT 2"));
-        let favs = db.get_favorite_queries(Some("cfg-legacy")).unwrap();
-        assert_eq!(favs.len(), 1, "favorite row must be preserved");
+
+        // The favorite row is left intact for the file export to pick up.
+        // Opening the database must not consume it.
+        let favs = db.read_legacy_favorites().unwrap().expect("table exists");
+        assert_eq!(favs.len(), 1, "favorite row must survive schema migration");
         assert_eq!(favs[0].title, "My Fav");
         assert_eq!(favs[0].sql, "SELECT 3");
+        assert_eq!(favs[0].connection_id, "cfg-legacy");
     }
 
     #[test]
@@ -1408,6 +1539,55 @@ mod migration_startpoint_tests {
             .get_query_history(10, None, None, None)
             .unwrap()
             .is_empty());
-        assert!(db.get_favorite_queries(None).unwrap().is_empty());
+        // A v2 database still carries the (now empty) table. It is left in
+        // place: the export has nothing to write, so renaming it would be
+        // churn on a schema the next reinstall will discard anyway.
+        assert_eq!(
+            db.read_legacy_favorites().unwrap().map(|r| r.len()),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn a_v1_database_without_a_favorites_table_still_reaches_v4() {
+        // Regression guard for retiring the table: the v2 step no longer
+        // creates it, so a v1 library upgrading for the first time has no
+        // `favorite_queries` at all by the time the v4 step runs. Index DDL
+        // for a table that was never created makes the whole batch fail, which
+        // would abort startup for exactly the oldest users.
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let conn = Connection::open(dir.path().join("history.sqlite")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE schema_version (version INTEGER NOT NULL);
+                 INSERT INTO schema_version (version) VALUES (1);
+                 CREATE TABLE query_history (
+                     id TEXT PRIMARY KEY NOT NULL,
+                     config_id TEXT NOT NULL,
+                     database TEXT NOT NULL,
+                     sql TEXT NOT NULL,
+                     executed_at TEXT NOT NULL,
+                     execution_time_ms INTEGER NOT NULL,
+                     rows_affected INTEGER,
+                     success INTEGER NOT NULL,
+                     error_message TEXT
+                 );",
+            )
+            .unwrap();
+        }
+
+        let db = HistoryDb::open(dir.path()).unwrap();
+        let db_conn = db.conn.lock().unwrap();
+        let version: i32 = db_conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 4, "the full migration ring must still complete");
+        assert!(column_names(&db_conn, "query_history").contains(&"connection_id".to_string()));
+        drop(db_conn);
+        assert!(db.read_legacy_favorites().unwrap().is_none());
     }
 }

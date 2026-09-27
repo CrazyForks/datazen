@@ -92,16 +92,25 @@ pub struct QueryHistoryEntry {
     pub error_message: Option<String>,
 }
 
-/// 收藏的查询
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 收藏的查询 —— 自 §2.6 起每条是一个 `.sql` 文件，id 即文件名（ULID）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct FavoriteQuery {
+    /// 文件名去扩展名，ULID；删除 / 改名只作用于这一个文件
     pub id: String,
-    pub name: String,
-    pub connection_id: Option<String>,
-    pub database: Option<String>,
+    /// front-matter 的 `connectionId`；无归属时为空串
+    pub connection_id: String,
+    pub title: String,
+    /// front-matter 之后的全部正文，逐字节可执行
     pub sql: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
-    pub tags: Vec<String>,
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 收藏时选中的库，便于换库后重新绑定
+    pub database: Option<String>,
+    /// 预留：关键词补全轨；只解析与回写，本期不做 UI
+    pub keyword: Option<String>,
+    /// 相对收藏根目录的 `/` 分隔子目录，根目录为 None
+    pub folder: Option<String>,
 }
 
 impl Store {
@@ -202,10 +211,8 @@ impl Store {
             .await
             .unwrap_or_default();
         
-        // 加载收藏
-        cache.favorites = self.load_json_file("favorites/queries.json")
-            .await
-            .unwrap_or_default();
+        // 收藏是文件，不在这里加载：见 §1.4 收藏（文件优先）
+        cache.favorites = self.store.favorites.list(None);
         
         Ok(())
     }
@@ -406,3 +413,55 @@ unset + 其它             → Keyring（失败可回退已有 `.key`）
 ### 1.3 查询历史（明文）
 
 `{appData}/history.sqlite`（`history_db.rs`）持久化 SQL 查询与 Workflow 执行历史。**SQL 文本、错误信息与库/schema 上下文以明文存储**，未像 `connections.json` / `ai_config.enc` 那样 AES 加密。语句中可能含字面量或片段性敏感数据；备份/同步 app data 目录时需视同敏感审计日志。日志路径已用 `log_redact` 脱敏；history 落盘加密留作后续加固项。
+
+### 1.4 收藏（文件优先）
+
+收藏不再进 SQLite。每条收藏是收藏根目录下的**一个 `.sql` 文件**，文件名是去扩展名的 ULID，因此**列表顺序就是创建顺序**，`ls` 即可读，diff / merge / 备份都能交给 iCloud、Dropbox、Git 直接做。实现见 `src-tauri/src/store/favorites/`。
+
+```text
+{appData}/favorites/            ← 可用 AppSettings.favoritesRoot 改指到任意已同步目录
+├── 01J8XK2M9Q7B4F.sql
+├── reports/
+│   └── 01J8XK2MA1C2D3E.sql      ← 子目录递归扫描，folder = "reports"
+└── .trash/                      ← 软删除；不参与扫描
+    └── 1755000000000__01J8XK2M9Q7B4F.sql
+```
+
+**front-matter 用 `--` SQL 注释承载**，与 SQL 注释结构同形，所以文件本身仍可直接执行：
+
+```sql
+-- title: Nightly recon
+-- connectionId: cfg-1
+-- createdAt: 2026-01-01T09:00:00+00:00
+-- updatedAt: 2026-01-02T11:20:00+00:00
+SELECT * FROM orders WHERE d = CURRENT_DATE;
+```
+
+不变量与理由：
+
+- **键序即文件序**。front-matter 是 `Vec<(String, String)>` 而非 `BTreeMap`：按字母序重写会让每次保存都改动所有文件，diff 全是噪声。`title / connectionId / createdAt / updatedAt / database / keyword` 的顺序固定，**未知键原序保留**，因此下一批功能接入时不会丢字段。
+- **值转义**。`\n` `\r` `\\` 转义后再落盘，值无法自己换行，front-matter 因此不可能渗进语句正文。
+- **只归一化一处**。`parse` 不改写任何内容（读手写文件不会被重写）；`render` 保证非空文件以**恰好一个** `\n` 结尾。所以编辑器里的 `SELECT 1` 读回是 `SELECT 1\n`，这是全部差异。
+- **id 只来自文件名**，且必须通过 `is_safe_stem`（ASCII 字母数字加 `-` `_`，≤ 64 字符，并拒绝 22 个 Windows 设备名）。路径穿越因此在构造上不可能。允许的字符集比 ULID 宽，是为了让用户在访达里改名后收藏仍可编辑。
+- **写入是原子的**：临时文件 + `fs::rename`；失败不留临时文件。
+- **删除是软删除**：移入 `.trash/{unix秒}-{毫秒}__{id}.sql`，SQL 保留可恢复。`.trash` 与一切 `.` 开头目录都不参与扫描。
+- **符号链接不跟随**（`symlink_metadata`），避免根目录外的内容被扫进来。
+- **扫描有内存缓存**，只有 App 自身的写操作会更新它。同步客户端在运行期间投递的文件要等 UI 显式重扫才会出现——面板在**打开时**和**窗口重新获得焦点时**调用 `refresh_favorites`，并提供手动重扫按钮。这是"缓存 + 显式失效"，不是文件监听器：监听一个用户随时可能指向 iCloud 的目录并不可靠，而重扫一个纯文本目录很便宜。
+- **无归属的收藏不会被隐藏或删除**：`connectionId` 缺失时 `connection_id` 为空串，按连接过滤时只在"全部"视图出现。
+
+#### 1.4.1 从 `favorite_queries` 表迁移
+
+`favorite_queries` 表已停用（v2 建表语句不再创建它，新装用户根本不会有）。老用户升级后，`Store::init_with_path` 在打开 `HistoryDb` 与 `FavoritesStore`、并应用 `favoritesRoot` 设置之后，执行一次导出：
+
+1. 表不存在 → 直接返回，不写标记文件。
+2. 表存在且**有行**：逐行写成 `.sql` 文件，ULID 由 `Sha256(legacy_id)[0..10]` 确定性导出（时间戳取该行的 `created_at`），因此同一行在任何一次重试里都落到同一路径。**全部写成功之后**才把表重命名为 `favorite_queries_legacy_v1`。
+3. 表存在但**为空**：不动 schema，直接返回。
+
+关键性质：
+
+- **幂等的护栏是重命名，不是标记文件。** `.migration-v1.json` 只是给用户和排查用的记录；即便它被同步冲突吞掉，也不可能引起二次导出——因为护栏是「表已经不在原名下了」。反过来，同步冲突**不可能**造成漏导出。
+- **失败不消耗任何东西。** 中途写失败则错误上抛、表原样保留（不重命名），下次启动从同一批行重跑，只重写同一批路径：已写好的被覆盖，不产生副本。
+- **原数据可回滚。** 表是重命名而非 `DROP`，`favorite_queries_legacy_v1` 里三行俱全。
+- **排序不变。** 旧面板是 `ORDER BY created_at DESC`，导出后按 ULID（即 `created_at`）倒序，一致。
+
+覆盖以上各点的测试在 `src-tauri/src/store/favorites/tests.rs` 的 `mod migration`，全部使用真实 `tempfile` 临时目录。

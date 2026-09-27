@@ -208,48 +208,6 @@ pub(crate) async fn clear_query_history_impl(state: &AppState) -> Result<(), Com
         .cmd_err("clear_query_history")
 }
 
-pub(crate) async fn get_favorite_queries_impl(
-    state: &AppState,
-    connection_id: Option<String>,
-) -> Result<Vec<crate::store::FavoriteQuery>, CommandError> {
-    Ok(state
-        .store
-        .get_favorite_queries(connection_id.as_deref())
-        .await)
-}
-
-pub(crate) async fn add_favorite_query_impl(
-    state: &AppState,
-    connection_id: String,
-    title: String,
-    sql: String,
-) -> Result<crate::store::FavoriteQuery, CommandError> {
-    let fav = crate::store::FavoriteQuery {
-        id: uuid::Uuid::new_v4().to_string(),
-        connection_id,
-        title,
-        sql,
-        created_at: chrono::Utc::now(),
-    };
-    state
-        .store
-        .add_favorite_query(fav.clone())
-        .await
-        .cmd_err("add_favorite_query")?;
-    Ok(fav)
-}
-
-pub(crate) async fn delete_favorite_query_impl(
-    state: &AppState,
-    id: String,
-) -> Result<(), CommandError> {
-    state
-        .store
-        .delete_favorite_query(&id)
-        .await
-        .cmd_err("delete_favorite_query")
-}
-
 #[tauri::command]
 pub async fn execute_query(
     state: State<'_, AppState>,
@@ -320,32 +278,6 @@ pub async fn get_query_history(
 #[tauri::command]
 pub async fn clear_query_history(state: State<'_, AppState>) -> Result<(), CommandError> {
     clear_query_history_impl(&state).await
-}
-
-#[tauri::command]
-pub async fn get_favorite_queries(
-    state: State<'_, AppState>,
-    connection_id: Option<String>,
-) -> Result<Vec<crate::store::FavoriteQuery>, CommandError> {
-    get_favorite_queries_impl(&state, connection_id).await
-}
-
-#[tauri::command]
-pub async fn add_favorite_query(
-    state: State<'_, AppState>,
-    connection_id: String,
-    title: String,
-    sql: String,
-) -> Result<crate::store::FavoriteQuery, CommandError> {
-    add_favorite_query_impl(&state, connection_id, title, sql).await
-}
-
-#[tauri::command]
-pub async fn delete_favorite_query(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), CommandError> {
-    delete_favorite_query_impl(&state, id).await
 }
 
 pub(crate) async fn begin_session_transaction_impl(
@@ -713,39 +645,6 @@ mod tests {
                 .await
                 .is_err()
         );
-    }
-
-    #[tokio::test]
-    async fn favorite_queries_roundtrip() {
-        let test = TestAppState::new().await;
-        assert!(get_favorite_queries_impl(&test.state, None)
-            .await
-            .unwrap()
-            .is_empty());
-
-        let fav = add_favorite_query_impl(
-            &test.state,
-            "cfg-test".into(),
-            "My query".into(),
-            "SELECT 1".into(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            get_favorite_queries_impl(&test.state, None)
-                .await
-                .unwrap()
-                .len(),
-            1
-        );
-
-        delete_favorite_query_impl(&test.state, fav.id)
-            .await
-            .unwrap();
-        assert!(get_favorite_queries_impl(&test.state, None)
-            .await
-            .unwrap()
-            .is_empty());
     }
 
     #[tokio::test]

@@ -29,6 +29,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   mcpPermissionMode: 'safe_write',
   mcpAllowedConnectionIds: [],
   contextDir: '',
+  // Undefined = the app-data default. The favorites panel shows the resolved
+  // path from `getFavoritesRoot`, so the default needs no stored value.
+  favoritesRoot: undefined,
   checkForUpdatesOnStartup: false,
   autoChartOnQuery: false,
   monitor: DEFAULT_MONITOR_SETTINGS,

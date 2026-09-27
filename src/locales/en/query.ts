@@ -46,6 +46,8 @@ const pack = {
   'query.favorites': 'Favorites',
   'query.favoritesTitle': 'SQL Favorites',
   'query.noFavorites': 'No favorites yet',
+  'query.favoritesRoot': 'Saved in',
+  'query.favoritesRefresh': 'Rescan the favorites folder',
   'query.favoriteTitle': 'Title',
   'query.favoriteTitlePlaceholder': 'Enter favorite title...',
   'query.applySql': 'Apply SQL',

@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::{ConnectionConfig, SshTunnelConfig, SslMode};
+use crate::store::favorites::NewFavorite;
 use crate::store::settings::{OnboardingState, ONBOARDING_VERSION};
 use chrono::Utc;
 use settings::{deserialize_theme, ThemePreference};
@@ -694,18 +695,44 @@ async fn favorite_queries_crud() {
     let dir = tempfile::tempdir().unwrap();
     let store = init_store_for_test(dir.path()).await;
 
-    let fav = FavoriteQuery {
-        id: "f1".into(),
-        connection_id: "cfg-1".into(),
-        title: "Users".into(),
-        sql: "SELECT * FROM users".into(),
-        created_at: Utc::now(),
-    };
-    store.add_favorite_query(fav).await.unwrap();
-    assert_eq!(store.get_favorite_queries(None).await.len(), 1);
+    // The id is a ULID minted by the store, so the delete below has to use the
+    // id it got back — which is exactly what the command layer now does.
+    let fav = store
+        .add_favorite_query(NewFavorite {
+            connection_id: "cfg-1".into(),
+            title: "Users".into(),
+            sql: "SELECT * FROM users".into(),
+            database: None,
+            keyword: None,
+        })
+        .await
+        .unwrap();
+    let all = store.get_favorite_queries(None).await.unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].id, fav.id);
+    assert_eq!(all[0].title, "Users");
+    assert_eq!(
+        store
+            .get_favorite_queries(Some("cfg-1".into()))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(store
+        .get_favorite_queries(Some("cfg-2".into()))
+        .await
+        .unwrap()
+        .is_empty());
 
-    store.delete_favorite_query("f1").await.unwrap();
-    assert!(store.get_favorite_queries(None).await.is_empty());
+    // The SQL is a file on disk, so a restart must find it again.
+    let reopened = init_store_for_test(dir.path()).await;
+    let persisted = reopened.get_favorite_queries(None).await.unwrap();
+    assert_eq!(persisted.len(), 1);
+    assert_eq!(persisted[0].sql, "SELECT * FROM users\n");
+
+    store.delete_favorite_query(&fav.id).await.unwrap();
+    assert!(store.get_favorite_queries(None).await.unwrap().is_empty());
 }
 
 #[tokio::test]

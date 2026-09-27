@@ -81,6 +81,20 @@ export const queryCommands = {
 
   deleteFavoriteQuery: (id: string) => invoke<void>('delete_favorite_query', { id }),
 
+  /**
+   * Resolved favorites directory, default or configured. The panel shows this
+   * so the user knows which folder to point a sync service at (§2.6.3).
+   */
+  getFavoritesRoot: () => invoke<string>('get_favorites_root'),
+
+  /**
+   * Re-scan the directory, dropping the backend cache first. The plain
+   * `getFavoriteQueries` is the cached fast path and will not see a `.sql` file
+   * that a sync client wrote while the app was running.
+   */
+  refreshFavorites: (connectionId?: string) =>
+    invoke<FavoriteQuery[]>('refresh_favorites', { connectionId }),
+
   beginSessionTransaction: (dbSessionId: string) =>
     invoke<void>('begin_session_transaction', { dbSessionId }),
 

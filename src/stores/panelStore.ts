@@ -95,6 +95,11 @@ interface PanelState {
   focusedPaneId: string | null;
   queryHistory: QueryHistoryEntry[];
   queryFavorites: FavoriteQuery[];
+  /**
+   * Resolved favorites directory. Null until the first load, and null again if
+   * the lookup failed — the panel then shows no path rather than a wrong one.
+   */
+  favoritesRoot: string | null;
   historyVisible: boolean;
   favoritesVisible: boolean;
   /** Connection id waiting for query-history to open once ContentView mounts. */
@@ -180,6 +185,13 @@ interface PanelActions {
   setPendingHistoryQuery: (query: PendingHistoryQuery | null) => void;
   toggleHistory: () => void;
   loadFavorites: (connectionId?: string) => Promise<void>;
+  /**
+   * Re-scan the favorites directory. Use this — not `loadFavorites` — whenever
+   * the user is about to look at the panel or has just returned to the window:
+   * the backend caches the listing, so a `.sql` file a sync client wrote while
+   * the app was running is invisible until the cache is dropped.
+   */
+  refreshFavorites: (connectionId?: string) => Promise<void>;
   addFavorite: (title: string, sql: string, connectionId: string) => Promise<void>;
   deleteFavorite: (id: string) => Promise<void>;
   toggleFavorites: () => void;
@@ -230,6 +242,7 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
   focusedPaneId: null,
   queryHistory: [],
   queryFavorites: [],
+  favoritesRoot: null,
   historyVisible: false,
   favoritesVisible: false,
   pendingQueryHistoryConnectionId: null,
@@ -664,6 +677,16 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     set({ queryFavorites });
   },
 
+  refreshFavorites: async (connectionId) => {
+    // The root is a display concern, not a blocker: if it cannot be read the
+    // panel simply omits the path rather than showing a stale one.
+    const [queryFavorites, favoritesRoot] = await Promise.all([
+      queryCommands.refreshFavorites(connectionId),
+      queryCommands.getFavoritesRoot(),
+    ]);
+    set({ queryFavorites, favoritesRoot });
+  },
+
   addFavorite: async (title, sql, connectionId) => {
     await queryCommands.addFavoriteQuery(connectionId, title, sql);
     await get().loadFavorites(connectionId);
@@ -689,6 +712,7 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       focusedPaneId: null,
       queryHistory: [],
       queryFavorites: [],
+      favoritesRoot: null,
       historyVisible: false,
       favoritesVisible: false,
       pendingQueryHistoryConnectionId: null,

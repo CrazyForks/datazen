@@ -52,6 +52,12 @@ export interface AppSettings {
   /** Persistent connection IDs exposed to MCP. Empty = all connections. */
   mcpAllowedConnectionIds: string[];
   contextDir: string;
+  /**
+   * Directory holding the favorites, one ULID-named `.sql` file each. Absent or
+   * empty = `{appData}/favorites`, which is what `getFavoritesRoot` reports.
+   * Point it at a synced folder to move favorites through iCloud/Dropbox/git.
+   */
+  favoritesRoot?: string;
   /** Check GitHub for app updates on startup (Basic builds only). Default false. */
   checkForUpdatesOnStartup: boolean;
   /** Switch to chart view after query when the result is chartable. Default false. */

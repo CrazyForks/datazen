@@ -6,7 +6,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
-import { Trash2 } from 'lucide-react';
+import { RefreshCw, Trash2 } from 'lucide-react';
 import { usePanelStore } from '../../../stores/panelStore';
 import { nextPanelId, type QueryPanel } from '../../../stores/panelTypes';
 import { useSchemaStore } from '../../../stores/schemaStore';
@@ -181,11 +181,30 @@ export function QuerySidebarSection({
   const { t } = useI18n();
   const history = usePanelStore((s) => s.queryHistory);
   const favorites = usePanelStore((s) => s.queryFavorites);
+  const favoritesRoot = usePanelStore((s) => s.favoritesRoot);
   const updateSql = usePanelStore((s) => s.updateSql);
   const loadHistory = usePanelStore((s) => s.loadHistory);
+  const refreshFavorites = usePanelStore((s) => s.refreshFavorites);
   const deleteFavorite = usePanelStore((s) => s.deleteFavorite);
   const [historySearch, setHistorySearch] = useState('');
   const [historyScopeMode, setHistoryScopeMode] = useState<'current' | 'all'>('current');
+
+  // Since §2.6 a favorite is a file the user can put in a synced folder, so
+  // the listing can change without this app writing anything. Two moments can
+  // see a file we have never looked at: the panel being opened, and the window
+  // coming back to the foreground after the sync client did its work. Both ask
+  // for a rescan; a stale panel is worse than a redundant one.
+  useEffect(() => {
+    if (!favoritesVisible) return;
+    void refreshFavorites(connectionId);
+  }, [favoritesVisible, connectionId, refreshFavorites]);
+
+  useEffect(() => {
+    if (!favoritesVisible) return;
+    const onFocus = () => void refreshFavorites(connectionId);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [favoritesVisible, connectionId, refreshFavorites]);
 
   const copySqlToClipboard = useCallback((sql: string) => {
     void navigator.clipboard.writeText(sql);
@@ -317,10 +336,36 @@ export function QuerySidebarSection({
   return (
     <>
       {favoritesVisible && (
-        <aside className="w-64 shrink-0 overflow-y-auto border-l border-edge bg-surface-alt">
-          <div className="border-b border-edge px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
-            {t('query.favoritesTitle')}
+        <aside
+          className="w-64 shrink-0 overflow-y-auto border-l border-edge bg-surface-alt"
+          data-testid="query-favorites-panel"
+        >
+          <div className="flex items-center justify-between border-b border-edge px-3 py-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
+              {t('query.favoritesTitle')}
+            </span>
+            <button
+              type="button"
+              data-testid="favorites-refresh"
+              className="p-1 text-fg-muted hover:text-fg"
+              title={t('query.favoritesRefresh')}
+              aria-label={t('query.favoritesRefresh')}
+              onClick={() => void refreshFavorites(connectionId)}
+            >
+              <RefreshCw className="h-3 w-3" />
+            </button>
           </div>
+          {favoritesRoot && (
+            // §2.6.3: the user has to be told which folder to sync, otherwise
+            // the file-first format is invisible to the person who benefits.
+            <div
+              data-testid="favorites-root"
+              className="border-b border-edge px-3 py-1.5 text-[11px] text-fg-muted"
+            >
+              <span className="opacity-70">{t('query.favoritesRoot')}</span>
+              <span className="ml-1 break-all font-mono">{favoritesRoot}</span>
+            </div>
+          )}
           {favorites.length === 0 ? (
             <div className="px-3 py-4 text-center text-xs text-fg-muted">
               {t('query.noFavorites')}
