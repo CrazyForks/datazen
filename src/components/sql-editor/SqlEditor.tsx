@@ -34,7 +34,6 @@ import {
   createUpdateListener,
   createModelBuilderExtension,
   themeExtensions,
-  compartments,
   documentVersionField,
   BumpDocumentVersion,
   createStatementExtensions,
@@ -44,6 +43,16 @@ import {
   createPasteExtensions,
   createLinterExtensions,
 } from './editorExtensions';
+import {
+  createProExtraExtensions,
+  createProKeymapExtension,
+  mountProCompartments,
+  proSettingFlag,
+  readProSettingsBag,
+  reconfigureProCompartments,
+  type ProCompartmentPayload,
+  type ProSettingsBag,
+} from './proCompartments';
 import { BUILTIN_SQL_SNIPPETS } from './snippets';
 import { formatEditorDocument } from './format/formatEditorDocument';
 import { StartExecutionEffect, FinishExecutionEffect } from './extensions/executionState';
@@ -117,15 +126,23 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   const keymapPreset = useSettingsStore((s) => s.settings.keymapPreset);
   const customKeymap = useSettingsStore((s) => s.settings.customKeymap);
   const sqlSyntaxTheme = useSettingsStore((s) => s.settings.sqlSyntaxTheme);
-  const editorExtensionSettings = useSettingsStore(
-    (s) =>
-      (s.settings.driverSettings?.['sql-editor-enhanced'] ??
-        s.settings.driverSettings?.['sql-editor-pro']) as Record<string, unknown> | undefined,
+  // ── §G3: privileged settings bag (generic path) ─────────────────
+  // Read wholesale instead of key by key: the bag is forwarded into every
+  // compartment factory and is a dependency of each one, so any key an
+  // extension declares in `settingsContributions` reaches the editor. Reading
+  // individual keys here is what used to make most settings persist and render
+  // while having no effect at all.
+  const proSettings: ProSettingsBag = useSettingsStore((s) =>
+    readProSettingsBag(s.settings.driverSettings),
   );
-  const statementGutterEnabled = editorExtensionSettings?.statementGutter !== false;
-  const tableHoverEnabled = editorExtensionSettings?.tableHover !== false;
-  const insertValueHintsEnabled = editorExtensionSettings?.insertValueHints !== false;
-  const intentionActionsEnabled = editorExtensionSettings?.intentionActions === true;
+
+  // Host-side gates. These stay host-owned because they decide whether the
+  // host wires a capability at all; the extension reads the same bag for the
+  // keys only it knows about.
+  const statementGutterEnabled = proSettingFlag(proSettings, 'statementGutter');
+  const tableHoverEnabled = proSettingFlag(proSettings, 'tableHover');
+  const insertValueHintsEnabled = proSettingFlag(proSettings, 'insertValueHints');
+  const intentionActionsEnabled = proSettingFlag(proSettings, 'intentionActions', false);
 
   // §EP hot-plug: re-render when enhanced extension registers/unregisters at runtime
   const isSqlEditorEnhanced = useIsExtensionEnhanced(sqlEditorEnhancedEP);
@@ -242,15 +259,19 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   }));
 
   // ── Extension creation (memoized per compartment) ────────────────
+  // Every memo below lists `proSettings` as a dependency on purpose: that is
+  // what turns an arbitrary extension setting into a live reconfiguration
+  // instead of a persisted-but-inert value.
   const statementExts = useMemo(
     () =>
       createStatementExtensions({
         enabled: statementGutterEnabled,
+        proSettings,
         onExecuteStatement: (sql) => {
           onExecuteSelectionRef.current?.(sql);
         },
       }),
-    [statementGutterEnabled, isSqlEditorEnhanced],
+    [statementGutterEnabled, proSettings, isSqlEditorEnhanced],
   );
 
   const completionExts = useMemo(
@@ -264,6 +285,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
           completionIncludeTablePrefix,
           translate,
           snippets: allSnippets,
+          proSettings,
         },
         { modelRef, metadataSnapshotRef },
       ),
@@ -275,6 +297,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
       completionIncludeTablePrefix,
       translate,
       allSnippets,
+      proSettings,
       isSqlEditorEnhanced,
     ],
   );
@@ -287,10 +310,18 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
           databaseType,
           schema,
           completionQuotePolicy,
+          proSettings,
         },
         { modelRef, metadataSnapshotRef },
       ),
-    [insertValueHintsEnabled, databaseType, schema, completionQuotePolicy, isSqlEditorEnhanced],
+    [
+      insertValueHintsEnabled,
+      databaseType,
+      schema,
+      completionQuotePolicy,
+      proSettings,
+      isSqlEditorEnhanced,
+    ],
   );
 
   const hoverExts = useMemo(
@@ -305,6 +336,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
               databaseType,
               database,
               schema,
+              proSettings,
             },
             { modelRef, metadataSnapshotRef },
           )
@@ -318,6 +350,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
       databaseType,
       database,
       schema,
+      proSettings,
       isSqlEditorEnhanced,
     ],
   );
@@ -327,17 +360,73 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
       createPasteExtensions({
         connectionId,
         onDrop: onDropTable,
+        proSettings,
       }),
-    [connectionId, onDropTable, isSqlEditorEnhanced],
+    [connectionId, onDropTable, proSettings, isSqlEditorEnhanced],
   );
 
   const linterExts = useMemo(
     () =>
       createLinterExtensions(
-        { databaseType, schema, completionQuotePolicy, intentionActions: intentionActionsEnabled },
+        {
+          databaseType,
+          schema,
+          completionQuotePolicy,
+          intentionActions: intentionActionsEnabled,
+          proSettings,
+        },
         { modelRef, metadataSnapshotRef },
       ),
-    [databaseType, schema, completionQuotePolicy, intentionActionsEnabled, isSqlEditorEnhanced],
+    [
+      databaseType,
+      schema,
+      completionQuotePolicy,
+      intentionActionsEnabled,
+      proSettings,
+      isSqlEditorEnhanced,
+    ],
+  );
+
+  // Generic slots (contract 1.1.0): `createExtraKeymap` and `createExtraExtensions`.
+  const keymapExts = useMemo(
+    () => [createProKeymapExtension({ proSettings })],
+    [proSettings, isSqlEditorEnhanced],
+  );
+
+  const extraExts = useMemo(
+    () => createProExtraExtensions({ proSettings }),
+    [proSettings, isSqlEditorEnhanced],
+  );
+
+  /**
+   * The single source of truth for every privileged slot.
+   *
+   * Its identity changes whenever any of the memos above does, which is what
+   * the reconfigure effect below keys on. Because the payload is a plain
+   * `Record`, adding a slot is a one-line change here and needs no change to
+   * the reconfiguration logic.
+   */
+  const proPayload: ProCompartmentPayload = useMemo(
+    () => ({
+      statement: statementExts,
+      completion: completionExts,
+      intention: intentionExts,
+      hover: hoverExts,
+      paste: pasteExts,
+      linter: linterExts,
+      keymap: keymapExts,
+      extra: extraExts,
+    }),
+    [
+      statementExts,
+      completionExts,
+      intentionExts,
+      hoverExts,
+      pasteExts,
+      linterExts,
+      keymapExts,
+      extraExts,
+    ],
   );
 
   // ── Editor mount ─────────────────────────────────────────────────
@@ -372,13 +461,10 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
           defaultTable,
         }),
         sqlCompartment.current.of([]),
-        // §S6-D: compartment groups in priority order
-        compartments.statement.of(statementExts),
-        compartments.completion.of(completionExts),
-        compartments.intention.of(intentionExts),
-        compartments.hover.of(hoverExts),
-        compartments.paste.of(pasteExts),
-        compartments.linter.of(linterExts),
+        // §S6-D: compartment groups in priority order. `mountProCompartments`
+        // registers any extension-owned slot before the view exists, which is
+        // the only point at which a new Compartment can enter the state.
+        ...mountProCompartments(proPayload),
         // §S6-D: DOM event handlers (contextmenu + navigation click)
         createDomEventHandlers({
           onCtxMenu: onCtxMenuRef as MutableRefObject<
@@ -434,65 +520,21 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── §S6-D: Reconfigure statement compartment ─────────────────────
+  // ── §EP: atomic batch reconfiguration of every privileged slot ───
+  // One dispatch, one transaction: previously each compartment was
+  // reconfigured by its own `view.dispatch`, so a single settings change
+  // produced N transactions and an observer could see a frame where, say, the
+  // linter had been updated but the keymap had not. All slots — including the
+  // ones the host has never heard of — now land together.
+  const appliedPayloadRef = useRef<ProCompartmentPayload | null>(null);
   useEffect(() => {
     const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: compartments.statement.reconfigure(statementExts),
-      annotations: Transaction.addToHistory.of(false),
-    });
-  }, [statementExts]);
-
-  // ── §S6-D: Reconfigure completion compartment ────────────────────
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: compartments.completion.reconfigure(completionExts),
-      annotations: Transaction.addToHistory.of(false),
-    });
-  }, [completionExts]);
-
-  // ── §S6-D: Reconfigure intention compartment (INSERT hint toggle) ─
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: compartments.intention.reconfigure(intentionExts),
-      annotations: Transaction.addToHistory.of(false),
-    });
-  }, [intentionExts]);
-
-  // ── §S6-D: Reconfigure hover compartment ─────────────────────────
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: compartments.hover.reconfigure(hoverExts),
-      annotations: Transaction.addToHistory.of(false),
-    });
-  }, [hoverExts]);
-
-  // ── §S6-D: Reconfigure paste compartment ─────────────────────────
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: compartments.paste.reconfigure(pasteExts),
-      annotations: Transaction.addToHistory.of(false),
-    });
-  }, [pasteExts]);
-
-  // ── §S6-D: Reconfigure linter compartment ────────────────────────
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: compartments.linter.reconfigure(linterExts),
-      annotations: Transaction.addToHistory.of(false),
-    });
-  }, [linterExts]);
+    // The mount effect above already installed this exact payload; re-applying
+    // it would only add a redundant transaction.
+    if (!view || appliedPayloadRef.current === proPayload) return;
+    appliedPayloadRef.current = proPayload;
+    reconfigureProCompartments(view, proPayload);
+  }, [proPayload]);
 
   // ── Theme-pack change listener (reconfigure theme compartment) ───
   useEffect(() => {

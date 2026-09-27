@@ -10,8 +10,19 @@ import {
   type EpSignatureFile,
 } from './signaturePayload';
 
-/** Current host extension-points contract version (Wave 1 baseline). */
-export const EXTENSION_POINTS_VERSION = '1.0.0';
+/**
+ * Current host extension-points contract version.
+ *
+ * 1.1.0 — added the three generic hooks (`createExtraExtensions`,
+ * `createExtraKeymap`, `createEditorPanelSlot`) to `SqlEditorEnhancedFeatures`.
+ *
+ * Bumping this is a **breaking** act by construction: `checkEngineCompatibility`
+ * compares by exact string equality with `manifest.engines.extensionPointsVersion`
+ * and offers no semver range and no negotiation window, so every privileged
+ * manifest must be bumped and re-signed in the same batch or it silently
+ * degrades to the community fallback.
+ */
+export const EXTENSION_POINTS_VERSION = '1.1.0';
 
 /**
  * Built-in official Ed25519 public key (SPKI DER, base64).
