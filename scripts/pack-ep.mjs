@@ -1027,10 +1027,26 @@ export function packEp(opts = {}) {
       // were this build's. (The work dir under `artifacts/` is deliberately
       // kept too — it is the on-disk evidence of what this run produced.)
       //
-      // The thrown value is narrowed instead of assumed: JS lets a non-Error be
-      // thrown, and reading `.message` off one is either a TypeError (marker
-      // never written — exactly the silent-stale-tree hole this marker exists to
-      // close) or a marker whose reason reads "undefined".
+      // The thrown value is narrowed instead of assumed, because JS lets a
+      // non-Error be thrown. Measured by driving the real markStagingIncomplete,
+      // stagedTreeComplete and stagedTreeUsable: against the previous unguarded
+      // `${err.message}`, `throw null` and `throw undefined` each made THIS call
+      // throw a TypeError, so neither the FAILED marker nor the log() below ran.
+      //
+      // That cost DIAGNOSTICS, not safety. The marker is on disk either way: the
+      // markStagingIncomplete above the `try`, under the same `stagesTree` guard,
+      // already wrote it, and the only clear is the clearStagingIncomplete on
+      // packEpInner's success path — unreachable once this catch fires. Measured
+      // in both cases: marker present, stagedTreeComplete() false, resolve-pro
+      // does not reuse the stale tree. No security property was at risk. What was
+      // lost is the real thrown value (the TypeError stood in for it), the
+      // marker's reason text, and this log() line.
+      //
+      // The narrowing can itself fail, which is why it was measured rather than
+      // assumed: it does not. The mark executes and the reason becomes
+      // `pack-ep FAILED for <extension> at <timestamp>: null`. So the
+      // discriminator between the old and new behaviour is the marker's REASON
+      // TEXT — not whether a marker is on disk, which is true in both cases.
       markStagingIncomplete(
         stageDir,
         `pack-ep FAILED for ${extension} at ${new Date().toISOString()}: ${
