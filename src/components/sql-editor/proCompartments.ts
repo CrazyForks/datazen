@@ -50,6 +50,15 @@ import {
 export const KEYMAP_COMPARTMENT_ID = 'keymap';
 /** Generic slot hosting `createExtraExtensions` output (and any overflow). */
 export const EXTRA_COMPARTMENT_ID = 'extra';
+/**
+ * Slot hosting `createFoldExtensions` output (code folding).
+ *
+ * A dedicated slot rather than a corner of `extra`, because folding carries
+ * its own keymap: it needs to sit at a known position in the mount order (see
+ * {@link BASE_PRO_COMPARTMENT_IDS}) and to be reconfigurable on its own without
+ * disturbing the generic bucket's contents.
+ */
+export const FOLD_COMPARTMENT_ID = 'fold';
 
 /**
  * Priority-ordered ids every editor instance mounts out of the box.
@@ -64,6 +73,7 @@ export const BASE_PRO_COMPARTMENT_IDS = [
   'hover',
   'paste',
   'linter',
+  FOLD_COMPARTMENT_ID,
   KEYMAP_COMPARTMENT_ID,
   EXTRA_COMPARTMENT_ID,
 ] as const;
@@ -264,6 +274,28 @@ export function createProExtraExtensions(opts?: SqlEditorEnhancedOptions): Exten
   return SafeCompartmentWrapper(
     enhancedSafe('createExtraExtensions'),
     () => enhanced.createExtraExtensions?.(opts) ?? [],
+    [],
+  );
+}
+
+/**
+ * `createFoldExtensions` → the `fold` compartment.
+ *
+ * Optional hook, absent-means-empty like every other contract 1.1.0 hook: an
+ * extension that predates code folding simply does not implement it and the
+ * slot reconfigures to `[]`. Adding an *optional* member did not require an
+ * `EXTENSION_POINTS_VERSION` bump — that guard is exact string equality
+ * (`security.ts:136-151`), so bumping it would reject every EP whose manifest
+ * still declares 1.1.0. Both directions of the drift degrade rather than
+ * break: a newer extension against an older host lands in
+ * {@link EXTRA_COMPARTMENT_ID} via {@link reconfigureProCompartments}'s
+ * overflow path.
+ */
+export function createFoldExtensions(opts?: SqlEditorEnhancedOptions): Extension[] {
+  const enhanced = extensionRegistry.get(sqlEditorEnhancedEP);
+  return SafeCompartmentWrapper(
+    enhancedSafe('createFoldExtensions'),
+    () => enhanced.createFoldExtensions?.(opts) ?? [],
     [],
   );
 }

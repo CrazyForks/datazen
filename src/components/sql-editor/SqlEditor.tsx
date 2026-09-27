@@ -53,6 +53,7 @@ import {
   type ProCompartmentPayload,
   type ProSettingsBag,
 } from './proCompartments';
+import { createFoldCompartmentExtensions } from './fold/foldCompartment';
 import { BUILTIN_SQL_SNIPPETS } from './snippets';
 import { formatEditorDocument } from './format/formatEditorDocument';
 import { StartExecutionEffect, FinishExecutionEffect } from './extensions/executionState';
@@ -398,6 +399,15 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
     [proSettings, isSqlEditorEnhanced],
   );
 
+  // `fold` sits in its own compartment because folding carries a keymap: it
+  // needs a known slot in the mount order, and toggling the setting must not
+  // rewrite the generic `extra` bucket in the same transaction. The gate is
+  // read off the same bag as every other privileged key.
+  const foldExts = useMemo(
+    () => createFoldCompartmentExtensions({ proSettings }),
+    [proSettings, isSqlEditorEnhanced],
+  );
+
   /**
    * The single source of truth for every privileged slot.
    *
@@ -414,6 +424,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
       hover: hoverExts,
       paste: pasteExts,
       linter: linterExts,
+      fold: foldExts,
       keymap: keymapExts,
       extra: extraExts,
     }),
@@ -424,6 +435,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
       hoverExts,
       pasteExts,
       linterExts,
+      foldExts,
       keymapExts,
       extraExts,
     ],
