@@ -60,6 +60,17 @@ export const LOCALE_SOURCE_DIR = 'src/locales';
  * in a user's WebView.
  */
 export const HOST_GLOBAL_NAME = '__DATAZEN_HOST__';
+/**
+ * Narrow, explicit allow-list. Deliberately narrower than the extension's
+ * build-time externalize rule (a wide `/^@codemirror\//` regex in the Pro
+ * `vite.config.ts`): the wide rule only guarantees a new bare specifier gets
+ * *checked*, while this list is the place where it gets *confirmed* to have a
+ * host singleton. Never replace an entry with that regex — a regexp here would
+ * silently admit a module the host table does not provide, shipping a second
+ * copy into the bundle (cross-realm identity split, no error at load).
+ * Keep in sync with the `__DATAZEN_HOST__` table in `src/main.tsx`;
+ * `scripts/__tests__/pack-ep.test.ts` fails when the two drift apart.
+ */
 export const HOST_SHARED_MODULES = [
   'react',
   'react-dom',
@@ -70,6 +81,8 @@ export const HOST_SHARED_MODULES = [
   '@codemirror/view',
   '@codemirror/lint',
   '@codemirror/autocomplete',
+  '@codemirror/language',
+  '@codemirror/commands',
 ];
 
 function hostGlobalRef(spec, globalName = HOST_GLOBAL_NAME) {

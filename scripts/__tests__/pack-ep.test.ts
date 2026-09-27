@@ -15,6 +15,7 @@ import {
   parsePackArgs,
   readManifestVersion,
   REQUIRED_PACKAGE_PATHS,
+  ROOT,
   rewriteEpBundleFile,
   rewriteEpImportsToHostGlobals,
   stagePackageTree,
@@ -52,6 +53,36 @@ function writeFixtureExtension(root: string) {
     join(root, 'src/locales/en.ts'),
     "export const en = { 'fixture.key': 'Fixture' };\n",
   );
+}
+
+/**
+ * Extract the key set of the `globalThis.__DATAZEN_HOST__` table from the host
+ * entry module. Entries come in two shapes — quoted specifiers
+ * (`'@codemirror/view': cmView`) and bare identifiers (`react: reactAll`) — so
+ * the parser must accept both; a quoted-only regex silently drops `react` and
+ * the drift guard goes blind in exactly the case it is meant to catch.
+ *
+ * An entry line matching neither shape throws instead of being skipped: a
+ * parser that shrugs off what it cannot read is not a guard.
+ */
+function parseHostGlobalTableKeys(source: string): string[] {
+  const table = source.match(/__DATAZEN_HOST__\s*=\s*\{([\s\S]*?)\n\};/);
+  if (!table) {
+    throw new Error('src/main.tsx: __DATAZEN_HOST__ table literal not found');
+  }
+  const keys: string[] = [];
+  for (const rawLine of table[1].split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('//') || line.startsWith('/*') || line.startsWith('*')) {
+      continue;
+    }
+    const entry = line.match(/^(?:(['"])((?:[^'"\\]|\\.)*)\1|([A-Za-z_$][\w$]*))\s*:\s*.+?,?$/);
+    if (!entry) {
+      throw new Error(`src/main.tsx: unparsable __DATAZEN_HOST__ entry "${line}"`);
+    }
+    keys.push(entry[3] ?? entry[2]);
+  }
+  return keys;
 }
 
 describe('sign-ep', () => {
@@ -394,5 +425,149 @@ describe('rewriteEpImportsToHostGlobals (track B blob loading)', () => {
     expect(sig.files['dist/index.esm.js'].sha256).toBe(sha(join(staged, 'dist/index.esm.js')));
     rmSync(src, { recursive: true, force: true });
     rmSync(staged, { recursive: true, force: true });
+  });
+});
+
+/**
+ * Track G1 anti-drift guard. The host entry table (`src/main.tsx`) and the
+ * pack-time allow-list (`HOST_SHARED_MODULES`) are two halves of one
+ * mechanism: pack-ep rewrites every bare import to
+ * `globalThis.__DATAZEN_HOST__[spec]`, so a specifier present in one list but
+ * not the other either crashes the blob-loaded bundle (whitelist-only) or
+ * becomes dead weight the host never hands out (table-only). They are edited
+ * as one change, and these tests make that mandatory.
+ */
+describe('host shared module registry (G1 anti-drift guard)', () => {
+  const hostTableKeys = parseHostGlobalTableKeys(readFileSync(join(ROOT, 'src/main.tsx'), 'utf8'));
+
+  it('parses both quoted specifiers and bare identifier keys from the host table', () => {
+    expect(hostTableKeys).toContain('react');
+    expect(hostTableKeys).toContain('@codemirror/view');
+  });
+
+  it('registers exactly 11 shared modules on both sides', () => {
+    expect(hostTableKeys).toHaveLength(11);
+    expect(HOST_SHARED_MODULES).toHaveLength(11);
+  });
+
+  it('registers @codemirror/language and @codemirror/commands on both sides', () => {
+    for (const spec of ['@codemirror/language', '@codemirror/commands']) {
+      expect(hostTableKeys).toContain(spec);
+      expect(HOST_SHARED_MODULES).toContain(spec);
+    }
+  });
+
+  it('host table and HOST_SHARED_MODULES hold identical, duplicate-free key sets', () => {
+    expect(new Set(hostTableKeys).size).toBe(hostTableKeys.length);
+    expect([...hostTableKeys].sort()).toEqual([...HOST_SHARED_MODULES].sort());
+  });
+
+  it('rewrites a Pro import of the newly shared modules through the host table', () => {
+    const { code, rewritten } = rewriteEpImportsToHostGlobals(
+      [
+        'import { foldService } from "@codemirror/language";',
+        'import { defaultKeymap } from "@codemirror/commands";',
+      ].join('\n'),
+    );
+    expect(rewritten.sort()).toEqual(['@codemirror/commands', '@codemirror/language']);
+    expect(code).toContain(`globalThis.${HOST_GLOBAL_NAME}["@codemirror/language"]`);
+    expect(code).toContain(`globalThis.${HOST_GLOBAL_NAME}["@codemirror/commands"]`);
+  });
+
+  it('still throws for a specifier missing from the narrow list', () => {
+    const drifted = HOST_SHARED_MODULES.filter((spec) => spec !== '@codemirror/language');
+    expect(() =>
+      rewriteEpImportsToHostGlobals('import { foldService } from "@codemirror/language";', {
+        modules: drifted,
+      }),
+    ).toThrow(/unmapped bare import from "@codemirror\/language"/);
+  });
+
+  it('sql-editor-pro peerDependencies stay inside the host shared set (when present)', () => {
+    const proPkg = join(ROOT, 'packages/pro-extensions/sql-editor-pro/package.json');
+    if (!existsSync(proPkg)) {
+      return;
+    }
+    const parsed: unknown = JSON.parse(readFileSync(proPkg, 'utf8'));
+    const peers = Object.keys(
+      (parsed as { peerDependencies?: Record<string, string> }).peerDependencies ?? {},
+    );
+    expect(peers).toContain('@codemirror/language');
+    expect(peers).toContain('@codemirror/commands');
+    const hostSet = new Set(HOST_SHARED_MODULES);
+    // A peer the host never publishes is a guaranteed missing key at load.
+    expect(peers.filter((peer) => !hostSet.has(peer))).toEqual([]);
+  });
+});
+
+/**
+ * [tester] Probe-integrity guard for the G1 red line.
+ *
+ * The two layers are *supposed* to disagree: the Pro build externalizes every
+ * `@codemirror/*` (wide regex) while `HOST_SHARED_MODULES` stays a narrow
+ * literal list. That gap is the probe — it is what makes a newly imported
+ * shared package fail the build instead of being silently bundled as a second
+ * copy of a host singleton (cross-realm identity split, no error at load).
+ *
+ * The registry-parity tests above read only `src/main.tsx` and
+ * `scripts/pack-ep.mjs`, so they stay green if someone "tidies up" the two
+ * sides into one rule. These cases close that hole. They read the Pro
+ * `vite.config.ts` as text and rebuild the predicate from the source, so the
+ * assertion is about what the repo actually ships, not a copy of it.
+ */
+describe('externalize / allow-list asymmetry probe (G1 red line)', () => {
+  const proViteConfig = join(ROOT, 'packages/pro-extensions/sql-editor-pro/vite.config.ts');
+  const hasProViteConfig = existsSync(proViteConfig);
+  const proSource = hasProViteConfig ? readFileSync(proViteConfig, 'utf8') : '';
+
+  /** Body of `const isBareExternal = (s) => …;` — the externalize predicate. */
+  function readExternalizePredicate(source: string): string {
+    const decl = source.match(/const isBareExternal[^=]*=\s*([\s\S]*?);/);
+    if (!decl) {
+      throw new Error('vite.config.ts: isBareExternal declaration not found');
+    }
+    return decl[1];
+  }
+
+  /**
+   * Rebuild the wide CodeMirror regex from the source text (not from a local
+   * copy) so a narrowed or deleted predicate cannot be masked by the test.
+   */
+  function readWideCodemirrorPattern(source: string): RegExp {
+    const literal = readExternalizePredicate(source).match(/\/\^@codemirror\\?\/\//);
+    if (!literal) {
+      throw new Error(
+        'vite.config.ts: isBareExternal no longer externalizes via /^@codemirror\\// — ' +
+          'the narrow-list probe has been removed',
+      );
+    }
+    return new RegExp(literal[0].slice(1, -1));
+  }
+
+  it.skipIf(!hasProViteConfig)('keeps the wide /^@codemirror\\// externalize rule on the Pro side', () => {
+    expect(readExternalizePredicate(proSource)).toContain('/^@codemirror\\//');
+    // `rollupOptions.external` must keep its regex entry too, not a string list.
+    expect(proSource).toContain('/^@codemirror\\/.*/');
+  });
+
+  it.skipIf(!hasProViteConfig)('keeps HOST_SHARED_MODULES a literal list, free of regexes', () => {
+    expect(HOST_SHARED_MODULES.every((entry: unknown) => typeof entry === 'string')).toBe(true);
+    expect(HOST_SHARED_MODULES).not.toContain('/^@codemirror\\//');
+  });
+
+  it.skipIf(!hasProViteConfig)('wide externalize range is still strictly wider than the narrow allow-list', () => {
+    const wide = readWideCodemirrorPattern(proSource);
+    const narrow = new Set(HOST_SHARED_MODULES);
+    // Specifiers the wide rule externalizes but the host table never publishes.
+    const admitted = ['@codemirror/search', '@codemirror/lang-sql', '@codemirror/theme-one-dark'].filter(
+      (spec) => wide.test(spec) && !narrow.has(spec),
+    );
+    expect(admitted.length).toBeGreaterThan(0);
+    // The probe is live: each of them must still hard-fail at pack time.
+    for (const spec of admitted) {
+      expect(() =>
+        rewriteEpImportsToHostGlobals(`import { probe } from "${spec}";`),
+      ).toThrow(new RegExp(`unmapped bare import from "${spec.replace('/', '\\/')}"`));
+    }
   });
 });
