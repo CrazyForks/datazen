@@ -133,6 +133,46 @@ title: 多目标协调计划（hub 静态段落来源）
   再收紧一版措辞（Track B Tester 建议，我采纳）：**问题从来不是「忘了打印全集」**——
   而是 `{}` 与 `0 条` 这两种输出**本身就是「它在问『是不是空的？』」的疑点信号**。
   ⇒ 正确动作不是「记得加一条全集打印」，而是**「看到 `{}` / `0 条` 先回头读过滤条件，再让它变成结论」**。
+- **🚨【数据丢失风险·全波最高·已按用户决定处置】Pro 仓 Wave 1 工作分支只存在于本机**。
+  `git ls-remote --heads origin` 显示 Pro 私有仓 `flyxl/datazen-extension-sql-editor-pro`
+  **只有 `main` 与 `codex/qb-editor-pro`**；而 `packages/pro-extensions/` 是**主仓 gitignored 目录**。
+  未推送分支与领先提交数：
+  | Pro 分支 | 领先 `origin/main` |
+  | --- | --- |
+  | `productivity/editor-productivity`（集成） | **3** |
+  | `productivity/ep-hooks-settings`（Track B） | **1** |
+  | `productivity/ep-runtime-globals`（Track A） | **1** |
+  ⇒ **Wave 1 的全部 Pro 工作（Track A 宿主表扩容 `5631f2bc8`、Track B compartments、集成态）
+  在任何远端都没有副本。** 一次误删、一次 worktree 清理、一次磁盘故障即全部消失。
+  **用户决定：不推远端，改为本地 bundle 保险**：
+  `.worktrees/datazen-editor-productivity/.pro-backup-20260927-151236.bundle`（372K，`git bundle verify` 通过，
+  `--all` 覆盖 3 个分支 + 2 个 tag + 6 个 worktree HEAD）。
+  ⚠️ **明确这个保险能挡什么、不能挡什么**（不要误以为已安全）：
+  **能挡**误操作类丢失——`reset --hard`、误删分支、`checkout -D`、worktree 清理脚本误伤；
+  **不能挡**磁盘故障、误删整个 `.worktrees/` 或整机丢失——**bundle 与源仓在同一块磁盘上**。
+  ⇒ **本波 Pro 工作的持久性仍等于单机持久性**，这是已知且被接受的残余风险。
+  另：bundle 文件名带时间戳，**不得被 `.gitignore` 连带清理**；清理 worktree 前须先确认 bundle 已移出。
+- **⚠️【环境·第三次咬人】新 worktree 默认既缺 Pro 检出，也缺第三层 codegen**。
+  `scripts/new-feature-worktree.sh` 只补部分 codegen：**不含 `packages/pro-extensions/sql-editor-pro`**
+  ⇒ `packages/extension-points/src/__tests__/security.test.ts` 直接 `ENOENT manifest.json` 失败 4 例
+  （Coder 已用 `git stash` 证明与本轨零关联、该文件 `grep -cE "SqlEditor|proCompartments"` = 0）。
+  本次为复测 worktree 手工补齐，**两个坑都要注意**：
+  ① Pro 的 `productivity/*` 分支**远端不存在**，`git clone` 拿不到 ⇒ 须
+  `git remote add local <主检出 Pro 仓> && git fetch local 'refs/heads/productivity/*:refs/heads/local-productivity/*'`
+  再 `git checkout local-productivity/<x>`（`967fdbd` 与主检出 `productivity/editor-productivity` 一致）；
+  ② 第三层 codegen 是 **`src/extensions/generated-locales.ts`**（不是 `builtinLocales.ts`），
+  历史上已有 worktree 漏它导致大面积莫名失败。
+  ⇒ **建议把这两条写进 `new-feature-worktree.sh`**（本波反复踩，已是第三、四次）。
+- **✅ Track B BUG-002/003 已修（`4c528fc0a`，合流于 `12` 系提交）**：
+  BUG-002 处置＝`useRef` 声明上移 + 挂载 effect 内建好 view 后立刻写 `appliedPayloadRef.current = proPayload`
+  + **订正那句在「说谎」的注释**（注释描述不存在的事实，本身就是本轨原始缺陷之一）。
+  红→绿独立复现：`expected [ 8 ] to deeply equal []`，与原 Tester 探针
+  `effects=8 @ reconfigureProCompartments (proCompartments.ts:185)` **逐位一致**。
+  BUG-003 处置＝**删除死分支**（不重写成可测逻辑）—— 理由正确：重写需人为造一条生产走不到的
+  中间态，是被禁止的覆盖率填充。删完仍差一条**真实可达**分支 `:182` 的 `?? []` 兜底
+  （`extra` 已挂载但 payload 未提及它，否则 `[...undefined]` 抛 `TypeError` 丢整批），
+  已补**测真实行为**的用例，非填充。`proCompartments.ts` 四项 100%（显式实测，因
+  `vitest.config.ts:41-69` 的 `coverage.include` **不含 `src/components/sql-editor/**`**）。
 - **⚠️【判据·一】提交信息/台账里的声明不是证据。** `85594adb4` 正文声称「宿主表不可读 /
   **条目不可解析**时 fail closed」，而「条目不可解析」这条分支**从未被执行过**——
   BUG-002 轨 Tester 补的 21 例证明：把它改成 `continue`，**Coder 的 55 例仍全绿**；
