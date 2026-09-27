@@ -13,6 +13,9 @@ export interface CopyableErrorProps {
   'data-testid'?: string;
 }
 
+/** How long the "Copied" confirmation stays visible before reverting. */
+const COPIED_FEEDBACK_MS = 1500;
+
 /**
  * Renders an error message as selectable text. Optionally adds a copy action.
  * Pair with `whitespace-pre-wrap break-words` styling so long messages stay readable.
@@ -28,9 +31,17 @@ export function CopyableError({
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(message);
+    // Optimistic: flip the label synchronously so the click reads as instant,
+    // then roll back if the write rejects. Telling the user "Copied" for a
+    // write that never landed is a lie, and the previous bare `void writeText()`
+    // also leaked an unhandled rejection on top of it. Matches the guard style
+    // already used by ConfirmDialog.handleCopy in this package.
     setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    const timer = window.setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS);
+    void navigator.clipboard.writeText(message).catch(() => {
+      window.clearTimeout(timer);
+      setCopied(false);
+    });
   }, [message]);
 
   const textClass = cn(

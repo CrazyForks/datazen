@@ -17,6 +17,11 @@ export interface ConfirmDialogProps {
   codePreview?: string;
   /** Optional longer description displayed below the message. */
   description?: string;
+  /**
+   * Accessible label for the header close button. Defaults to the localized
+   * `common.close`; pass an explicit value to override it.
+   */
+  closeLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -43,6 +48,7 @@ export function ConfirmDialog({
   badge,
   codePreview,
   description,
+  closeLabel,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -68,7 +74,7 @@ export function ConfirmDialog({
       title={title}
       onClose={onCancel}
       className="max-w-lg"
-      closeLabel={t('common.close')}
+      closeLabel={closeLabel ?? t('common.close')}
       footer={
         <>
           <Button
