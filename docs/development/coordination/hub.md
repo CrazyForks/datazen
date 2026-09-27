@@ -217,6 +217,15 @@
   **直接后果：Track E（代码折叠）开工前必须先落 BUG-002** —— 它要写的
   `import { foldService } from '@codemirror/language'` 正是具名导入，恰好落进旁路区。
   Tester 给出的三个方向里，**方向 2（在 pack-ep 加产物级「键集合 ⊆ 白名单」不变量）最省**。
+- **【高】白名单与宿主表不等：走白名单自身的第二个绕过（BUG-004，协调者回合 3 实测）**：
+  `HOST_SHARED_MODULES` 11 条，`src/main.tsx` 宿主表 10 条，**差集恰为 `react`** ——
+  `react` 在白名单里、宿主表里没有。于是任何 EP 写 `import React from 'react'` 都会被
+  宿主窄闸门**放行**并改写成 `__DATAZEN_HOST__['react']`，而宿主表无此键 ⇒ 运行期解构得
+  `undefined` ⇒ **EP 加载即 TypeError，且签名照签**。与 BUG-002 同类，但**与 Pro 宽正则无关**，
+  走的是白名单自身。⇒ **产物级不变量的比对基准必须是宿主表（运行期真相）而非
+  `HOST_SHARED_MODULES`（意图声明）**，二者今天就不相等。该缺口在 BUG-002 轨中以
+  「`HOST_SHARED_MODULES ⊆ 宿主表` 不变式」钉住；**本 initiative 不改 `src/main.tsx`**，
+  给宿主 global 加 `react` 属架构决策（要把 React 本体塞进宿主），留作独立议题。
 - **【中】测试文件事实上不在类型门禁内（BUG-003）**：`tsconfig.json:27-34` 的 `exclude`
   仍在排除 `src/**/__tests__/**` 与 `*.test.ts(x)`，但 `AGENTS.md` 明写「测试文件参与类型检查」
   —— **文档声称的改动从未落到配置**。协调者实测：放开 exclude 后全仓 **2281 条**错误，
