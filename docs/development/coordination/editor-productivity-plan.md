@@ -114,6 +114,33 @@ title: 多目标协调计划（hub 静态段落来源）
   （「已暂存跳过构建」假绿）。危害：让人**用陈旧产物当验证证据**，「跑通了」与「验过了」不等价。
   CI 因非零退出会中止，故属**本地开发期**隐患。**约束：不得破坏 CI「构建一次、各 release 变体共用」
   的短路语义；不得动 `artifacts/.pack-ep-staging-*` 的保留行为**（那是另一目录，刻意保留供排查）。
+- **⚠️【方法论·已六次】第六次由 scripts-gate Coder 揪出：`git ls-files` 的 pathspec 会静默漏条目。**
+  我报「`scripts/` 下 5 个 `.mjs`」，Coder 实测 **46 个**（顶层 41 + `__tests__` 5）。
+  根因：`git ls-files 'scripts/**/*.mjs'` 里的 `**` 要求 `scripts/` 之后**还有一级目录**，
+  故**顶层 `.mjs` 全被静默丢弃**，而剩下的 5 个恰好像「全部」。
+  ⇒ 与前五次同源：**一个会静默丢弃条目的查询，被我当成全集来读。**
+  **本族六次的查询形态各不相同**（正则只匹配带引号键 / python `if 'x' in k` 过滤 / git pathspec `**`），
+  说明**这不是某一个工具的 bug，而是一种必须被当作默认风险去防范的思维习惯**。
+  ⇒ 判据收紧为：**任何「计数/枚举」类查询，先用两种不同写法各跑一次并比对结果**，
+  两者不一致时**先怀疑查询**，而不是先相信数字。
+- **✅ scripts-gate 已修（`d226686ca` / `ce4e9e838`，合流零冲突）**：
+  **任务 A** 用**同级 `.incomplete` 标记**而非删除 —— 三条理由成立：覆盖 SIGKILL/OOM（标记早落盘）、
+  **不毁掉定位旁路来源的证据**（正是 BUG-002 轨的排查路径）、能躲过 `stagePackageTree` 入口的
+  `rmSync`。顺带堵了同边界两处 fail-open：`downloadPrebuiltEp` 改为解压前 `rmSync`
+  （原来少文件的 prebuilt tarball 会**继承旧 `signature.sig`**，对已不在盘上的字节签名）、
+  `checkProStagingReady` 把标记报进 `missing` 并发 `::error::`。`artifacts/` 保留策略未动。
+  **任务 B** 的关键论证值得留档：**`allowJs` 不是放松而是承重**——关掉它触发 33 个 TS7016，
+  被测模块整体退化为 `any`，**门禁会「全绿而什么都没查」**，正是本轨要治的病缩微复现了一遍。
+  `checkJs` 保持关闭并如实报 **456 个错误（全在 `.mjs` 体内，`.ts` 内 0）**，
+  `typecheck:scripts:checkjs` **故意不接进任何门禁**——「一个永远失败的命令只会教会人忽略它」。
+  ⚠️ **5 处 JSDoc 修正中有 1 处是安全相关的**：`signEpPackage` 原无 `@returns` ⇒ `sigDoc.files`
+  被推成 `{}` ⇒ **对签名文档的所有断言完全没被类型检查**。而 BUG-002 的产物级键不变量正依赖
+  `signEpPackage` ⇒ **此前 BUG-002 轨的部分测试断言可能从未被类型检查过**。已列为复测重点。
+  ⚠️ **`.incomplete` 已进 `.gitignore`** ⇒ 残留标记**在 `git status` 里不可见**，是已知的运维盲区，
+  补偿是 `checkProStagingReady` / `resolvePro` 会带路径与原因大声报出（已要求复测独立判断是否够）。
+  ⚠️ **同类第二个实例**：`scripts/e2e-screenshots/editor-blog-screenshots.ts` 是 WebdriverIO spec
+  却放在 `scripts/` 下，属 `e2e/tsconfig.json` program，已从 scripts 门禁排除（**未静默丢弃**）。
+  正确修法是移到 `e2e/specs/`，超出本波。
 - **⚠️【方法论·已四次·且其中一次是重犯已写下的教训】** 这四次的根因**全部是同一个**：
   **一个会静默丢弃条目的过滤器/正则，被我当成「全集」来读。**
   ① 正则 `'([^']+)'\s*:` **只匹配带引号的键** ⇒ 漏掉唯一的 `react`，我据此把「宿主表少一键」
