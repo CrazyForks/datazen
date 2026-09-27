@@ -15,6 +15,7 @@ import {
   parsePackArgs,
   readManifestVersion,
   REQUIRED_PACKAGE_PATHS,
+  ROOT,
   rewriteEpBundleFile,
   rewriteEpImportsToHostGlobals,
   stagePackageTree,
@@ -52,6 +53,36 @@ function writeFixtureExtension(root: string) {
     join(root, 'src/locales/en.ts'),
     "export const en = { 'fixture.key': 'Fixture' };\n",
   );
+}
+
+/**
+ * Extract the key set of the `globalThis.__DATAZEN_HOST__` table from the host
+ * entry module. Entries come in two shapes — quoted specifiers
+ * (`'@codemirror/view': cmView`) and bare identifiers (`react: reactAll`) — so
+ * the parser must accept both; a quoted-only regex silently drops `react` and
+ * the drift guard goes blind in exactly the case it is meant to catch.
+ *
+ * An entry line matching neither shape throws instead of being skipped: a
+ * parser that shrugs off what it cannot read is not a guard.
+ */
+function parseHostGlobalTableKeys(source: string): string[] {
+  const table = source.match(/__DATAZEN_HOST__\s*=\s*\{([\s\S]*?)\n\};/);
+  if (!table) {
+    throw new Error('src/main.tsx: __DATAZEN_HOST__ table literal not found');
+  }
+  const keys: string[] = [];
+  for (const rawLine of table[1].split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('//') || line.startsWith('/*') || line.startsWith('*')) {
+      continue;
+    }
+    const entry = line.match(/^(?:(['"])((?:[^'"\\]|\\.)*)\1|([A-Za-z_$][\w$]*))\s*:\s*.+?,?$/);
+    if (!entry) {
+      throw new Error(`src/main.tsx: unparsable __DATAZEN_HOST__ entry "${line}"`);
+    }
+    keys.push(entry[3] ?? entry[2]);
+  }
+  return keys;
 }
 
 describe('sign-ep', () => {
@@ -394,5 +425,77 @@ describe('rewriteEpImportsToHostGlobals (track B blob loading)', () => {
     expect(sig.files['dist/index.esm.js'].sha256).toBe(sha(join(staged, 'dist/index.esm.js')));
     rmSync(src, { recursive: true, force: true });
     rmSync(staged, { recursive: true, force: true });
+  });
+});
+
+/**
+ * Track G1 anti-drift guard. The host entry table (`src/main.tsx`) and the
+ * pack-time allow-list (`HOST_SHARED_MODULES`) are two halves of one
+ * mechanism: pack-ep rewrites every bare import to
+ * `globalThis.__DATAZEN_HOST__[spec]`, so a specifier present in one list but
+ * not the other either crashes the blob-loaded bundle (whitelist-only) or
+ * becomes dead weight the host never hands out (table-only). They are edited
+ * as one change, and these tests make that mandatory.
+ */
+describe('host shared module registry (G1 anti-drift guard)', () => {
+  const hostTableKeys = parseHostGlobalTableKeys(readFileSync(join(ROOT, 'src/main.tsx'), 'utf8'));
+
+  it('parses both quoted specifiers and bare identifier keys from the host table', () => {
+    expect(hostTableKeys).toContain('react');
+    expect(hostTableKeys).toContain('@codemirror/view');
+  });
+
+  it('registers exactly 11 shared modules on both sides', () => {
+    expect(hostTableKeys).toHaveLength(11);
+    expect(HOST_SHARED_MODULES).toHaveLength(11);
+  });
+
+  it('registers @codemirror/language and @codemirror/commands on both sides', () => {
+    for (const spec of ['@codemirror/language', '@codemirror/commands']) {
+      expect(hostTableKeys).toContain(spec);
+      expect(HOST_SHARED_MODULES).toContain(spec);
+    }
+  });
+
+  it('host table and HOST_SHARED_MODULES hold identical, duplicate-free key sets', () => {
+    expect(new Set(hostTableKeys).size).toBe(hostTableKeys.length);
+    expect([...hostTableKeys].sort()).toEqual([...HOST_SHARED_MODULES].sort());
+  });
+
+  it('rewrites a Pro import of the newly shared modules through the host table', () => {
+    const { code, rewritten } = rewriteEpImportsToHostGlobals(
+      [
+        'import { foldService } from "@codemirror/language";',
+        'import { defaultKeymap } from "@codemirror/commands";',
+      ].join('\n'),
+    );
+    expect(rewritten.sort()).toEqual(['@codemirror/commands', '@codemirror/language']);
+    expect(code).toContain(`globalThis.${HOST_GLOBAL_NAME}["@codemirror/language"]`);
+    expect(code).toContain(`globalThis.${HOST_GLOBAL_NAME}["@codemirror/commands"]`);
+  });
+
+  it('still throws for a specifier missing from the narrow list', () => {
+    const drifted = HOST_SHARED_MODULES.filter((spec) => spec !== '@codemirror/language');
+    expect(() =>
+      rewriteEpImportsToHostGlobals('import { foldService } from "@codemirror/language";', {
+        modules: drifted,
+      }),
+    ).toThrow(/unmapped bare import from "@codemirror\/language"/);
+  });
+
+  it('sql-editor-pro peerDependencies stay inside the host shared set (when present)', () => {
+    const proPkg = join(ROOT, 'packages/pro-extensions/sql-editor-pro/package.json');
+    if (!existsSync(proPkg)) {
+      return;
+    }
+    const parsed: unknown = JSON.parse(readFileSync(proPkg, 'utf8'));
+    const peers = Object.keys(
+      (parsed as { peerDependencies?: Record<string, string> }).peerDependencies ?? {},
+    );
+    expect(peers).toContain('@codemirror/language');
+    expect(peers).toContain('@codemirror/commands');
+    const hostSet = new Set(HOST_SHARED_MODULES);
+    // A peer the host never publishes is a guaranteed missing key at load.
+    expect(peers.filter((peer) => !hostSet.has(peer))).toEqual([]);
   });
 });
