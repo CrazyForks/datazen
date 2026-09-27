@@ -230,9 +230,13 @@ export function initProExtensions(): void {
       return;
     }
     try {
-      // Track B loads from disk (staged asset or dev source), which is trusted
-      // like a local-link: engine compatibility is still enforced, signatures
-      // are verified when present (PROD), dev sources skip the gate.
+      // Pro 包从磁盘加载（暂存产物或 dev 源），信任级别取决于是否带签名：
+      //   - 带 signature.sig → sourceKind 'dzx'：签名验签 + EP 契约版本闸门**都**生效。
+      //     正常 pro 流程（resolve-pro 打包即签名）走这一支。
+      //   - 无签名        → sourceKind 'local-link'：verifyExtensionPackage 在
+      //     checkEngineCompatibility **之前**就 early-return，因此引擎兼容性闸门
+      //     **被完全跳过**（这是既定行为，非缺陷，见 security.ts 的信任优先级说明）。
+      // 两条分支的差异只在「是否带签名」这一个判据上，签名一旦缺失，版本闸门随之消失。
       const verification = await verifyExtensionPackage({
         manifest: pkg.manifest,
         files: {
