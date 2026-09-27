@@ -4,7 +4,6 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import {
-  BUILD_PROFILE_ENV,
   planCargoArgs,
   planTypecheckCommands,
   readDriverFeatures,
@@ -12,18 +11,19 @@ import {
 } from '../ci-driver-warmup.mjs';
 
 describe('ci-driver-warmup cargo plan', () => {
-  it('builds the lib only, with the profile and target the matrix will use', () => {
+  it('builds the lib in the release profile the matrix will read', () => {
     // --lib skips the LTO link and the generate_context! macro, both of which
     // are per-variant work this job would throw away.
+    // --release is load-bearing: tauri build compiles the release profile, and a
+    // bare `cargo build` would warm target/<triple>/debug — a directory the
+    // variant jobs never read, so the warmup would cost time and save nothing.
     const args = planCargoArgs({
       target: 'x86_64-pc-windows-msvc',
-      profile: 'ci-release',
       features: ['driver-postgres', 'driver-kiwi'],
     });
     expect(args).toEqual([
       'build',
-      '--profile',
-      'ci-release',
+      '--release',
       '--target',
       'x86_64-pc-windows-msvc',
       '-p',
@@ -32,18 +32,12 @@ describe('ci-driver-warmup cargo plan', () => {
       '--features',
       'driver-postgres,driver-kiwi',
     ]);
-    expect(args).not.toContain('--release');
     expect(args.join(' ')).not.toContain('driver-api=');
   });
 
   it('omits --features when the driver set is empty', () => {
-    const args = planCargoArgs({ profile: 'release', target: null, features: [] });
-    expect(args).toEqual(['build', '--profile', 'release', '-p', 'datazen', '--lib']);
-  });
-
-  it('reads the profile from the environment the workflow sets', () => {
-    // Mirrors ci-tauri-build.mjs: same env var, same fallback order.
-    expect(BUILD_PROFILE_ENV).toBe('DATAZEN_BUILD_PROFILE');
+    const args = planCargoArgs({ target: null, features: [] });
+    expect(args).toEqual(['build', '--release', '-p', 'datazen', '--lib']);
   });
 });
 

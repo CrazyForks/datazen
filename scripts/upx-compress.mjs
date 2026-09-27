@@ -20,6 +20,8 @@ import { resolve, dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 
+import { BUILD_PROFILE } from './ci-tauri-build.mjs';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(__dirname, '..');
 
@@ -63,9 +65,8 @@ export function findTargetExecutables(
   const isWindows = platform === 'win32' || process.env.DATAZEN_TARGET_OS === 'windows';
 
   // Search paths: target/<profile> and target/<target-triple>/<profile>.
-  // `profile` is a parameter because CI builds with `--profile ci-release`,
-  // which lands the binary in target/<triple>/ci-release rather than
-  // target/<triple>/release. Defaults to the plain release dir.
+  // tauri build always compiles the `release` profile (tauri-cli 2.10.1 has no
+  // `--profile` flag), so that is the default and the normal path.
   const searchDirs = [];
   const hostProfileDir = join(targetDir, profile);
   if (existsSync(hostProfileDir)) {
@@ -155,7 +156,7 @@ export function runUpxCompression({
 
   // Must agree with the profile the build actually used, otherwise the
   // binary is not where we look and UPX silently does nothing.
-  const profile = env.DATAZEN_BUILD_PROFILE || 'release';
+  const profile = BUILD_PROFILE;
   const executables = findTargetExecutables(root, platform, profile);
   if (executables.length === 0) {
     log('[upx] no target release binaries found to compress.');

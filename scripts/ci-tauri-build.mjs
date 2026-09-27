@@ -11,7 +11,7 @@
  *
  * Usage:
  *   node scripts/ci-tauri-build.mjs --target=x86_64-pc-windows-msvc
- *   DATAZEN_BUILD_PROFILE=ci-release node scripts/ci-tauri-build.mjs --target=...
+ *   node scripts/ci-tauri-build.mjs --target=...
  */
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
@@ -30,11 +30,13 @@ export const UPDATER_CONFIG = { bundle: { createUpdaterArtifacts: true } };
 export const PRO_CONFIG = {};
 
 /**
- * Cargo profile every build in one run must agree on. The release workflow
- * sets `ci-release` (thin LTO) so the link step is affordable; upx-compress
- * and the workflow's bundle paths read the same variable to find the output.
+ * Cargo profile the build actually uses. tauri-cli 2.10.1 exposes no
+ * `--profile` flag, so there is no way to select a custom profile through
+ * `tauri build` — it always builds the `release` profile unless `--debug` is
+ * passed. Kept as a single constant so the bundle paths and the upx-compress
+ * lookup cannot drift from the directory the build really writes to.
  */
-export const BUILD_PROFILE_ENV = 'DATAZEN_BUILD_PROFILE';
+export const BUILD_PROFILE = 'release';
 
 /**
  * When `1`, the frontend build drops `tsc --noEmit`: the release matrix would
@@ -120,16 +122,12 @@ export function buildTauriArgs({
   features = [],
   configPath = null,
   updaterConfigPath = null,
-  profile = null,
   beforeBuildCommand = null,
   extraArgs = [],
 } = {}) {
   const args = ['build'];
   if (target) {
     args.push('--target', target);
-  }
-  if (profile) {
-    args.push('--profile', profile);
   }
   const isPro = edition === 'pro';
   if (updater || isPro || beforeBuildCommand) {
@@ -169,10 +167,6 @@ function main() {
   const argv = process.argv.slice(2);
   const targetArg = argv.find((a) => a.startsWith('--target='));
   const target = targetArg ? targetArg.slice('--target='.length) : null;
-  const profileArg = argv.find((a) => a.startsWith('--profile='));
-  const profile = profileArg
-    ? profileArg.slice('--profile='.length)
-    : process.env[BUILD_PROFILE_ENV] || null;
   const beforeBuildCommand =
     process.env[TYPECHECK_ONCE_ENV] === '1' ? FAST_FRONTEND_BUILD_COMMAND : null;
   const isPro =
@@ -181,7 +175,7 @@ function main() {
     process.env.DATAZEN_EDITION === 'pro';
   const edition = isPro ? 'pro' : 'community';
 
-  const knownPrefixes = ['--target=', '--edition=', '--profile='];
+  const knownPrefixes = ['--target=', '--edition='];
   const knownFlags = new Set(['--pro', '--community', '--updater']);
   const extraArgs = argv.filter((a) => {
     if (knownFlags.has(a)) return false;
@@ -215,7 +209,6 @@ function main() {
     updater: argv.includes('--updater'),
     edition,
     features,
-    profile,
     beforeBuildCommand,
     extraArgs,
   });

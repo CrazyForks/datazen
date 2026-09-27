@@ -166,18 +166,28 @@ describe('Release build time optimisation', () => {
     expect(pkg.scripts['build:bundle']).not.toContain('tsc --noEmit');
   });
 
-  it('uses one cargo profile everywhere and never hardcodes the release dir', () => {
-    expect(releaseWorkflow).toContain('DATAZEN_BUILD_PROFILE: ci-release');
-    // Cargo.toml must define the profile the workflow selects.
+  it('builds the release profile and no longer selects a custom one', () => {
+    // tauri-cli 2.10.1 has no `--profile` flag, so a custom Cargo profile is
+    // unreachable through `tauri build`. Release run 36298158059 set
+    // DATAZEN_BUILD_PROFILE=ci-release and every one of the 11 build jobs died
+    // in under a second: `error: unexpected argument '--profile' found`, exit 2.
+    expect(releaseWorkflow).not.toMatch(/DATAZEN_BUILD_PROFILE/);
+    // Match command lines only — a prose comment may legitimately name the
+    // flag to explain why it is absent.
+    const workflowCommands = releaseWorkflow
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n');
+    expect(workflowCommands).not.toMatch(/--profile/);
+    // Cargo.toml must not keep a profile the build can no longer select.
     const cargoToml = readFileSync(resolve(root, 'Cargo.toml'), 'utf8');
-    expect(cargoToml).toMatch(/\[profile\.ci-release\]/);
+    expect(cargoToml).not.toMatch(/\[profile\.ci-release\]/);
 
-    // No bundle discovery, portable copy or UPX scan may look in a path the
-    // build does not write to.
-    expect(releaseWorkflow).not.toMatch(/matrix\.target \}\}\/release/);
-    expect(releaseWorkflow).toContain(
-      'target/${{ matrix.target }}/${{ env.DATAZEN_BUILD_PROFILE }}/bundle',
-    );
+    // Bundle discovery and the UPX scan must read the directory the build
+    // really writes. Now that the env var is gone the dir is spelled out, and
+    // the regression to guard is an interpolation that collapses to `target//`.
+    expect(releaseWorkflow).toContain('target/${{ matrix.target }}/release/bundle');
+    expect(releaseWorkflow).not.toMatch(/\$\{\{ env\.DATAZEN_BUILD_PROFILE \}\}/);
   });
 
   it('serialises releases so a re-pushed tag does not double the compile', () => {
