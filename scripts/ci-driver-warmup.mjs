@@ -32,7 +32,7 @@
  *
  * Usage:
  *   node scripts/ci-driver-warmup.mjs --target=aarch64-apple-darwin [--typecheck]
- *   DATAZEN_BUILD_PROFILE=ci-release node scripts/ci-driver-warmup.mjs --target=...
+ *   node scripts/ci-driver-warmup.mjs --target=...
  */
 
 import { spawnSync } from 'child_process';
@@ -42,9 +42,6 @@ import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
-
-/** Reads the cargo profile the variant jobs will use (see ci-tauri-build.mjs). */
-export const BUILD_PROFILE_ENV = 'DATAZEN_BUILD_PROFILE';
 
 const DRIVER_FEATURES_FILE = '.driver-features.json';
 const TSC = join('node_modules', 'typescript', 'bin', 'tsc');
@@ -71,12 +68,14 @@ export function planTypecheckCommands(root = ROOT) {
  * `generate_context!` (which needs a real `dist/`) only exists in the bin. The
  * lib is where `mod driver_init` and every `#[cfg(feature = "driver-*")]` block
  * live, so `--lib` still pulls in the whole driver set.
+ *
+ * `--release` is equally deliberate and must stay in sync with `tauri build`,
+ * which compiles the release profile. A bare `cargo build` would warm the `dev`
+ * profile — a different target dir the variant jobs never read, so the warmup
+ * would cost time and save nothing.
  */
-export function planCargoArgs({ target, profile, features }) {
-  const args = ['build'];
-  if (profile) {
-    args.push('--profile', profile);
-  }
+export function planCargoArgs({ target, features }) {
+  const args = ['build', '--release'];
   if (target) {
     args.push('--target', target);
   }
@@ -114,16 +113,10 @@ export function writeStubFrontend(root = ROOT) {
 export function runWarmup(argv, { root = ROOT, env = process.env, log = console.log } = {}) {
   const targetArg = argv.find((a) => a.startsWith('--target='));
   const target = targetArg ? targetArg.slice('--target='.length) : null;
-  const profileArg = argv.find((a) => a.startsWith('--profile='));
-  const profile = profileArg
-    ? profileArg.slice('--profile='.length)
-    : env[BUILD_PROFILE_ENV] || 'release';
   const typecheck = argv.includes('--typecheck') || argv.includes('--typecheck=1');
 
   const features = readDriverFeatures(root);
-  log(
-    `[ci-driver-warmup] target=${target ?? '<host>'} profile=${profile} drivers=${features.length}`,
-  );
+  log(`[ci-driver-warmup] target=${target ?? '<host>'} drivers=${features.length}`);
 
   // Needed by both paths below; written once so the codegen scripts and the
   // cargo build see the same tree.
@@ -139,7 +132,7 @@ export function runWarmup(argv, { root = ROOT, env = process.env, log = console.
     }
   }
 
-  const args = planCargoArgs({ target, profile, features });
+  const args = planCargoArgs({ target, features });
   log(`[ci-driver-warmup] cargo ${args.join(' ')}`);
   const result = spawnSync('cargo', args, { cwd: root, stdio: 'inherit', shell: false });
   if (result.error) {
