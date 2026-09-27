@@ -245,8 +245,9 @@ DataZen 的出站 TLS 统一走 `rustls 0.23`。该 crate 的 `CryptoProvider` �
 | `aws-lc-rs` | `reqwest`（feature `rustls`）、`tokio-rustls`（默认 feature） |
 | `ring` | `tauri-plugin-updater`（feature `rustls-tls`）；启用 `redis` / `mongodb` / `sqlx` 等驱动时还会增加请求方 |
 
-两个 feature 同时存在时，rustls 拒绝猜测：凡是**未显式指定 provider** 的 `ClientConfig::builder()` 都会 panic。因此 `src-tauri/src/tls.rs::install_default_crypto_provider()` 在 `main()` 的第一行显式安装 `aws-lc-rs`（rustls 0.23 自身的首选实现，也与 `reqwest` 显式 pin 的 provider 一致），并由各 TLS 构造点重复调用以覆盖不经 `main()` 的库/测试嵌入方。
+两个 feature 同时存在时，rustls 拒绝猜测：凡是**未显式指定 provider** 的 `ClientConfig::builder()` 都会 panic。因此 `src-tauri/src/tls.rs::install_default_crypto_provider()` 在 `main()` 的第一行显式安装 `aws-lc-rs`（rustls 0.23 自身的首选实现），并由各 TLS 构造点重复调用以覆盖不经 `main()` 的库/测试嵌入方。
 
-`install_default()` 由 rustls 自身的 compare-and-swap 保证不会重复安装；DataZen 用 `OnceLock` 保证全进程只发起一次安装，**先到先得的竞态不会 panic**。需要注意的是 `tauri-plugin-updater` 会在没有默认 provider 时安装 `ring`，与本模块构成竞争——所以「安装得足够早」（`main()` 首行，早于 Tauri builder 初始化插件）是该修复成立的前提，而不仅仅是「幂等」。
+`install_default()` 由 rustls 自身的 compare-and-swap 保证不会重复安装；DataZen 用 `OnceLock` 保证全进程只发起一次安装，**先到先得的竞态不会 panic**。需要注意的是 `tauri-plugin-updater` 会在没有默认 provider 时安装 `ring`，与本模块构成竞争——所以「安装得足够早」（`main()` 首行，早于 Tauri builder 初始化插件）是该修复成立的前提，而不仅仅是「幂等」。该竞争并不发生在插件注册阶段：`ring` 的安装语句位于 `tauri-plugin-updater-2.10.1/src/updater.rs:446-448` 的 `Updater::check()` 内，只有真正发起更新检查时才会执行；`main()` 优先是三重保障中最便宜的一重，即使任一依赖移动也仍然成立。
 
-依赖图中显式指定 provider 的组件（`reqwest`、`sqlx`、`mongodb`、`rustls-platform-verifier`）不受该选择影响。
+**输掉竞态的代价不止于隧道**。`reqwest` 并未显式 pin provider：`reqwest-0.13.4/src/async_impl/client.rs:719-721` **优先读取** `CryptoProvider::get_default()`，仅在进程无默认 provider 时才回退到自带的 `aws-lc-rs`。因此进程默认落在谁手里，所有 `reqwest` 客户端（全部 AI Provider 与基于 HTTP 的驱动）就跟谁走，切换时不会有任何提示。`sqlx`（`sqlx-core-0.8.6/src/net/tls/tls_rustls.rs:107`）与 `mongodb`（`mongodb-3.8.0/src/runtime/tls_rustls.rs:86`）才确实显式指定 provider，不受该选择影响。`rustls-platform-verifier` 需要分开看：`BuilderVerifierExt` 沿用调用方传入的 builder，而 `ConfigVerifierExt::with_platform_verifier()`（`rustls-platform-verifier-0.7.0/src/lib.rs:88`）调用的是**自动推断**的 `ClientConfig::builder()`——当前依赖图中没有调用方，所以不构成可达 panic，但不能笼统地把它记作「显式指定 provider」。
+

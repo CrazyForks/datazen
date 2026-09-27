@@ -40,9 +40,25 @@
 //! | `tungstenite 0.26.2/src/tls.rs` (via `tokio-tungstenite`) | a `wss://` tunnel |
 //! | `redis 0.27.6/src/connection.rs` (via `datazen-driver-redis`) | a `rediss://` connection |
 //!
-//! Everything else is unaffected because it names a provider explicitly:
-//! `reqwest` calls `builder_with_provider`, as do `sqlx`, `mongodb` and
-//! `rustls-platform-verifier`.
+//! The rest of the graph is **not** uniformly indifferent, and the important
+//! one is `reqwest`. `sqlx` (`sqlx-core-0.8.6/src/net/tls/tls_rustls.rs:107`)
+//! and `mongodb` (`mongodb-3.8.0/src/runtime/tls_rustls.rs:86`) really do name
+//! a provider, and `rustls-platform-verifier`'s `BuilderVerifierExt` inherits
+//! one from the builder it is handed — but its other entry point,
+//! `ConfigVerifierExt::with_platform_verifier`
+//! (`rustls-platform-verifier-0.7.0/src/lib.rs:88`), calls the *auto-detecting*
+//! `ClientConfig::builder()`. Nothing in this graph calls it, so it adds no
+//! reachable panic here, but "this crate names a provider explicitly" is not
+//! true of it.
+//!
+//! `reqwest` is the one that matters, and it is **not** unaffected:
+//! `reqwest-0.13.4/src/async_impl/client.rs:719-721` reads
+//! `CryptoProvider::get_default()` **first** and uses that provider whenever one
+//! is installed, falling back to its own `aws-lc-rs` only when none is. So
+//! whatever ends up in the process default is what every `reqwest` client in
+//! the process uses — all the AI providers and all the HTTP-based drivers —
+//! and it would switch over without a word. That is the reason the ordering
+//! below is load-bearing rather than cosmetic.
 //!
 //! ## The rival installer
 //!
@@ -69,8 +85,10 @@ static PROVIDER: OnceLock<()> = OnceLock::new();
 /// - `tokio-rustls`'s default features and `reqwest`'s `rustls` feature both
 ///   enable `aws-lc-rs`, and those are the dominant TLS consumers here —
 ///   `reqwest` carries every AI provider and the HTTP-based drivers, and it
-///   pins the provider explicitly with `builder_with_provider`, so agreeing
-///   with it means the process has *one* provider, not two views of it.
+///   *adopts* the process default whenever one exists
+///   (`reqwest-0.13.4/src/async_impl/client.rs:719-721`) rather than pinning
+///   its own, so choosing `aws-lc-rs` here is what makes the process agree
+///   with itself instead of holding two views of one slot.
 ///
 /// ## Concurrency
 ///
@@ -97,6 +115,18 @@ static PROVIDER: OnceLock<()> = OnceLock::new();
 /// before the Tauri builder — and therefore before the updater plugin — can run.
 /// The tunnel construction sites call it again so that library/test embedders
 /// that never go through `main()` are covered too.
+///
+/// None of that ordering rests on the sentence above. The updater installs
+/// nothing from `Builder::build()` or from the plugin's `init()`: its `ring`
+/// install sits inside `Updater::check()`
+/// (`tauri-plugin-updater-2.10.1/src/updater.rs:446-448`), which the WebView
+/// only reaches from `checkForUpdates()` — a user action, or the opt-in
+/// `check_for_updates_on_startup` setting — long after `main()` and after the
+/// builder has run. `tauri` carries a third copy of the same snippet at
+/// `tauri-2.11.5/src/protocol/tauri.rs:44`, but it is `#[cfg(all(dev, mobile))]`
+/// and is not compiled into a desktop build. `main()` going first is the
+/// cheapest of these three guarantees, and it is the one that still holds if
+/// either dependency moves.
 ///
 /// Never panics. Note the `warn!` on the losing branch is only *observable*
 /// once a `tracing_subscriber` is installed; when `main()` makes the call that
@@ -166,6 +196,46 @@ mod tests {
             .with_no_client_auth()
     }
 
+    /// The rival install, copied verbatim from
+    /// `tauri-plugin-updater-2.10.1/src/updater.rs:446-448`. If the claim this
+    /// module makes about *losing* is ever to be believed, it has to be
+    /// exercised against the real competitor rather than against a stand-in.
+    fn rival_install() {
+        if tokio_rustls::rustls::crypto::CryptoProvider::get_default().is_none() {
+            let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+        }
+    }
+
+    /// Which provider actually won the process slot.
+    ///
+    /// `CryptoProvider` carries no name field, so this compares the whole
+    /// `Debug` rendering against a freshly built provider of each kind. The
+    /// [`PROVIDER_DISTINGUISHABLE`] assertion in the tests below guards the
+    /// guard: if a rustls upgrade ever made the two render identically, that
+    /// would turn every "installed-is-ring" check below into a tautology that
+    /// passes for the wrong reason.
+    fn installed_provider_debug() -> String {
+        format!(
+            "{:?}",
+            tokio_rustls::rustls::crypto::CryptoProvider::get_default()
+                .expect("the scenario must leave a provider installed")
+        )
+    }
+
+    fn ring_provider_debug() -> String {
+        format!(
+            "{:?}",
+            tokio_rustls::rustls::crypto::ring::default_provider()
+        )
+    }
+
+    fn aws_lc_rs_provider_debug() -> String {
+        format!(
+            "{:?}",
+            tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
+        )
+    }
+
     /// Runs in the parent too (inert, because the env var is unset there) and
     /// in a child with `DATAZEN_TLS_CHILD_MODE` set to one of the scenarios
     /// below. Every scenario ends by printing [`CHILD_DONE`], except the one
@@ -184,6 +254,57 @@ mod tests {
             }
             "with-install-succeeds" => {
                 install_default_crypto_provider();
+                let _ = auto_detecting_client_config();
+            }
+            // The competitor got there first. We must not panic, must not
+            // overwrite them, and the auto-detecting builder must still work
+            // on top of *their* provider.
+            "rival-installs-first" => {
+                // A subscriber is what makes the losing branch observable at
+                // all. In the shipped app there is none at this point — which is
+                // why this is asserted here and nowhere else. `--nocapture`
+                // sends the test writer's output to this child's real stdout,
+                // which the parent reads back.
+                let _ = tracing_subscriber::fmt()
+                    .with_test_writer()
+                    .with_max_level(tracing::Level::WARN)
+                    .try_init();
+
+                rival_install();
+                install_default_crypto_provider();
+                assert_eq!(
+                    installed_provider_debug(),
+                    ring_provider_debug(),
+                    "the losing branch must keep the provider that was already there"
+                );
+                let _ = auto_detecting_client_config();
+            }
+            // Both installers racing from a common barrier, the way they would
+            // if `main()`'s ordering guarantee were ever lost.
+            "rival-race" => {
+                const THREADS: usize = 16;
+                let barrier = std::sync::Barrier::new(2 * THREADS);
+                std::thread::scope(|scope| {
+                    for _ in 0..THREADS {
+                        let barrier = &barrier;
+                        scope.spawn(move || {
+                            barrier.wait();
+                            install_default_crypto_provider();
+                        });
+                    }
+                    for _ in 0..THREADS {
+                        let barrier = &barrier;
+                        scope.spawn(move || {
+                            barrier.wait();
+                            rival_install();
+                        });
+                    }
+                });
+                let installed = installed_provider_debug();
+                assert!(
+                    installed == ring_provider_debug() || installed == aws_lc_rs_provider_debug(),
+                    "exactly one of the two proposals must own the slot, got a third thing"
+                );
                 let _ = auto_detecting_client_config();
             }
             // 32 threads hit the very first call at the same instant.
@@ -453,6 +574,69 @@ mod tests {
         let lib_rs = include_str!("lib.rs");
         assert!(lib_rs.contains("mod tls;"));
         assert!(lib_rs.contains("pub use tls::install_default_crypto_provider;"));
+    }
+
+    /// The `concurrent_first_use_never_panics_in_a_fresh_process` scenario
+    /// above only ever calls *our* helper, so it proves `get_or_init` is
+    /// panic-free under contention but says nothing about a foreign installer
+    /// arriving at the same slot. These two close that gap, using the updater's
+    /// own three lines as the competitor.
+    ///
+    /// What they establish: the losing branch is reachable, it does not panic,
+    /// it does not overwrite the winner, and the auto-detecting builder works
+    /// on top of whichever provider won. What they deliberately do **not**
+    /// establish: that we win in the shipped app. That is the ordering claim,
+    /// and it is settled by *where* `Updater::check()` lives, not by a race
+    /// harness — no interleaving invented here is reachable in the product.
+    #[test]
+    fn losing_the_race_keeps_their_provider_and_still_works() {
+        assert_ne!(
+            ring_provider_debug(),
+            aws_lc_rs_provider_debug(),
+            "the two providers must render differently for the assertions below to mean anything"
+        );
+
+        let out = run_child("rival-installs-first");
+        let stdout = stdout_of(&out);
+        assert!(
+            out.status.success(),
+            "child must not panic when the rival installs first: {}\n{}",
+            stdout,
+            stderr_of(&out)
+        );
+        assert!(
+            stdout.contains(&format!("{CHILD_DONE}rival-installs-first")),
+            "child did not reach the end of the scenario: {stdout}"
+        );
+        assert!(
+            stdout.contains("keeping theirs"),
+            "the losing branch must actually have run, not been skipped by a \
+             no-op helper — child output was:\n{stdout}"
+        );
+    }
+
+    #[test]
+    fn a_race_against_the_updaters_own_install_never_panics() {
+        assert_ne!(
+            ring_provider_debug(),
+            aws_lc_rs_provider_debug(),
+            "the two providers must render differently for the assertions below to mean anything"
+        );
+
+        for _ in 0..8 {
+            let out = run_child("rival-race");
+            let stdout = stdout_of(&out);
+            assert!(
+                out.status.success(),
+                "a race between the two installers must never panic: {}\n{}",
+                stdout,
+                stderr_of(&out)
+            );
+            assert!(
+                stdout.contains(&format!("{CHILD_DONE}rival-race")),
+                "child did not reach the end of the scenario: {stdout}"
+            );
+        }
     }
 
     /// The `rediss://` site is in the `redis` crate, in another workspace
