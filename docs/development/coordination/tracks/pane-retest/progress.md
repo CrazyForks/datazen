@@ -29,10 +29,47 @@ npx vitest run src/stores/__tests__/paneFocusScope.tester.test.ts \
 
 ## 2. 独立复现原缺陷（差分复现，非复述原报告数字）
 
-方法：把修复前的 store **逐字**复制为旁挂模块
-（`git show 227b6af8e^:src/stores/panelStore.ts > src/stores/panelStorePrefixRepro.tester.ts`，
-相对 import 因此原样解析），同一段场景体分别跑 before / after 并断言可观测结果不同。
-场景体只经公开 store 面 + 与生产相同的 key 解析，模拟 `ContentView → QueryPanel` 的路由。
+方法：把修复前的 store **逐字**复制为**测试夹具**（fixture）
+
+- 路径：`src/stores/__tests__/fixtures/panelStore.pre-fix-227b6af8e.ts`
+  （置于 `__tests__/fixtures/` ⇒ 明确不是生产代码，且不与真实 store 并列在 `src/stores/`）
+- 相对 import 因下移两层而重写：`'./x'`→`'../../x'`，`'../x'`→`'../../../x'`。
+  **两种形态增加的层数不同**，不能靠数 `'../'` 个数推导——必须按原目录解析成绝对路径再
+  重算；生成时逐个断言可解析到真实模块。
+- 相对 import 之外的代码与源 blob 逐字节相同（PROVENANCE 2 会证明这一点）
+
+同一段场景体分别跑 before / after 并断言可观测结果不同。场景体只经公开 store 面 +
+与生产相同的 key 解析，模拟 `ContentView → QueryPanel` 的路由。
+
+**夹具的 provenance 是三条可失败的守卫，不是注释**（`paneFocusDifferentialRepro.tester.test.ts`）：
+
+| 守卫 | 内容 |
+|---|---|
+| PROVENANCE 1 | 运行时形状：before 有全局 `focusedPaneId`、无 `focusedPaneIdByPanel`；after 两者皆有 |
+| PROVENANCE 2 | banner 的 `source  :` 行**指名**来源 commit；且 marker 之后的正文与 `git show 227b6af8e^:src/stores/panelStore.ts` **逐字节相同**（仅剔除重写过的相对 import 行） |
+| PROVENANCE 3 | 断言 `src/stores/` 下**非 `__tests__` 的任何文件都没有 import 它** |
+
+**这三条守卫逐条做了反向验证（改坏 → 必须转红）**，不是只跑通就算数：
+
+| 反向注入 | 期望 | 实测 |
+|---|---|---|
+| 正文被手改（模拟"真 store 改了、副本没跟上"的维护陷阱） | PROVENANCE 2 红 | ✔ 红 |
+| banner 谎称 `deadbeef1^`（不存在的 commit） | PROVENANCE 2 红 | ✔ 红 |
+| banner 谎称 `227b6af8e`（指到修复后而非其父） | PROVENANCE 2 红 | ✔ 红 |
+| banner 谎称 `0042d8ef7^`（无关 commit） | PROVENANCE 2 红 | ✔ 红 |
+| 在 `panelStore.ts` 里 import 该夹具 | PROVENANCE 3 红 | ✔ 红 |
+| 全部还原 | 全绿 | ✔ 8/8 |
+
+> **我自己第一版的 PROVENANCE 2 是个假守卫，被反向验证当场抓出来。** 原先写的是
+> `expect(banner).toContain('227b6af8e')`，而 banner 里另有两行也引用了这个 commit，
+> **该断言几乎不可能失败**——把 banner 改成声称 `deadbeef1` 居然照样绿。改为只钉
+> `source  :` 那一行的精确内容后才真正可失败。记在这里是因为：**"断言存在"与
+> "断言能失败"是两件事，只有反向注入能区分**，而只看"全绿"永远分不出来。
+
+> 副产物：此过程中我自己写错过两处（import 深度按 `'../'` 个数推导，导致 `./x` 与
+> `../x` 加了同样层数；jsdom 下 `import.meta.url` 是 `http://` 而非 `file://`，使
+> `fileURLToPath` 抛错）。两处都被上述守卫/断言当场暴露，**非产品问题**，记录在案
+> 以免后来者重蹈。
 
 | 后果 | before (`227b6af8e^`) 实测 | after (HEAD) 实测 |
 |---|---|---|
@@ -158,17 +195,50 @@ ENOENT: no such file or directory, open '.../.worktrees/datazen-pane-retest/
 
 新增（仅测试与工具，零业务代码改动）：
 
-- `src/stores/__tests__/paneFocusDifferentialRepro.tester.test.ts`（6 例）——
-  before/after 差分复现 + 副本来源守卫
+- `src/stores/__tests__/paneFocusDifferentialRepro.tester.test.ts`（8 例）——
+  before/after 差分复现 + PROVENANCE 1/2/3 三条来源守卫（均经反向验证）
 - `src/stores/__tests__/paneRealSequence.tester.test.ts`（14 例）—— P2 真实序列 12 帧 × 2 构建
 - `src/stores/__tests__/paneP2ContractProbes.tester.test.ts`（7 例）—— P2 契约探针 A–G
 - `src/stores/__tests__/paneFocusEntryLifecycle.tester.test.ts`（11 例）—— 单写入口锁定 + 逐次发射不变量
 - `scripts/mutation-check-pane-focus.mjs` —— 变异测试工具，`node` 直接可跑，EXIT=0
-- `src/stores/panelStorePrefixRepro.tester.ts` —— **修复前 store 的逐字副本**，差分复现的
-  「before」侧所必需（放在 `src/stores/` 是为了让相对 import 原样解析）。来源由
-  `PROVENANCE` 用例守卫（断言其无 `focusedPaneIdByPanel`、有全局 `focusedPaneId`），
-  不会被静默改写成别的东西。重新生成：
-  `git show 227b6af8e^:src/stores/panelStore.ts > src/stores/panelStorePrefixRepro.tester.ts`
+- `src/stores/__tests__/fixtures/panelStore.pre-fix-227b6af8e.ts` —— **修复前 store 的
+  逐字副本**，差分复现的「before」侧所必需。置于 `__tests__/fixtures/` 而非
+  `src/stores/`：不进生产源码目录、不与真实 store 并列、文件名本身即写明快照时刻。
+  重新生成（不要手工改，生成后把 banner 补回文件头）：
+  ```sh
+  git show 227b6af8e^:src/stores/panelStore.ts \
+    > src/stores/__tests__/fixtures/panelStore.pre-fix-227b6af8e.ts
+  ```
+
+## 留给 P2 的待验清单（可执行条目，不是"待验证"）
+
+本次复测**唯一没做的验证类别是 DOM 渲染**——分屏 UI 尚不存在，无从渲染。以下三条
+现在已可写死，P2 开工时直接执行、逐条销账：
+
+1. **【最大缺口】多 pane 视图真实渲染后，active 与 `focusedPaneId` 镜像是否一致。**
+   本次只验证了「store 给出的 key」与「ContentView 会怎么用这个 mirror」两件事
+   （读源码 + grep），**没有任何真实 DOM 渲染**。P2 必须补一个渲染级测试：真实挂载
+   `ContentView`（或等价的多 pane 容器），分屏 tab A，再断言
+   ① A 在 UI 上确为 active；② 下发给 `QueryPanel` 的 `focusedPaneId` 等于
+   `focusedPaneIdByPanel[A]`；③ 切到 B 时这两者同步改变、A 的条目不受影响。
+   判据：三者任一不符即为缺陷——store 层的 12 帧序列已证明 store 侧正确，DOM 侧
+   出现偏差只能是视图接线问题。
+
+2. **【硬性前置，不是注意事项】`ContentViewKvToolbar.test.tsx` 的 4 键 store mock。**
+   该 mock 独立核实为 `{ panels, activePanelId, setActivePanel, updatePanel }`，
+   **不含** `focusedPaneId`，**也不含** `focusedPaneIdByPanel`。
+   - P2 **必须**保持视图读镜像 `focusedPaneId`——这不是偏好而是约束：镜像由 store 在
+     **同一次 `set()`** 内重算，永不落后于 map，故**读镜像无陈旧读风险**；反向风险
+     （后台 tab 焦点变化误触发重渲染）也不存在，因为视图只订阅镜像。
+   - P2 **一旦**让视图改读 `focusedPaneIdByPanel`，该 mock 会**直接 `TypeError`**
+     （取 `undefined[activePanelId]`）。届时**必须同批次扩 mock**，否则门禁红且原因
+     看起来像产品缺陷。**先改视图后补 mock 的提交顺序要避免。**
+
+3. **【待决设计问题，非缺陷】`openPane` 置 active 在后台 tab 分屏下会让用户"跳走"。**
+   `openPane` 现在把被分屏的 tab 置为 active，相对修复前是**行为变更**。今天无生产
+   调用点故不可达，故**不登记 BUG**；但 P2 拆 UI 前必须先定这个设计问题：
+   对**后台** tab 触发分屏时，视图是该跳过去，还是分屏但不抢焦点？两条路都要可实现，
+   选定后请在 P2 简报里写死，并补一条对应的测试（PROBE D 已固化当前行为）。
 
 ## 留给 P2 的两条设计备注（今天不可达，故不登记为 BUG）
 
@@ -182,3 +252,6 @@ ENOENT: no such file or directory, open '.../.worktrees/datazen-pane-retest/
    P2 的 pane 点击处理器必须只传自己 tab 内已存在的 paneId。另：`setFocusedPane` 不校验
    目标 tab 是否存在，会记一条无主条目，但**下一个改焦点的动作即由 prune 清除**，
    自愈（PROBE G 已固化），无需处理。
+
+> 第 1 条对应上文待验清单第 3 项（待决设计问题）；第 2 条应作为**调用方契约**写进
+> P2 简报的硬性约束。两者的证据均已由 PROBE A / D / G / E 固化。

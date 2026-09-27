@@ -7,7 +7,8 @@
  * observable outcome differs.
  *
  *   - "before" = the file as of `227b6af8e^` (fix commit's parent), copied
- *     verbatim to `src/stores/panelStorePrefixRepro.tester.ts`
+ *     verbatim to
+ *     `src/stores/__tests__/fixtures/panelStore.pre-fix-227b6af8e.ts`
  *   - "after"  = `src/stores/panelStore.ts` at HEAD (`227b6af8e`)
  *
  * The scenario body is written against the *public store surface only*
@@ -16,10 +17,26 @@
  * resolves the routed key the way `ContentView` → `QueryPanel` resolves it.
  *
  * Reproduce the "before" build with:
- *   git show 227b6af8e^:src/stores/panelStore.ts > src/stores/panelStorePrefixRepro.tester.ts
+ *   see the generated banner at the top of
+ *   src/stores/__tests__/fixtures/panelStore.pre-fix-227b6af8e.ts
  */
 
+import { execFileSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
 import { describe, expect, it, beforeEach, afterAll, vi } from 'vitest';
+
+// The fixture is a snapshot of the store as of this commit's parent. These three
+// constants are what PROVENANCE 2 checks; they are declared here, not read out
+// of the fixture, so a rewritten banner cannot make the test agree with itself.
+const FIXTURE_BASENAME = 'panelStore.pre-fix-227b6af8e';
+const FIXTURE_MARKER = '// ─── END GENERATED BANNER ───';
+const FIXTURE_SOURCE_COMMIT = '227b6af8e';
+const FIXTURE_SOURCE_PATH = 'src/stores/panelStore.ts';
+// NOT import.meta.url: under the jsdom environment that is an http:// URL and
+// fileURLToPath() throws. vitest runs with the repo root as cwd.
+const FIXTURE_PATH = resolve(process.cwd(), 'src/stores/__tests__/fixtures', `${FIXTURE_BASENAME}.ts`);
+const STORES_ROOT = resolve(process.cwd(), 'src/stores');
 
 vi.mock('../../locales/t', () => ({
   t: (key: string) => key,
@@ -65,7 +82,7 @@ const B = 'panel-q-2';
 const P2 = 'p2';
 
 /** Verbatim-copied "before" build, so its `QueryPanel` is the pre-fix one. */
-type QueryPanelFixture = import('../panelStorePrefixRepro.tester').QueryPanel;
+type QueryPanelFixture = import('./fixtures/panelStore.pre-fix-227b6af8e').QueryPanel;
 type ExecEntry = { sql?: string; results: unknown[] };
 
 /** The slice of a store build this file needs; identical in both revisions. */
@@ -94,7 +111,7 @@ type Build = {
 type PaneKeys = typeof import('../paneKeys');
 
 const BUILDS = [
-  { tag: 'before', load: (): Promise<Build> => import('../panelStorePrefixRepro.tester') },
+  { tag: 'before', load: (): Promise<Build> => import('./fixtures/panelStore.pre-fix-227b6af8e') },
   { tag: 'after', load: (): Promise<Build> => import('../panelStore') },
 ] as const;
 
@@ -202,11 +219,11 @@ async function runScenarios(build: Build, keys: PaneKeys): Promise<Observation> 
 describe('[tester] BUG-001 differential reproduction (227b6af8e^ vs HEAD)', () => {
   const observed: Record<string, Observation> = {};
 
-  it('PROVENANCE: the "before" copy really is the pre-fix store', async () => {
+  it('PROVENANCE 1: the "before" module really is the pre-fix store', async () => {
     // Without this, a stale or hand-edited copy silently turns the differential
     // into a test of nothing. The pre-fix store has a single global
     // `focusedPaneId` and no per-tab map; the fixed store has both.
-    const before = await import('../panelStorePrefixRepro.tester');
+    const before = await import('./fixtures/panelStore.pre-fix-227b6af8e');
     const after = await import('../panelStore');
 
     const beforeFields = Object.keys(
@@ -219,6 +236,91 @@ describe('[tester] BUG-001 differential reproduction (227b6af8e^ vs HEAD)', () =
     expect(beforeFields).not.toContain('focusedPaneIdByPanel');
     expect(afterFields).toContain('focusedPaneId');
     expect(afterFields).toContain('focusedPaneIdByPanel');
+  });
+
+  it('PROVENANCE 2: the fixture is a generated snapshot of a NAMED commit, and is current', () => {
+    // "Which moment is this a copy of?" must be a checkable fact, not a comment.
+    // Three layers, cheapest first:
+    //   a) the generated banner names the source commit
+    //   b) its body is byte-identical to that commit's blob  → a stale fixture
+    //      (the maintenance trap: someone edits the real store, forgets this)
+    //      fails here instead of quietly becoming a different historical moment
+    //   c) no production file imports it
+    const source = readFileSync(FIXTURE_PATH, 'utf8');
+
+    // (a) banner names the commit
+    const cut = source.lastIndexOf(FIXTURE_MARKER) + FIXTURE_MARKER.length;
+    const banner = source.slice(0, cut);
+    expect(banner).toContain('GENERATED FILE');
+    // NOT `toContain(FIXTURE_SOURCE_COMMIT)` over the whole banner: several other
+    // banner lines quote the commit, so that assertion cannot fail. Pin the one
+    // line that actually declares WHICH snapshot this is.
+    const declared = banner
+      .split('\n')
+      .map((l) => l.replace(/^\/\/\s?/, '').trim()) // strip the comment prefix too
+      .find((l) => l.startsWith('source  :'));
+    expect(declared, 'banner has no `source  :` line').toBeDefined();
+    expect(declared, 'the banner must name the declared source commit').toBe(
+      `source  : commit ${FIXTURE_SOURCE_COMMIT}^ , path ${FIXTURE_SOURCE_PATH}`,
+    );
+
+    // (b) body is byte-identical to the named commit's blob
+    const body = source.slice(cut);
+    let blob: string | null = null;
+    try {
+      blob = execFileSync('git', ['show', `${FIXTURE_SOURCE_COMMIT}^:${FIXTURE_SOURCE_PATH}`], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch {
+      blob = null; // shallow clone / no git — handled below
+    }
+    if (blob === null) {
+      // Cannot be a silent pass: say so loudly, and still pin the parts that do
+      // not need git (the banner above already ran and would have failed first).
+      console.warn(
+        '[provenance] git blob for ' +
+          `${FIXTURE_SOURCE_COMMIT}^:${FIXTURE_SOURCE_PATH} unavailable (shallow clone?); ` +
+          'the byte-identity check was NOT run. Regenerate the fixture manually to verify.',
+      );
+      // Normalised comparison still catches a fixture that drifted from the shape
+      // of the store it claims to be: it must not mention the post-fix API.
+      expect(body).not.toContain('focusedPaneIdByPanel');
+      expect(body).toContain('focusedPaneId');
+      return;
+    }
+    // The fixture rewrites relative import depth, so compare on imports removed,
+    // and compare digests so a failure prints a short message, not 20KB.
+    const norm = (s: string) => s.replace(/^.*from '\.[^']*';?$/gm, '').replace(/\s+/g, '');
+    const a = norm(body);
+    const b = norm(blob);
+    expect(
+      a.length,
+      `fixture body is ${a.length} chars, ${FIXTURE_SOURCE_COMMIT}^ blob is ${b.length}. ` +
+        'The fixture has drifted from the commit it claims to snapshot — regenerate it.',
+    ).toBe(b.length);
+    expect(a, 'fixture body differs from the commit it claims to snapshot — regenerate it').toBe(b);
+  });
+
+  it('PROVENANCE 3: no production file under src/stores/ imports the fixture', () => {
+    // (c) The fixture must stay test-only. It is a dead snapshot of production
+    // code; importing it from a non-`__tests__` file would put a second, frozen
+    // store into the shipped program.
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!/\.tsx?$/.test(entry.name)) continue;
+        if (full.split(sep).includes('__tests__')) continue; // test code may import it
+        if (readFileSync(full, 'utf8').includes(FIXTURE_BASENAME)) offenders.push(full);
+      }
+    };
+    walk(STORES_ROOT);
+    expect(offenders).toEqual([]);
   });
 
   beforeEach(() => {

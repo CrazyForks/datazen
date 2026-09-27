@@ -1,11 +1,41 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// GENERATED FILE — DO NOT EDIT BY HAND. Test fixture, not production code.
+//
+//   purpose : the "before" side of the BUG-001 differential reproduction
+//             (paneFocusDifferentialRepro.tester.test.ts / paneRealSequence.tester.test.ts).
+//             It is a SNAPSHOT of the store as it was BEFORE 227b6af8e
+//             ("fix(panel): pane 焦点按 tab 归属，修 BUG-001"), so the same scenario
+//             body can be run against the broken and the fixed store and the two
+//             observable outcomes compared.
+//
+//   source  : commit 227b6af8e^ , path src/stores/panelStore.ts
+//   marker  : // ─── END GENERATED BANNER ───
+//
+//   The only difference from the source blob is that every relative import gained
+//   the extra '../' levels needed to live in __tests__/fixtures/.
+//
+//   regenerate (never hand-patch; re-prepend this banner afterwards):
+//     git show 227b6af8e^:src/stores/panelStore.ts > src/stores/__tests__/fixtures/panelStore.pre-fix-227b6af8e.ts
+//
+//   verified by paneFocusDifferentialRepro.tester.test.ts:
+//     PROVENANCE 1 — the module really has the pre-fix shape
+//     PROVENANCE 2 — the banner's `source  :` line names the source commit, AND
+//                    everything after the marker is byte-identical to that
+//                    commit's blob, so a fixture left behind by a later edit of
+//                    the real store fails here instead of silently becoming a
+//                    different historical moment
+//     PROVENANCE 3 — no non-`__tests__` file under src/stores/ imports it
+// ─────────────────────────────────────────────────────────────────────────────
+// ─── END GENERATED BANNER ───
+
 import { create } from 'zustand';
-import { queryCommands } from '../commands/query';
-import { t } from '../locales/t';
-import type { FavoriteQuery, QueryHistoryEntry, Value } from '../types';
-import type { ChartConfig } from '../types/chart';
-import { getCancelCapability } from '../lib/queryExecutionViewModel';
-import { reduceQueryExecutionState } from '../lib/queryExecutionViewModel';
-import { useActiveConnectionStore } from './activeConnectionStore';
+import { queryCommands } from '../../../commands/query';
+import { t } from '../../../locales/t';
+import type { FavoriteQuery, QueryHistoryEntry, Value } from '../../../types';
+import type { ChartConfig } from '../../../types/chart';
+import { getCancelCapability } from '../../../lib/queryExecutionViewModel';
+import { reduceQueryExecutionState } from '../../../lib/queryExecutionViewModel';
+import { useActiveConnectionStore } from '../../activeConnectionStore';
 import {
   type BindParams,
   type QueryExecState,
@@ -13,15 +43,15 @@ import {
   patchExec,
   runStreamingQuery,
   runBoundQuery,
-} from './queryExecActions';
-import { panelTargetDatabase, panelTargetSchema } from './panelQueryContext';
-import { cancelAndCleanupExec, cancelAndCleanupPaneExec } from './panelExecCleanup';
-import { DEFAULT_PANE_ID, paneKey } from './paneKeys';
-import { resolveNextActive, resetPanelIdCounter, type Panel } from './panelTypes';
-import { createPanelCloseNotifier } from './panelCloseNotifier';
+} from '../../queryExecActions';
+import { panelTargetDatabase, panelTargetSchema } from '../../panelQueryContext';
+import { cancelAndCleanupExec, cancelAndCleanupPaneExec } from '../../panelExecCleanup';
+import { DEFAULT_PANE_ID, paneKey } from '../../paneKeys';
+import { resolveNextActive, resetPanelIdCounter, type Panel } from '../../panelTypes';
+import { createPanelCloseNotifier } from '../../panelCloseNotifier';
 
 export type { QueryExecState, BindParams };
-export { EMPTY_QUERY_EXEC, emptyQueryExecState } from './queryExecActions';
+export { EMPTY_QUERY_EXEC, emptyQueryExecState } from '../../queryExecActions';
 export {
   DEFAULT_PANE_ID,
   isPaneKeyOfPanel,
@@ -31,7 +61,7 @@ export {
   paneKeysOfPanel,
   panelIdOfPaneKey,
   resolveFocusedPaneId,
-} from './paneKeys';
+} from '../../paneKeys';
 export type {
   SubTabId,
   TablePanel,
@@ -50,8 +80,8 @@ export type {
   RedisPendingAction,
   Panel,
   ConnectionContext,
-} from './panelTypes';
-export { nextPanelId } from './panelTypes';
+} from '../../panelTypes';
+export { nextPanelId } from '../../panelTypes';
 
 // ── Store interface ──────────────────────────────────────────────
 

@@ -19,7 +19,8 @@
  * This file drives exactly that sequence against the store, asserting after
  * **every frame**, and runs it on two builds:
  *
- *   - "before" = `227b6af8e^` (copied verbatim to `panelStorePrefixRepro.tester.ts`)
+ *   - "before" = `227b6af8e^` (copied verbatim to
+ *     `src/stores/__tests__/fixtures/panelStore.pre-fix-227b6af8e.ts`)
  *   - "after"  = HEAD
  *
  * so the frames where the old build diverges are the frames a P2 user would hit.
@@ -72,7 +73,7 @@ const P2 = 'p2';
 const P3 = 'p3';
 
 type ExecEntry = { sql?: string; results: unknown[]; running?: boolean };
-type QueryPanelFixture = import('../panelStorePrefixRepro.tester').QueryPanel;
+type QueryPanelFixture = import('./fixtures/panelStore.pre-fix-227b6af8e').QueryPanel;
 
 type Build = {
   usePanelStore: {
@@ -100,7 +101,7 @@ type Build = {
 type PaneKeys = typeof import('../paneKeys');
 
 const BUILDS = [
-  { tag: 'before', load: (): Promise<Build> => import('../panelStorePrefixRepro.tester') },
+  { tag: 'before', load: (): Promise<Build> => import('./fixtures/panelStore.pre-fix-227b6af8e') },
   { tag: 'after', load: (): Promise<Build> => import('../panelStore') },
 ] as const;
 
