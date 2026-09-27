@@ -78,6 +78,10 @@ describe('[tester] Select data-* forwarding', () => {
       setHttpProxyTimeout: vi.fn(),
     };
     const httpRender = render(<HttpProxyTunnelFields form={http} />);
+    // Both halves are asserted on purpose. The `aria-haspopup` attribute alone
+    // would still pass if the tunnel-field trigger stopped being a <button>,
+    // so the tag is checked independently of the attribute that carries it.
+    expect(httpRender.container.querySelector('button[aria-haspopup="listbox"]')).not.toBeNull();
     expect(screen.getByTestId('new-conn-http-proxy-scheme')).toHaveAttribute(
       'aria-haspopup',
       'listbox',
@@ -95,6 +99,7 @@ describe('[tester] Select data-* forwarding', () => {
       setWsTimeout: vi.fn(),
     };
     const wsRender = render(<WebSocketTunnelFields form={ws} />);
+    expect(wsRender.container.querySelector('button[aria-haspopup="listbox"]')).not.toBeNull();
     expect(screen.getByTestId('new-conn-ws-mode')).toHaveAttribute('aria-haspopup', 'listbox');
     wsRender.unmount();
   });

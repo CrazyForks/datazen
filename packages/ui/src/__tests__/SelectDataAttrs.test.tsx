@@ -205,4 +205,26 @@ describe('@datazen/ui Select unknown-prop guard (runtime)', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
+
+  /**
+   * The guard's real property is "an unchanged prop list does not re-warn" — but
+   * only if the effect key identifies the *set*. `Object.entries` follows JSX
+   * prop insertion order, so joining unsorted made two renders carrying the same
+   * two unknown props in opposite order look like a change and warn twice.
+   */
+  it('warns once for the same unknown prop set regardless of prop order', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const onChnge = () => {};
+    const onBlah = () => {};
+
+    const { rerender } = render(
+      <Select value="http" options={OPTIONS} onChange={() => {}} {...{ onChnge, onBlah }} />,
+    );
+    rerender(
+      <Select value="https" options={OPTIONS} onChange={() => {}} {...{ onBlah, onChnge }} />,
+    );
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
 });

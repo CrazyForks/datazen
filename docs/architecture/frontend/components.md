@@ -980,11 +980,28 @@ S 形绕行。同一套形态实测：**反向边 7/10 → 0/10，跨越 18 → 
 设计系统中**自声明 props 列表**的组件（`Select` 等，不继承 DOM `*Attributes`）
 必须实现 `packages/ui/src/dataAttrs.ts` 的 `DataAttrProps` 契约：调用方传入的
 任意 `data-*` 属性原样透传到**唯一可交互元素**上，`data-testid` 也不例外。
+契约本身（`DataAttrProps` / `splitDataAttrs`）已从 `@datazen/ui` 的 barrel 导出，
+后续组件直接实现同一份契约，不要在包内重新声明。
 
 `Select` 的落点：非 `searchable` 时是 `<button aria-haspopup="listbox">`；
 `searchable` 时是 combobox `<input>`。**不允许落在包裹用的 `<div>` 上** ——
 定位到一个不可点击、不可输入的外层壳，等于把同一个缺陷下移一层；E2E 因此
 不再需要 `[data-testid="x"] input` 这种穿透写法。
+
+**当前覆盖：上面这条规则目前只有 `Select` 实现。** 同样是闭集 props 的
+`Label`、`Tabs`、`Dialog`、`PathInput`、`Slider` 尚未实现，属于**明确延后**，
+延后理由是它们当前**没有任何调用点需要 `data-*` 定位** —— 全部调用点
+（`Label` 74 处、`Dialog` 62 处、`PathInput` 9 处、`Slider` 3 处、`Tabs` 1 处）
+中，带 `data-*` 属性的为 0 处，经 JSX 展开传入的也为 0 处，因此实现契约对
+现有代码零收益，等出现第一个需要定位的调用点时再实现。规则本身仍然是**新写
+闭集 props 组件时的强制要求**，上表只是记录当前达成度，不是豁免。
+
+其中 `Dialog` 与 `PathInput` 还各有一条**既有**的定位通道，对它们而言契约
+已被另一套既有机制满足，不属于缺口：`Dialog` 的 `testId?: string` 在
+`packages/ui/src/Dialog.tsx:113` 经 `tid()` 应用，现有单测与 E2E 均以它定位；
+`PathInput` 的 `inputTestId?: string` 在 `packages/ui/src/PathInput.tsx:52`
+直接落到 `data-testid`。真正待补的是 `Label`、`Tabs`、`Slider` —— 这三个
+连专门的定位 prop 都没有。
 
 契约两端都很窄，这是刻意的：
 

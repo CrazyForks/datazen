@@ -155,11 +155,19 @@ export function Select({
   // reported below rather than leaked onto a node (see ./dataAttrs.ts).
   const { data: callerData, unknown: unknownProps } = splitDataAttrs(rest);
   const triggerAttrs = { ...triggerDataAttrs, ...callerData };
-  const unknownPropKey = unknownProps.join(',');
+  // Sorted, so the key identifies the *set* of unknown props rather than their
+  // order. `Object.entries` preserves JSX prop insertion order, so an unsorted
+  // join yields a different key — and therefore a fresh `console.warn` — for the
+  // very same keys passed in a different order. Sorting makes the key a pure
+  // function of the key set.
+  const unknownPropKey = [...unknownProps].sort().join(',');
   useEffect(() => {
     // Dev-only rail for the one path the type system cannot cover: a spread
     // (`{...rest}`) is exempt from excess-property checking, so a typo that
     // arrives that way compiles. Production bundles stay silent.
+    //
+    // Keyed on the sorted set, so a re-render passing the same unknown props —
+    // in any order — does not warn again.
     if (!import.meta.env.DEV || unknownPropKey.length === 0) return;
     console.warn(
       `[datazen/ui] <Select> dropped unknown prop(s): ${unknownPropKey}. ` +
