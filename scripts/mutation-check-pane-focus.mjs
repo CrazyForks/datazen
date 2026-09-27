@@ -73,10 +73,13 @@
  * Exit codes — 0 is the only value that means "this measurement is trustworthy":
  *   0 clean · 1 uncovered · 2 baseline not green · 3 write-back verification
  *   failed · 4 pre-injection interference with HEAD · 5 a mutation was VOID ·
- *   6 lost control of the store file (the loop threw, or the restore failed).
+ *   6 lost control of the store file (the loop threw, or the restore failed) ·
+ *   7 the safety backup could not be written, so nothing was mutated at all.
  * If several apply, the highest wins, and **every** condition found is printed.
  * 6 sits above the rest on purpose: a tree left holding an injected mutation
  * voids every number in the run, so it must not be summarised as "1 uncovered".
+ * 7 is above 6 only as a tiebreak — they cannot co-occur, because 7 exits before
+ * the first mutation and 6 needs a mutation to have happened.
  *
  * `PANE_MUTATION_FAULT` is a debug-only fault injector (off by default), the
  * counterpart of `NEW_WT_FORCE_FAIL` in scripts/new-feature-worktree.sh. Each
@@ -89,6 +92,12 @@
  *   restore    — make the file read-only only for the final restore, leaving the
  *               15 cells to complete, so the two LOST_CONTROL causes are
  *               separately observable.
+ *   backup     — make the store's *directory* read-only, which stops the safety
+ *               backup being written while leaving every rewrite of the file
+ *               itself working. This is the NO_SAFETY_NET refusal, and the only
+ *               value that needs a directory: a read-only FILE cannot express it.
+ *               Note the asymmetry the earlier two miss — a read-only directory
+ *               is invisible to the run until the unlink at the very end.
  *
  * `--testTimeout=30000` is passed deliberately: several tests here drive a
  * never-settling query stream, and a busy machine must not turn CPU contention
@@ -295,6 +304,14 @@ const EXIT = {
   // caller would read a trustworthy-looking "1 uncovered" for a run whose
   // working tree it must now go and check by hand.
   LOST_CONTROL: 6,
+  // The safety backup could not be written, so the run refused to mutate anything
+  // at all. Deliberately NOT 6: nothing has been written to the store, so the tree
+  // does not hold an injection and there is nothing to go and check by hand —
+  // reporting 6 here would overstate it. What 7 means is "this run produced no
+  // measurement at all", the most complete absence of a result. It sits above 6
+  // only as a tiebreak: the two cannot co-occur, because 7 exits before the first
+  // mutation and 6 requires that a mutation happened.
+  NO_SAFETY_NET: 7,
 };
 /**
  * A thrown value. Node's `catch` binding is `unknown` under this config, and the
@@ -362,6 +379,22 @@ function chmodReadOnly() {
 }
 
 /**
+ * Make `STORE`'s directory read-only, so creating a file *in* it fails while
+ * rewriting `STORE` itself still succeeds. That asymmetry is what separates this
+ * from `chmodReadOnly()`: read-only on the FILE breaks every write, read-only on
+ * the DIRECTORY breaks only the unlink and the backup. Returns true only if it
+ * actually did.
+ */
+function chmodStoreDirReadOnly() {
+  try {
+    chmodSync(dirname(STORE), 0o555);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * One vitest run over the whole TESTS list. Never throws: a failing suite comes
  * back as a non-zero `code`, because "the tests went red" is a result here, not
  * an error. `status` is the child's own exit code, and the 1 is Node's own
@@ -411,7 +444,39 @@ const preDisk = readFileSync(STORE);
 const driftedBeforeRun = !preDisk.equals(head);
 
 const backup = `${STORE}.mutation-backup`;
-writeFileSync(backup, preDisk);
+if (process.env.PANE_MUTATION_FAULT === 'backup') {
+  // Debug-only: a read-only *directory* is the one fault that stops the backup
+  // write while leaving every rewrite of the file itself working, so it is the
+  // only way to reach NO_SAFETY_NET without breaking something else as well.
+  chmodStoreDirReadOnly();
+}
+try {
+  writeFileSync(backup, preDisk);
+} catch (err) {
+  // The backup is this harness's promise that it can hand the tree back. Without
+  // it, there is nothing to fall back on, so it declines to mutate at all rather
+  // than mutate on a promise it cannot keep. Reported, never thrown: this runs
+  // before the mutation loop, so an uncaught throw here would exit 1 — read as
+  // UNCOVERED, with no RESTORE CHECK and no summary printed at all.
+  if (process.env.PANE_MUTATION_FAULT === 'backup') {
+    try {
+      chmodSync(dirname(STORE), 0o755);
+    } catch {
+      /* a directory left as the injector set it is stated below, not hidden */
+    }
+  }
+  console.error(`✖ could not write the safety backup ${backup}: ${reason(err)}`);
+  console.error(
+    `  Every mutation below rewrites ${STORE_REL} in place, and this backup is the only\n` +
+      `  way the harness can hand your bytes back if something goes wrong. Rather than\n` +
+      `  mutate on a promise it cannot keep, it stopped before the first mutation.`,
+  );
+  console.error(
+    `  Your working tree was not touched. Make the directory writable and re-run:\n` +
+      `    ${STORE_REL} lives in ${dirname(STORE)}`,
+  );
+  process.exit(EXIT.NO_SAFETY_NET);
+}
 
 if (driftedBeforeRun) {
   console.log(
@@ -549,10 +614,25 @@ try {
 } finally {
   // Last thing this process does to the working tree, and the one step whose
   // failure is worst, because everything above it assumes the file ends up as
-  // `restoreTarget`. This block must never throw: it did, and Node turns a throw
-  // here into a bare stack plus a forced exit 1, i.e. EXIT.UNCOVERED. Measured,
-  // with an injection on disk and the file made read-only: no RESTORE CHECK, no
-  // clean ✖ line, exit 1, and the mutation still sitting in the tree afterwards.
+  // `restoreTarget`.
+  //
+  // INVARIANT (local, and worth keeping): no statement in this block may throw.
+  // A throw anywhere here escapes the module, so node prints a bare stack and
+  // forces exit 1 regardless of process.exitCode — which is EXIT.UNCOVERED, so a
+  // caller reads "1 mutation uncovered" for a run it must instead go and check by
+  // hand. It also runs before the exit-code fold at the bottom, so a throw here
+  // silently discards every exitReason pushed so far, including LOST_CONTROL.
+  // Both were measured, not assumed: read-only on the file breaks the restore and
+  // the mutations (bare stack, mutation left in the tree); read-only on the
+  // *directory* breaks only the unlink, so the whole run succeeds and then dies
+  // anyway, with a clean tree. So: every fs call below is individually guarded,
+  // and a new bare one re-opens exactly the hole this is here to close.
+  //
+  // This is a statement about THIS BLOCK ONLY. It is not a claim about the file:
+  // an exception raised anywhere else in this script still becomes a bare stack
+  // and a forced exit 1. That is left as-is on purpose — a manual measurement
+  // tool dying loudly on an unforeseen exception is the right default, and
+  // guarding every fs call everywhere is unbounded work with no measured payoff.
   let injectedRestoreFault = false;
   if (process.env.PANE_MUTATION_FAULT === 'restore') {
     // Debug-only, and deliberately a *real* permission change: the writeFileSync
@@ -594,8 +674,12 @@ try {
   console.log('\n===== RESTORE CHECK (anchored to git, not to a disk re-read) =====');
   // When the final restore throws, `true` here means only that the last cell had
   // already put the file back — so the line must not read as "the restore worked".
-  const wroteBackNote = restoreError
-    ? " (true only because the last cell already wrote it — the final restore never landed)"
+  // Gated on `wroteBack` itself: annotating a `false` with a sentence about what
+  // "the last cell already wrote" would print `false` and `true` on one line, and
+  // the one place that matters most is the case where the tree is still holding an
+  // injected mutation.
+  const wroteBackNote = wroteBack && restoreError
+    ? ' (true only because the last cell already wrote it — the final restore never landed)'
     : '';
   console.log(`  on disk == the bytes this run wrote back     : ${wroteBack}${wroteBackNote}`);
   console.log(`  on disk == git HEAD (${STORE_REL}) : ${atHead}`);
@@ -615,7 +699,20 @@ try {
     console.log(`  the file is NOT what this run wrote — its byte backup was kept: ${backup}`);
     console.log(`  recover with: cp ${backup} ${STORE}`);
   } else if (existsSync(backup)) {
-    unlinkSync(backup);
+    // Guarded like the rest, and for the same reason: this runs *before* the
+    // exit-code fold below, so a throw here discards every exitReason pushed so
+    // far and node forces exit 1 — i.e. UNCOVERED. Measured, not theorised: with
+    // this one call left bare, making `src/stores` read-only (the file itself
+    // still writable, so the whole run succeeds) produced exactly that, a bare
+    // `Error: EACCES ... unlink` stack and exit 1, for a run whose tree was
+    // perfectly clean. A leftover backup is harmless — it is the startup bytes,
+    // and the recovery instructions above point at it — so keep it and say so.
+    try {
+      unlinkSync(backup);
+    } catch (err) {
+      console.log(`  could not delete the now-redundant backup ${backup}: ${reason(err)}`);
+      console.log(`  it was left on disk deliberately — delete it yourself when you are done.`);
+    }
   }
   if (!atHead) {
     if (restoreError || abortError) {
