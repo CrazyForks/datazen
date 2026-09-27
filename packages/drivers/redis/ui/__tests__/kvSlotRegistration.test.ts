@@ -43,6 +43,10 @@ import { describe, expect, it } from 'vitest';
 import {
   KV_SLOT_NAMES,
   collectDriverKvSlotEntries,
+  // @ts-expect-error TS7016: the codegen script is plain `.mjs` with no declaration
+  // file, so the module has no type. Both exports this suite uses are plain
+  // data/functions pinned by the assertions below, so the implicit `any` is safe
+  // here and keeps the test out of the shared tsconfig's `allowJs` surface.
 } from '../../../../../scripts/resolve-drivers.mjs';
 
 import { redisMeta } from '../shared/meta';

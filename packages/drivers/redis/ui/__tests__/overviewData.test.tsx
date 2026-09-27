@@ -87,11 +87,13 @@ interface Gateway {
 function gateway(plan: SourcePlan = {}): Gateway {
   const calls: Gateway['calls'] = [];
   const invoke = vi.fn(
-    async (pluginId: string, command: string, args?: Record<string, unknown>) => {
+    async (_pluginId: string, command: string, args?: Record<string, unknown>) => {
       calls.push({ command, args });
       const key = KEY_BY_COMMAND[command];
       if (!key) throw new Error(`unexpected command ${command}`);
-      const value = Object.prototype.hasOwnProperty.call(plan, key) ? plan[key] : DEFAULT_REPLY[key];
+      const value = Object.prototype.hasOwnProperty.call(plan, key)
+        ? plan[key]
+        : DEFAULT_REPLY[key];
       if (value instanceof Error) return Promise.reject(value);
       return value;
     },

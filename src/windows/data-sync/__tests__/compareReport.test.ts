@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { buildCompareReportText } from '../compareReport';
-import type { DataSyncTableResult } from '../../commands/sync';
+import type { DataSyncRowChange, DataSyncTableResult } from '../../../commands/sync';
+import type { Value } from '../../../types';
+
+/** Only `operation` drives the report counts; the rest keeps the row a real change. */
+function change(operation: DataSyncRowChange['operation'], key: Value[]): DataSyncRowChange {
+  return {
+    operation,
+    key,
+    sourceRow: operation === 'INSERT' ? null : [],
+    targetRow: operation === 'INSERT' ? [] : null,
+    changedColumns: [],
+    selected: true,
+  };
+}
 
 describe('buildCompareReportText', () => {
   it('includes summary counts and incompatible reasons', () => {
@@ -9,10 +22,7 @@ describe('buildCompareReportText', () => {
         sourceTable: 'users',
         targetTable: 'users',
         status: 'MATCHED',
-        rows: [
-          { operation: 'INSERT', selected: true, key: ['1'], sourceValues: [], targetValues: [] },
-          { operation: 'UPDATE', selected: true, key: ['2'], sourceValues: [], targetValues: [] },
-        ],
+        rows: [change('INSERT', ['1']), change('UPDATE', ['2'])],
       },
       {
         sourceTable: 'logs',

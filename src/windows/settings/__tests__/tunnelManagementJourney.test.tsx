@@ -18,7 +18,6 @@ import type {
 const { backend, mockTunnelCommands, mockConnectionCommands, translations } = vi.hoisted(() => {
   const tunnels = new Map<string, SavedTunnel>();
   const connections: ConnectionConfig[] = [];
-  let seq = 0;
 
   const summarize = (tunnel: SavedTunnel): SavedTunnelSummary => ({
     id: tunnel.id,

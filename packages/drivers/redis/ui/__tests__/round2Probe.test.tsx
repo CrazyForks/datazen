@@ -92,8 +92,7 @@ const listChildren = vi.fn();
 const dbSizes = vi.fn();
 vi.mock('../shared/redisInvoke', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../shared/redisInvoke')>()),
-  redisCommandInvoke: (...args: unknown[]) =>
-    commands(args[0] as string, args[1] as string, (args[2] ?? {}) as Record<string, unknown>),
+  redisCommandInvoke: (...args: unknown[]) => commands(args[0] as string, args[1] as string),
   invokeGetKey: (...args: unknown[]) => getKey(...args),
   invokeGetKeyRaw: (...args: unknown[]) => getKeyRaw(...args),
   invokeScanKeys: (...args: unknown[]) => scanKeys(...args),
@@ -132,6 +131,13 @@ bindSchemaStore(
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    // Path-tree surface this suite never drives (Redis reads the flat database
+    // list only); the no-ops keep the fake a complete `SchemaStoreState`.
+    pathItems: {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -180,9 +186,7 @@ async function dialogByTitle(titleKey: string): Promise<HTMLElement> {
 }
 
 function buttonWithKey(container: HTMLElement, key: string): HTMLButtonElement {
-  const found = Array.from(container.querySelectorAll('button')).find(
-    (b) => b.textContent === key,
-  );
+  const found = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === key);
   if (!found) throw new Error(`no button ${key} in dialog`);
   return found as HTMLButtonElement;
 }
@@ -223,8 +227,7 @@ beforeEach(() => {
   serverRenamed = false;
   getKey.mockImplementation((...args: unknown[]) => {
     const key = args[2] as string;
-    const value =
-      key === 'user:1' ? 'hello' : key === 'user:renamed' ? 'renamed-value' : 'other';
+    const value = key === 'user:1' ? 'hello' : key === 'user:renamed' ? 'renamed-value' : 'other';
     return Promise.resolve(stringDetail(key, value));
   });
   getKeyRaw.mockResolvedValue(null);
@@ -244,12 +247,33 @@ beforeEach(() => {
   listChildren.mockImplementation(async () => ({
     children: serverRenamed
       ? [
-          { kind: 'key', key: 'user:renamed', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null },
-          { kind: 'key', key: 'other:2', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null },
+          {
+            kind: 'key',
+            key: 'user:renamed',
+            keyType: 'string',
+            ttl: -1,
+            logicalLen: 1,
+            memBytes: null,
+          },
+          {
+            kind: 'key',
+            key: 'other:2',
+            keyType: 'string',
+            ttl: -1,
+            logicalLen: 1,
+            memBytes: null,
+          },
         ]
       : [
           { kind: 'key', key: 'user:1', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null },
-          { kind: 'key', key: 'other:2', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null },
+          {
+            kind: 'key',
+            key: 'other:2',
+            keyType: 'string',
+            ttl: -1,
+            logicalLen: 1,
+            memBytes: null,
+          },
         ],
     cursor: 0,
   }));
@@ -366,9 +390,7 @@ describe('[tester][round-2][偏差②] 工具栏刷新的一次动作只允许�
     await waitFor(() => expect(leaveDialog()).toBeNull());
 
     // 真的继续了刷新（选中被 refreshKeys 清掉），但第二道守卫必须即刻放行。
-    await waitFor(() =>
-      expect(column().getAttribute('data-detail-state')).toBe('no-key'),
-    );
+    await waitFor(() => expect(column().getAttribute('data-detail-state')).toBe('no-key'));
     await flush(60);
     expect(leaveDialog()).toBeNull();
     expect(isLeavePending()).toBe(false);

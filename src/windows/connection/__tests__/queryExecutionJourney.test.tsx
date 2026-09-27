@@ -28,7 +28,9 @@ import { enCopy } from '../../../test/enCopy';
 // recorder — the same idiom as the sibling `useQueryExecutionGate.test.tsx`.
 // Assertions therefore pin the i18n **key + params object** (the contract) and
 // the token (data); the English sentence is owned by the dictionary.
-const i18nCalls = vi.hoisted(() => [] as Array<{ key: string; params?: Record<string, string | number> }>);
+const i18nCalls = vi.hoisted(
+  () => [] as Array<{ key: string; params?: Record<string, string | number> }>,
+);
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({
@@ -393,7 +395,9 @@ describe('Query Execution & Asset Experience Journeys', () => {
         dbSessionId: 'sess-1',
         connectionId: 'conn-1',
         connectionName: 'Test Conn',
-        databaseType: 'postgres',
+        databaseType: 'postgresql',
+        database: '',
+        schema: null,
       };
 
       usePanelStore.setState({
@@ -414,7 +418,9 @@ describe('Query Execution & Asset Experience Journeys', () => {
       // Simulate clicking on the favorite in QuerySidebarSection
       const favorite = usePanelStore.getState().queryFavorites[0];
       const stateBefore = usePanelStore.getState();
-      const currentPanel = stateBefore.panels.find((p) => p.id === 'panel-qry-main')!;
+      const currentPanel = stateBefore.panels.find(
+        (p): p is QueryPanel => p.id === 'panel-qry-main',
+      )!;
 
       // Click action creates a new panel tab with the favorite's title & SQL
       const newPanelId = 'panel-qry-fav-report';
@@ -438,7 +444,7 @@ describe('Query Execution & Asset Experience Journeys', () => {
       expect(originalExecAfter?.sql).toBe('SELECT * FROM drafts;');
 
       // Verify the new panel has the favorite SQL and title
-      const newlyOpenedPanel = stateAfter.panels.find((p) => p.id === newPanelId)!;
+      const newlyOpenedPanel = stateAfter.panels.find((p): p is QueryPanel => p.id === newPanelId)!;
       const newlyOpenedExec = stateAfter.queryExec.get(newPanelId);
       expect(newlyOpenedExec?.sql).toBe(favorite.sql);
       expect(newlyOpenedPanel.title).toBe('Monthly Sales Report');

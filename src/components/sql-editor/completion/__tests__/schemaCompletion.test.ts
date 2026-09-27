@@ -61,6 +61,7 @@ function makeSnapshot(relations: EditorRelationMetadata[]): EditorMetadataSnapsh
   }
   return {
     dbSessionId: 'test-session',
+    database: 'test',
     epoch: 1,
     relations: map,
   };
@@ -1130,6 +1131,7 @@ describe('schemaCompletion', () => {
     const pgAdapter = getDialectAdapter('postgresql');
     const emptySnapshot: EditorMetadataSnapshot = {
       dbSessionId: 's',
+      database: 'test',
       epoch: 1,
       relations: new Map(),
     };
@@ -1202,6 +1204,7 @@ describe('schemaCompletion', () => {
       const buyerStub = makeRelation('buyer', [], [], pgAdapter);
       const snapshot: EditorMetadataSnapshot = {
         dbSessionId: 's',
+        database: 'test',
         epoch: 1,
         relations: new Map([[buyerStub.key, buyerStub]]),
       };
@@ -1228,6 +1231,7 @@ describe('schemaCompletion', () => {
       );
       const snapshot: EditorMetadataSnapshot = {
         dbSessionId: 's',
+        database: 'test',
         epoch: 1,
         relations: new Map([[orders.key, orders]]),
       };

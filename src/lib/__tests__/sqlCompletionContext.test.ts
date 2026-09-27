@@ -136,7 +136,7 @@ describe('contextualKeywordCompletion', () => {
       pos: 16,
     } as unknown as CompletionContext;
 
-    const result = contextualSource(mockContext) as { options: Completion[] };
+    const result = contextualSource(mockContext) as unknown as { options: Completion[] };
     expect(result).not.toBeNull();
     expect(result.options.map((o) => o.label)).toEqual(['SELECT']);
     expect(result.options[0]?.boost).toBeLessThan(0);
@@ -160,7 +160,7 @@ describe('contextualKeywordCompletion', () => {
       pos: 29,
     } as unknown as CompletionContext;
 
-    const result = contextualSource(mockContext) as { options: Completion[] };
+    const result = contextualSource(mockContext) as unknown as { options: Completion[] };
     expect(result).not.toBeNull();
     const labels = result.options.map((o) => o.label);
     expect(labels).toContain('WHERE');

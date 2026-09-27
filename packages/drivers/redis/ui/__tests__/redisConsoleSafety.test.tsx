@@ -55,11 +55,9 @@ bindSettingsStore(
 bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 
 let confirmCalls: ConfirmDialogOptions[] = [];
-let confirmBehaviour: (index: number) => boolean = () => true;
 
 function stubConfirm(behaviour: (index: number) => boolean = () => true) {
   confirmCalls = [];
-  confirmBehaviour = behaviour;
   const confirmFn = vi.fn<ConfirmDialogFn>((options) => {
     const index = confirmCalls.length;
     confirmCalls.push(options);

@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { transformData, type TransformResult } from '../transform';
-import type { StatementResult } from '../../../types';
+import { transformData } from '../transform';
+import type { StatementResult, Value } from '../../../types';
 import type { ChartConfig } from '../../../types/chart';
 import { DEFAULT_CHART_CONFIG } from '../../../types/chart';
 
 function makeResult(
   columns: { name: string; dataType: string }[],
-  rows: unknown[][],
+  rows: (Value | null)[][],
 ): StatementResult {
   return {
     sql: 'SELECT ...',
@@ -22,8 +22,16 @@ function cfg(overrides: Partial<ChartConfig>): ChartConfig {
 
 describe('transformData', () => {
   const salesResult = makeResult(
-    [{ name: 'region', dataType: 'text' }, { name: 'sales', dataType: 'int4' }],
-    [['East', 100], ['West', 200], ['East', 150], ['West', 50]],
+    [
+      { name: 'region', dataType: 'text' },
+      { name: 'sales', dataType: 'int4' },
+    ],
+    [
+      ['East', 100],
+      ['West', 200],
+      ['East', 150],
+      ['West', 50],
+    ],
   );
 
   describe('direct mode (aggregation=none)', () => {
@@ -47,8 +55,14 @@ describe('transformData', () => {
 
     it('handles scatter chart with null x values', () => {
       const result = makeResult(
-        [{ name: 'x', dataType: 'int4' }, { name: 'y', dataType: 'int4' }],
-        [[null, 10], [5, 20]],
+        [
+          { name: 'x', dataType: 'int4' },
+          { name: 'y', dataType: 'int4' },
+        ],
+        [
+          [null, 10],
+          [5, 20],
+        ],
       );
       const config = cfg({ xAxis: 'x', yAxes: ['y'], chartType: 'scatter', aggregation: 'none' });
       const { data } = transformData(result, config);
@@ -161,8 +175,14 @@ describe('transformData', () => {
 
     it('handles groupBy same as xAxis', () => {
       const result = makeResult(
-        [{ name: 'status', dataType: 'text' }, { name: 'count', dataType: 'int8' }],
-        [['active', 100], ['inactive', 50]],
+        [
+          { name: 'status', dataType: 'text' },
+          { name: 'count', dataType: 'int8' },
+        ],
+        [
+          ['active', 100],
+          ['inactive', 50],
+        ],
       );
       const config = cfg({
         xAxis: 'status',
@@ -211,8 +231,15 @@ describe('transformData', () => {
   describe('sorting', () => {
     it('sorts by x ascending', () => {
       const result = makeResult(
-        [{ name: 'name', dataType: 'text' }, { name: 'value', dataType: 'int4' }],
-        [['Banana', 2], ['Apple', 3], ['Cherry', 1]],
+        [
+          { name: 'name', dataType: 'text' },
+          { name: 'value', dataType: 'int4' },
+        ],
+        [
+          ['Banana', 2],
+          ['Apple', 3],
+          ['Cherry', 1],
+        ],
       );
       const config = cfg({ xAxis: 'name', yAxes: ['value'], sortBy: 'x_asc', aggregation: 'none' });
       const { data } = transformData(result, config);
@@ -222,10 +249,22 @@ describe('transformData', () => {
 
     it('sorts by y descending', () => {
       const result = makeResult(
-        [{ name: 'name', dataType: 'text' }, { name: 'value', dataType: 'int4' }],
-        [['A', 2], ['B', 5], ['C', 1]],
+        [
+          { name: 'name', dataType: 'text' },
+          { name: 'value', dataType: 'int4' },
+        ],
+        [
+          ['A', 2],
+          ['B', 5],
+          ['C', 1],
+        ],
       );
-      const config = cfg({ xAxis: 'name', yAxes: ['value'], sortBy: 'y_desc', aggregation: 'none' });
+      const config = cfg({
+        xAxis: 'name',
+        yAxes: ['value'],
+        sortBy: 'y_desc',
+        aggregation: 'none',
+      });
       const { data } = transformData(result, config);
 
       expect(data.map((d) => d.value)).toEqual([5, 2, 1]);

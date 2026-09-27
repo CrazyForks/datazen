@@ -32,11 +32,11 @@ describe('cssColorToHex', () => {
 describe('persistSurfaceBackground', () => {
   beforeEach(() => {
     mockInvoke.mockClear();
-    delete (window as Record<string, unknown>).__TAURI_INTERNALS__;
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
   });
 
   afterEach(() => {
-    delete (window as Record<string, unknown>).__TAURI_INTERNALS__;
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
   });
 
   it('no-ops without Tauri', () => {
@@ -45,7 +45,7 @@ describe('persistSurfaceBackground', () => {
   });
 
   it('sends sanitized hex to Rust when Tauri is present', () => {
-    (window as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
     persistSurfaceBackground(true, 'rgb(26, 10, 46)');
     expect(mockInvoke).toHaveBeenCalledWith('set_surface_background', {
       hex: '#1a0a2e',

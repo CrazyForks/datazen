@@ -58,7 +58,9 @@ describe('schemaTreeDrag', () => {
     it('handles undefined schema', () => {
       const payload = buildSchemaObjectPayload({
         ...baseOpts,
-        schema: undefined,
+        // `DragPayloadOptions.schema` is `string | null`; a schema-less engine
+        // hands the builder `undefined` and the builder must pass it through.
+        schema: undefined as unknown as string | null,
       });
       expect(payload.namespace.schema).toBeUndefined();
     });
@@ -77,7 +79,8 @@ describe('schemaTreeDrag', () => {
     it('handles undefined schema', () => {
       const payload = buildLegacyTablePayload({
         ...baseOpts,
-        schema: undefined,
+        // See above: `undefined` is the real runtime value for a schema-less engine.
+        schema: undefined as unknown as string | null,
       });
       expect(payload.tables[0].schema).toBeUndefined();
     });

@@ -97,7 +97,7 @@ describe('ValueViewer', () => {
  * 轨验收面的新可达性形状，故在此钉住。
  */
 describe('[tester] ValueViewer read-only preview actions (E-3 reachability)', () => {
-  const writeText = vi.fn(async () => undefined);
+  const writeText = vi.fn(async (_payload: string) => undefined);
 
   beforeEach(() => {
     Object.defineProperty(navigator, 'clipboard', {

@@ -9,11 +9,15 @@ import { createPanelCloseNotifier } from '../panelCloseNotifier';
  * vanished from `panels`" into a close notification, since every removal path
  * funnels through a single `set(...)`.
  */
+/** The slice of `PanelStateLike` the notifier subscribes to, mirrored here. */
+type FakePanelState = { panels: { id: string }[] };
+type FakeListener = (state: FakePanelState, prev: FakePanelState) => void;
+
 function fakeStore(initial: string[]) {
-  let panels = initial.map((id) => ({ id }));
-  const listeners = new Set<(next: typeof panels, prev: typeof panels) => void>();
+  let panels: FakePanelState['panels'] = initial.map((id) => ({ id }));
+  const listeners = new Set<FakeListener>();
   return {
-    subscribe: (listener: (next: typeof panels, prev: typeof panels) => void) => {
+    subscribe: (listener: FakeListener) => {
       listeners.add(listener);
       return () => {
         listeners.delete(listener);

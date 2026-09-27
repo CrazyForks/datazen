@@ -65,7 +65,10 @@ describe('isMutationExecution', () => {
 
   it('returns false for SELECT queries with column definitions and 0 rows', () => {
     const result: StatementResult = {
-      columns: ['id', 'name'],
+      columns: [
+        { name: 'id', dataType: 'int', nullable: false },
+        { name: 'name', dataType: 'text', nullable: true },
+      ],
       rows: [],
       rowsAffected: undefined,
       executionTimeMs: 10,
@@ -152,8 +155,8 @@ describe('isMutationExecution', () => {
 
   it('returns false for INSERT ... RETURNING with returned rows/columns', () => {
     const result: StatementResult = {
-      columns: ['id'],
-      rows: [{ id: 1 }],
+      columns: [{ name: 'id', dataType: 'int', nullable: false }],
+      rows: [[1]],
       rowsAffected: 1,
       executionTimeMs: 12,
       sql: "INSERT INTO users (name) VALUES ('Bob') RETURNING id",

@@ -101,6 +101,10 @@ const KV_META: DatabaseTypeMeta = {
   category: 'kv',
   connectionView: 'keyvalue',
   connectionForm: 'standard',
+  // Required by DatabaseTypeMeta; this renderer only reads `isKeyValue` /
+  // `connectionView`, and a non-'index' value keeps any index-addressed branch
+  // (e.g. `resolveKvDatabaseIndex`) on the same path the absent field took.
+  databaseFieldType: 'name',
 };
 
 function renderRenderer(kvSlotState?: KvSlotState) {

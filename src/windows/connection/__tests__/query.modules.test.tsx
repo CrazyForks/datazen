@@ -50,11 +50,15 @@ const rollbackSessionTransaction = vi.hoisted(() => vi.fn().mockResolvedValue(un
 
 vi.mock('../../../commands/query', () => ({
   queryCommands: {
-    sessionTransactionStatus: (...args: unknown[]) => sessionTransactionStatus(...args),
-    beginSessionTransaction: (...args: unknown[]) => beginSessionTransaction(...args),
-    commitSessionTransaction: (...args: unknown[]) => commitSessionTransaction(...args),
-    rollbackSessionTransaction: (...args: unknown[]) => rollbackSessionTransaction(...args),
-    getExplain: (...args: unknown[]) => getExplain(...args),
+    sessionTransactionStatus: (...args: Parameters<typeof sessionTransactionStatus>) =>
+      sessionTransactionStatus(...args),
+    beginSessionTransaction: (...args: Parameters<typeof beginSessionTransaction>) =>
+      beginSessionTransaction(...args),
+    commitSessionTransaction: (...args: Parameters<typeof commitSessionTransaction>) =>
+      commitSessionTransaction(...args),
+    rollbackSessionTransaction: (...args: Parameters<typeof rollbackSessionTransaction>) =>
+      rollbackSessionTransaction(...args),
+    getExplain: (...args: Parameters<typeof getExplain>) => getExplain(...args),
     clearQueryHistory: vi.fn().mockResolvedValue(undefined),
   },
 }));
@@ -64,8 +68,8 @@ const getColumns = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../commands/database', () => ({
   databaseCommands: {
-    getTableSchema: (...args: unknown[]) => getTableSchema(...args),
-    getColumns: (...args: unknown[]) => getColumns(...args),
+    getTableSchema: (...args: Parameters<typeof getTableSchema>) => getTableSchema(...args),
+    getColumns: (...args: Parameters<typeof getColumns>) => getColumns(...args),
   },
 }));
 
@@ -117,16 +121,16 @@ vi.mock('../../../components/query/QueryExecutionStatus', () => ({
 }));
 
 extensionRegistry.register(sqlEditorEnhancedEP, {
-  renderBindParamPanel: ({
-    onChange,
-  }: {
-    params: Array<{ name: string }>;
-    onChange: (name: string, value: string) => void;
-  }) => (
-    <button type="button" data-testid="bind-param-change" onClick={() => onChange('id', '42')}>
-      bind
-    </button>
-  ),
+  // The EP contract types this renderer's props as an open options bag, so the
+  // fake reads the two members the host actually passes through a cast.
+  renderBindParamPanel: (props) => {
+    const { onChange } = props as { onChange: (name: string, value: string) => void };
+    return (
+      <button type="button" data-testid="bind-param-change" onClick={() => onChange('id', '42')}>
+        bind
+      </button>
+    );
+  },
 });
 
 vi.mock('../../../components/ai/Nl2SqlPanel', () => ({
@@ -237,8 +241,9 @@ const schemaStoreState = vi.hoisted(() => ({
   tables: [{ name: 'users', tableType: 'table' as const }],
   views: [],
   columnMap: { users: ['id', 'name'] },
-  currentDatabase: 'app',
+  currentDatabase: 'app' as string | null,
   currentSchema: null as string | null,
+  databases: [] as string[],
   ensureNamespacePath: vi.fn(),
   switchDatabase: vi.fn(),
   loadTables: vi.fn().mockResolvedValue(undefined),
@@ -300,6 +305,8 @@ describe('[tester] query/contracts', () => {
       connectionId: 'cfg-1',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
+      schema: null,
       schemaState: {
         currentDatabase: 'app',
         currentSchema: null,
@@ -818,9 +825,17 @@ describe('[tester] query/QueryEditorSection', () => {
     };
     const execVm = toQueryExecutionViewModel(
       { ...EMPTY_QUERY_EXEC, sql: 'SELECT 1', running: false },
-      { supportsCancelQuery: true, supportsQueryExecutionCancel: true },
+      {
+        supportsCancelQuery: true,
+        supportsQueryExecutionCancel: true,
+        supportsExplain: true,
+        supportsStreamingResults: true,
+        supportsOffset: true,
+        hasSchemaLevel: true,
+      },
     );
     const defaults: ComponentProps<typeof QueryEditorSection> = {
+      panelId: 'p1',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
       editorRef,
@@ -830,7 +845,15 @@ describe('[tester] query/QueryEditorSection', () => {
       running: false,
       executionTimeMs: 42,
       executionViewModel: execVm,
-      sqlParams: [{ name: 'id', syntax: 'colon' as const, ordinal: 1 }],
+      sqlParams: [
+        {
+          name: 'id',
+          kind: 'named' as const,
+          syntax: 'colon' as const,
+          stableId: 'named:id' as const,
+          ordinal: 1,
+        },
+      ],
       paramValues: {},
       onParamChange: vi.fn(),
       editorHeight: 200,
@@ -985,7 +1008,14 @@ describe('[tester] query/QueryEditorSection', () => {
     const onCancel = vi.fn();
     const execVm = toQueryExecutionViewModel(
       { ...EMPTY_QUERY_EXEC, sql: 'SELECT 1', running: true },
-      { supportsCancelQuery: true, supportsQueryExecutionCancel: true },
+      {
+        supportsCancelQuery: true,
+        supportsQueryExecutionCancel: true,
+        supportsExplain: true,
+        supportsStreamingResults: true,
+        supportsOffset: true,
+        hasSchemaLevel: true,
+      },
     );
     renderSection({ running: true, executionViewModel: execVm, onCancel });
     fireEvent.click(screen.getByTestId('cancel-running'));
@@ -998,10 +1028,24 @@ describe('[tester] query/QueryEditorSection', () => {
         ...EMPTY_QUERY_EXEC,
         sql: 'SELECT 1',
         running: false,
-        results: [{ rows: [{ id: 1 }, { id: 2 }], columns: ['id'] }],
+        results: [
+          {
+            sql: 'SELECT 1',
+            rows: [[1], [2]],
+            columns: [{ name: 'id', dataType: 'int', nullable: false }],
+            executionTimeMs: 1,
+          },
+        ],
         activeResultIdx: 0,
       },
-      { supportsCancelQuery: true, supportsQueryExecutionCancel: true },
+      {
+        supportsCancelQuery: true,
+        supportsQueryExecutionCancel: true,
+        supportsExplain: true,
+        supportsStreamingResults: true,
+        supportsOffset: true,
+        hasSchemaLevel: true,
+      },
     );
     renderSection({ executionViewModel: execVm });
     expect(screen.getByText('query.historyRows')).toBeInTheDocument();
@@ -1079,7 +1123,15 @@ describe('[tester] query/QueryEditorSection', () => {
 describe('[tester] query/QuerySidebarSection favorites', () => {
   beforeEach(() => {
     usePanelStore.setState({
-      queryFavorites: [{ id: 'f1', title: 'Daily', sql: 'SELECT 1', connectionId: 'cfg-1' }],
+      queryFavorites: [
+        {
+          id: 'f1',
+          title: 'Daily',
+          sql: 'SELECT 1',
+          connectionId: 'cfg-1',
+          createdAt: '2024-01-01T00:00:00.000Z',
+        },
+      ],
       queryHistory: [],
       favoritesVisible: true,
       historyVisible: false,
@@ -1277,7 +1329,7 @@ describe('[tester] query/QueryResultsPane', () => {
     explainError: null,
     explainResult: null,
     diagnosisVisible: false,
-    diagnosisContext: { ok: false, error: { code: 'empty', message: 'empty' } },
+    diagnosisContext: { ok: false, error: { code: 'empty-context', message: 'empty' } },
     retryActionEnabled: false,
     addToDashboardOpen: false,
     onApplyAiSql: vi.fn(),
@@ -1315,10 +1367,44 @@ describe('[tester] query/QueryResultsPane', () => {
           ok: true,
           context: {
             sql: 'SELECT bad',
-            error: 'syntax error',
-            contextFingerprint: 'fp-1',
-            connectionContext: {},
+            safeSql: 'SELECT bad',
+            safeErrorMessage: 'syntax error',
+            errorMessage: 'syntax error',
+            databaseType: 'postgresql',
+            database: 'app',
+            schema: null,
             schemaContext: { tables: [], views: [], columns: {} },
+            connectionContext: {
+              connectionId: 'cfg-1',
+              dbSessionId: 'sess-1',
+              name: null,
+              host: null,
+              port: null,
+              serverVersion: null,
+              readOnly: null,
+            },
+            promptContext: {
+              sql: 'SELECT bad',
+              errorMessage: 'syntax error',
+              databaseType: 'postgresql',
+              database: 'app',
+              schema: null,
+              schemaContext: { tables: [], views: [], columns: {} },
+              connectionContext: {
+                name: null,
+                host: null,
+                port: null,
+                serverVersion: null,
+                readOnly: null,
+              },
+            },
+            diagnosisParams: {
+              dbSessionId: 'sess-1',
+              database: 'app',
+              sql: 'SELECT bad',
+              errorMessage: 'syntax error',
+            },
+            contextFingerprint: 'fp-1',
           },
         }}
         onRetry={onRetry}
@@ -1341,8 +1427,18 @@ describe('[tester] query/QueryResultsPane', () => {
     const onSetActiveResult = vi.fn();
     const onAddToDashboardOpen = vi.fn();
     const results = [
-      { rows: [{ id: 1 }], columns: ['id'], executionTimeMs: 5 },
-      { rows: [{ id: 2 }], columns: ['id'], executionTimeMs: 8 },
+      {
+        sql: 'SELECT 1',
+        rows: [[1]],
+        columns: [{ name: 'id', dataType: 'int', nullable: false }],
+        executionTimeMs: 5,
+      },
+      {
+        sql: 'SELECT 2',
+        rows: [[2]],
+        columns: [{ name: 'id', dataType: 'int', nullable: false }],
+        executionTimeMs: 8,
+      },
     ];
 
     render(
@@ -1377,11 +1473,7 @@ describe('[tester] query/QueryResultsPane', () => {
 
   it('shows explain panel when showExplain is true', () => {
     render(
-      <QueryResultsPane
-        {...baseProps}
-        showExplain
-        explainResult={{ plan: 'Seq Scan', raw: 'plan text' }}
-      />,
+      <QueryResultsPane {...baseProps} showExplain explainResult={{ planText: 'Seq Scan' }} />,
     );
     expect(screen.getByTestId('explain-panel')).toBeInTheDocument();
   });
@@ -1406,6 +1498,10 @@ describe('[tester] query/useQueryPanelWorkflows', () => {
         connectionId: 'cfg-1',
         dbSessionId: 'sess-1',
         databaseType: 'postgresql',
+        // Same values the panel-store fixture resolves the context to, so the
+        // diagnosis context built here is unchanged.
+        database: 'app',
+        schema: null,
         sql: 'SELECT 1',
         error: 'timeout',
         chartConfig: undefined,

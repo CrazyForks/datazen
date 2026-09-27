@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EditorState } from '@codemirror/state';
+import { EditorState, type Extension } from '@codemirror/state';
 import { sql, StandardSQL } from '@codemirror/lang-sql';
 import { CompletionContext } from '@codemirror/autocomplete';
 import {
@@ -36,7 +36,10 @@ describe('shouldShowNamespaceLoadingHint', () => {
 describe('namespaceLoadingCompletionSource', () => {
   it('is not a CodeMirror Extension and must be registered via language data', () => {
     const source = namespaceLoadingCompletionSource(true, 'Loading objects…');
-    expect(() => EditorState.create({ extensions: [source] })).toThrow(
+    // Deliberate misuse: a CompletionSource is a function, not an Extension, so
+    // CodeMirror must reject it. The cast keeps the compiler from pre-empting
+    // the very runtime contract this case pins.
+    expect(() => EditorState.create({ extensions: [source as unknown as Extension] })).toThrow(
       /Unrecognized extension value/,
     );
     expect(() =>
@@ -58,13 +61,14 @@ describe('namespaceLoadingCompletionSource', () => {
     expect(source(new CompletionContext(state, 0, false))).toBeNull();
   });
 
-  it('offers a loading hint after the user types a prefix', () => {
+  it('offers a loading hint after the user types a prefix', async () => {
     const source = namespaceLoadingCompletionSource(true, 'Loading objects…');
     const state = EditorState.create({
       doc: 'sel',
       extensions: [sql({ dialect: StandardSQL })],
     });
-    const result = source(new CompletionContext(state, 3, false));
+    // A CompletionSource may answer with a Promise; this one answers inline.
+    const result = await source(new CompletionContext(state, 3, false));
     expect(result?.options[0]?.label).toBe('Loading objects…');
   });
 });

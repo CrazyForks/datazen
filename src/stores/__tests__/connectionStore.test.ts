@@ -25,6 +25,7 @@ function makeConn(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
     databaseType: 'postgresql',
     host: 'localhost',
     port: 5432,
+    sslMode: 'prefer',
     ...overrides,
   };
 }

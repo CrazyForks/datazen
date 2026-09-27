@@ -52,7 +52,6 @@ vi.mock('../observe/PubSubPanel', () => ({ PubSubPanel: () => <div /> }));
 
 import { RedisConnectionView } from '../connection/RedisConnectionView';
 import { panelCloseStub } from '../__testing__/panelClose';
-import { resetPanelBindings } from '../shared/panelLifecycle';
 
 // The view registers a close handler on mount; cases fire it explicitly.
 const panelClose = panelCloseStub();
@@ -66,9 +65,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 

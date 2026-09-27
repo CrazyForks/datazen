@@ -106,6 +106,13 @@ bindSchemaStore(
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    // Host-store fields this suite never exercises; bound to satisfy the bridge
+    // contract so the Redis tree only ever reads `databases` / `loading`.
+    pathItems: {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -143,6 +150,25 @@ function makeRelay(): KvSlotState & { published: Array<{ key: string | null; dir
       dirty = next;
       notify();
     },
+    /*
+     * W3-A widened members (status bar + context-bar scan cluster). The
+     * workbench under test only drives the five original members, so these are
+     * inert contract-fillers: nothing here reads them back.
+     */
+    getLoadedCount: () => 0,
+    setLoadedCount: () => {},
+    getScanCursor: () => '0',
+    setScanCursor: () => {},
+    isScanning: () => false,
+    setScanning: () => {},
+    getScanBudgetUsed: () => 0,
+    getScanBudgetTotal: () => 0,
+    setScanBudget: () => {},
+    getSelectionCount: () => 0,
+    setSelectionCount: () => {},
+    getLastWriteCommand: () => null,
+    getLastWriteDurationMs: () => null,
+    recordWrite: () => {},
   };
 }
 
@@ -257,7 +283,6 @@ describe('DetailColumn → dirty signal (I-1 source)', () => {
         modules={[]}
         onRefresh={() => {}}
         onRenamed={() => {}}
-        onClose={() => {}}
         onDirtyChange={onDirtyChange}
       />,
     );

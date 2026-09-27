@@ -44,6 +44,16 @@ async function actAndFlush(run: () => void) {
   });
 }
 
+/**
+ * Re-widens a `let` that was assigned inside an `act()` callback: control-flow
+ * analysis cannot see the callback's assignment, so it keeps narrowing the
+ * variable to its initial `null` and every property read below collapses to
+ * `never`. Identity at runtime — this only restores the declared type.
+ */
+function assigned<T>(value: T | null): T | null {
+  return value;
+}
+
 describe('useTunnelFormState', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -111,7 +121,7 @@ describe('useTunnelFormState', () => {
     await act(async () => {
       created = await result.current.saveAsTunnel('Corp proxy');
     });
-    const createdTunnel = created;
+    const createdTunnel = assigned<SavedTunnel>(created);
     if (!createdTunnel) throw new Error('expected saveAsTunnel to create a tunnel');
     expect(createdTunnel.kind).toBe('httpProxy');
     expect(createdTunnel.httpProxy?.host).toBe('proxy.corp.example');
@@ -559,8 +569,8 @@ describe('[tester] useTunnelFormState exit branches', () => {
     await act(async () => {
       created = await result.current.saveAsTunnel('Relay');
     });
-    expect(created?.kind).toBe('websocket');
-    expect(created?.websocket).toEqual({
+    expect(assigned<SavedTunnel>(created)?.kind).toBe('websocket');
+    expect(assigned<SavedTunnel>(created)?.websocket).toEqual({
       enabled: true,
       url: 'wss://relay.example/v1',
       mode: 'raw_binary',

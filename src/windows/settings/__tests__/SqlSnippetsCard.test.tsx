@@ -35,14 +35,19 @@ const mockSettings: AppSettings = {
   mcpPermissionMode: 'read_only',
   contextDir: '/tmp',
   driverSettings: {},
+  wappSettings: {},
   mcpClientServers: [],
+  mcpAllowedConnectionIds: [],
+  confirmDangerousExecution: false,
+  autoChartOnQuery: false,
   aiStrictEgress: true,
   monitor: {
-    enabled: false,
-    pollIntervalSecs: 60,
-    retentionDays: 7,
     trayEnabled: false,
-    alertsEnabled: false,
+    closeToTray: false,
+    maxConcurrentQueries: 2,
+    exportIncludeDashboardRuns: true,
+    runRetentionCount: 100,
+    runRetentionDays: 7,
   },
   sqlSnippets: [
     {

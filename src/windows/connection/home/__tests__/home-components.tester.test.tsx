@@ -17,8 +17,8 @@ import { ConnectionCardList } from '../ConnectionCardList';
 import { RecentQueriesList } from '../RecentQueriesList';
 import { ShortcutFooter } from '../ShortcutFooter';
 import { getActionShortcut, formatShortcutForDisplay } from '../../../../lib/keymap';
-import type { ConnectionConfig, QueryHistoryEntry } from '../../../types';
-import type { ConnectionEntry } from '../../../stores/activeConnectionStore';
+import type { ConnectionConfig, QueryHistoryEntry } from '../../../../types';
+import type { ConnectionEntry } from '../../../../stores/activeConnectionStore';
 
 vi.mock('../../../../hooks/useI18n', () => ({
   // Key-style mock (same convention as ConnectionWorkspaceHome.test.tsx):
@@ -57,6 +57,7 @@ const connections: ConnectionConfig[] = [
     port: 5432,
     database: 'postgres',
     group: 'Development',
+    sslMode: 'prefer',
   },
   {
     id: 'conn-2',
@@ -66,6 +67,7 @@ const connections: ConnectionConfig[] = [
     port: 3306,
     database: 'app',
     group: 'Production',
+    sslMode: 'prefer',
   },
 ];
 
@@ -328,9 +330,14 @@ describe('[tester] ShortcutFooter keymap-driven rendering', () => {
   });
 
   it('[tester] renders one entry per registered action with display formatting', () => {
-    vi.mocked(getActionShortcut).mockImplementation(
-      (action) => ({ newQuery: 'Mod-n', saveQuery: 'Mod-s', formatSql: '' })[action] ?? '',
-    );
+    // Only three of the keymap actions have a shortcut here; the footer asks
+    // about more actions than that, so the table is deliberately partial.
+    const shortcuts: Partial<Record<string, string>> = {
+      newQuery: 'Mod-n',
+      saveQuery: 'Mod-s',
+      formatSql: '',
+    };
+    vi.mocked(getActionShortcut).mockImplementation((action) => shortcuts[action] ?? '');
     vi.mocked(formatShortcutForDisplay).mockImplementation((key) => `⌘${key}`);
     render(<ShortcutFooter />);
 

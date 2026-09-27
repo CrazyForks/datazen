@@ -14,7 +14,6 @@ import {
   bindConfirmDialog,
   bindConnectionStore,
   bindSettingsStore,
-  useBoundSettingsStore,
   type ConnectionBridgeState,
   type ConfirmDialogFn,
   type SettingsBridgeState,

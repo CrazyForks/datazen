@@ -105,7 +105,9 @@ export function usePanelHandlers({
   currentDatabase: string | null;
   initialDatabase: string | undefined;
   lastTableSchema: string | null;
-  schemaViews: { name: string; schema?: string }[];
+  /** Structural minimum over `TableInfo`; `schema` follows it (`| null`), and both
+   *  readers below already null-coalesce rather than testing `undefined`. */
+  schemaViews: { name: string; schema?: string | null }[];
   /**
    * Resolves a relation's own schema from the loaded tree. The ER diagram is
    * opened from the tree context menu with a table name, and `schemaViews`

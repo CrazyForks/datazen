@@ -3,6 +3,11 @@ import { workflowDraftToDefinition } from '../workflowDraftConvert';
 import { draftToYamlObject, yamlObjectToDraft } from '../../../lib/workflowDraftYaml';
 import { emptyDraft } from '../WorkflowForm';
 
+/** `draftToYamlObject` hands back a loose record; these tests read its `steps` list. */
+function yamlSteps(yamlObj: Record<string, unknown>): Array<Record<string, unknown>> {
+  return yamlObj.steps as Array<Record<string, unknown>>;
+}
+
 /**
  * Regression: a command step's database was silently dropped on the way to the
  * backend. The form offers a step-level database dropdown for command steps,
@@ -76,12 +81,12 @@ describe('command step database survives conversion', () => {
 
   it('writes a command step database into input when serializing to YAML', () => {
     const yamlObj = draftToYamlObject(base());
-    expect(yamlObj.steps[0]).toMatchObject({
+    expect(yamlSteps(yamlObj)[0]).toMatchObject({
       type: 'command',
       input: { database: 'step_db' },
     });
     // Must not be a bare `database` key — the Rust deserializer drops it.
-    expect((yamlObj.steps[0] as Record<string, unknown>).database).toBeUndefined();
+    expect(yamlSteps(yamlObj)[0].database).toBeUndefined();
   });
 
   it('keeps workflow-level connection and database in the YAML form', () => {
@@ -113,6 +118,6 @@ describe('command step database survives conversion', () => {
       ...base(),
       steps: [{ type: 'query' as const, id: 's1', sql: 'SELECT 1', database: 'step_db' }],
     });
-    expect(yamlObj.steps[0]).toMatchObject({ type: 'query', database: 'step_db' });
+    expect(yamlSteps(yamlObj)[0]).toMatchObject({ type: 'query', database: 'step_db' });
   });
 });
