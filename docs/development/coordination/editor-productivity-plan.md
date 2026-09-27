@@ -114,6 +114,44 @@ title: 多目标协调计划（hub 静态段落来源）
   （「已暂存跳过构建」假绿）。危害：让人**用陈旧产物当验证证据**，「跑通了」与「验过了」不等价。
   CI 因非零退出会中止，故属**本地开发期**隐患。**约束：不得破坏 CI「构建一次、各 release 变体共用」
   的短路语义；不得动 `artifacts/.pack-ep-staging-*` 的保留行为**（那是另一目录，刻意保留供排查）。
+- **⚠️【方法论·第八·第九次】连续两次，且第二次是第一次的「我把它压掉了」。**
+  ⑧ `git -C "$PRO" bundle create "$B"` 里 `$B` 是**相对路径**，而 `-C` 已把工作目录改到 Pro 仓
+  ⇒ bundle 生成在 **Pro 仓里**，而我上一条刚 `rm` 掉集成 worktree 里的旧 bundle
+  ⇒ **保险一度是空的**，而我紧接着就在回复里宣称保险已刷新。
+  ⑨ 更严重的是**我把它压掉了**：`git bundle create` 的输出接了 `>/dev/null`，
+  `du` 因文件不在而在 `$(...)` 里失败（`set -e` 管不到），而我**照抄了 `verify=0` 这行输出而没有追问**。
+  —— 这正是我自己写下的第七条判据（「`0 条` 本身是怀疑信号」）的**当场重犯**，
+  与第二次「写下教训 ≠ 应用教训」同形：**我写下了规则，又在同一条命令链里违反了它。**
+  真相：git 输出是**中文 locale**（`这个归档包记录一个完整历史`），`grep -c "is okay"` **必然 0 命中**。
+  ⇒ 判据再收紧一层：**不要用「我没预期到的输出格式」去做判据**；
+  凡是要拿 `0` 下结论的地方，**先看原始输出**（不加任何 grep），确认工具真的这么说。
+- **🚨【结构性缺口·本波最重】宿主门禁对 Pro 侧零覆盖，而 BUG-003 就藏在那里。**
+  Track E 报出的最有价值的发现是：**折叠功能整个是死的** —— 按键无反应、gutter 无箭头，
+  **通过 `tsc`、通过全部既有测试、运行时不抛任何错**。根因两条（已由协调者在
+  `node_modules/@codemirror/language/dist/index.d.ts` **独立核实**）：
+  ① `FoldConfig` 的全部字段只有 `placeholderDOM` / `placeholderText` / `preparePlaceholder` /
+  `from` / `to`，**`foldService` 出现 0 次** ⇒ `codeFolding({foldService})` 被**静默丢弃**；
+  真正被读的是另一个 facet `foldService`，为空时回退语法树，而本编辑器**无 SQL parser** ⇒ 必然落空；
+  ② `foldService` 的真实契约是 `(state, lineStart, lineEnd) => {from, to} | null`，
+  **不是 `RangeSetBuilder`**；`foldEffect` 读 `.from`/`.to`，传 builder 得 `undefined` 边界，**同样无声蒸发**。
+  ③ **为何过了类型检查**：曾把 `sqlFoldService` 声明为 `typeof foldService` ——
+  **那命名的是 Facet 本身，不是 facet 里装的函数**。名字看着对，类型是另一回事。
+  ⚠️ **但这三条防线里没有一条能挡住它**，因为：
+  | 防线 | 对 Pro 侧 |
+  | --- | --- |
+  | 宿主 `npx tsc --noEmit` | ❌ Pro 仓 gitignored，**完全不在 program 内** |
+  | 宿主 `npx vitest run`（471 文件全绿） | ❌ 对 Pro 侧**零信息量** |
+  | Pro 仓 `tsconfig.json` | ⚠️ **`strict: false`** 且 `exclude: ["src/**/__tests__/**"]` |
+  ⇒ **「宿主全绿」在 Track E 上不构成任何正确性证据**。已强制要求复测分别跑**两套**门禁。
+  ⇒ **立为独立事项（Wave 2）**：`strict: true` + 测试纳入 program 是**跨仓策略变更**，
+  本波不做；但须先按 scripts-gate 范式**实测三组错误数**（现状 / 开 strict / 纳入测试）再决定。
+- **✅ Track B 复测：0 产品缺陷，`TEST_DONE`**。新增 1 文件 3 例自写探针（`64da0ca28`），
+  **`git diff --stat` 对业务文件为空** ⇒ 零业务代码改动。
+  探针形态值得留档：打桩 `EditorView.prototype.dispatch`，记录每笔事务的 `effects.length`
+  **与发起它的 `SqlEditor.tsx` 栈帧**，同一文件跑两个基线；且**二次挂载同样复现** ⇒ 缺陷对每个实例成立。
+  关键裁定：**`?? []` 兜底那条不是覆盖率填充** ——【变异】删它转红（`TypeError: payload[EXTRA_COMPARTMENT_ID] is not iterable`），
+  断言的是 `extra` 被**整体替换**的可观测语义；【机制】如实留档该分支在仓内唯一生产调用点上**不可达**，
+  它守的是**经 `editorExtensions.ts` 再导出的公开 API 边界契约** —— 与 BUG-003 那种「造中间态」有本质区别。
 - **⚠️【方法论·新类·第七次】把未经核实的引用当事实写进简报 ⇒ 虚构路径/编号。**
   我给 Track B 复测简报写「**先查已有编号：`compartment-cleanup-BUG-001/002/003` 已占**」，
   并让它把留档写进 `tracks/compartment-cleanup/`。**该目录在 git 历史里从未存在过**，
