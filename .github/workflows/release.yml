@@ -625,6 +625,59 @@ jobs:
           rm -f "$MAPPING_FILE"
           ls -la artifacts/ || true
 
+      # Tauri's DMG config has no `contents` field, so a file cannot be placed
+      # inside the DMG window at build time. We inject the first-launch note
+      # here instead. The read-write convert round-trip is deliberate: it
+      # preserves the window layout (icon positions live in the .DS_Store of
+      # the volume), which rebuilding from a staged copy would throw away.
+      - name: Add first-launch README to macOS DMGs
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          README="packaging/macos/README-安装说明.md"
+          [ -f "$README" ] || { echo "::error::$README not found"; exit 1; }
+
+          shopt -s nullglob
+          DMGS=(artifacts/*.dmg)
+          if [ ${#DMGS[@]} -eq 0 ]; then
+            echo "No DMG artifacts in this job (expected for non-macOS variants) — skipping."
+            exit 0
+          fi
+
+          for dmg in "${DMGS[@]}"; do
+            work=$(mktemp -d)
+            rw="$work/rw.dmg"
+            out="$work/out.dmg"
+            mnt="$work/mnt"
+            mkdir -p "$mnt"
+
+            hdiutil convert "$dmg" -format UDRW -o "$rw" -quiet
+            hdiutil attach "$rw" -nobrowse -mountpoint "$mnt" -quiet
+
+            if [ -e "$mnt/$(basename "$README")" ]; then
+              echo "::warning::README already present in $(basename "$dmg") — replacing"
+            fi
+            cp "$README" "$mnt/"
+
+            # Detach with a flush so the new file is committed to the volume
+            # before we convert it back to a compressed read-only image.
+            hdiutil detach "$mnt" -quiet
+            # `hdiutil convert` has no -ov and refuses an existing destination,
+            # so it must not write back to the same path it read from.
+            hdiutil convert "$rw" -format UDZO -o "$out" -quiet
+            mv -f "$out" "$dmg"
+            rm -rf "$work"
+
+            # Prove the injection landed rather than trusting the exit code.
+            if hdiutil imageinfo "$dmg" >/dev/null 2>&1; then
+              echo "✓ $(basename "$dmg") rebuilt with first-launch README"
+            else
+              echo "::error::rebuilt DMG is unreadable: $dmg"
+              exit 1
+            fi
+          done
+
       - name: Resolve release notes file
         id: release-notes
         shell: bash
