@@ -16,6 +16,7 @@
  * Outputs to site/assets/screenshots/
  */
 import { browser, $ } from '@wdio/globals';
+import { assertGallerySize, ensureMaximized } from '../lib/capture-window';
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
@@ -102,6 +103,13 @@ async function pressKey(key: string, mods: string[] = []) {
 
 async function shot(name: string, settleMs = 1200) {
   await browser.pause(settleMs);
+  // Re-maximize before EVERY capture, not just once at the start: this spec
+  // navigates through the onboarding sub-window and opens the dashboard, and
+  // a label-less `set_size` lands on whichever window the driver is attached
+  // to — the main window. Without this the gallery filled up with 2560x1648
+  // frames (the default 1280x824-point window) instead of 2880x1648.
+  await ensureMaximized();
+  await assertGallerySize(name);
   fs.mkdirSync(OUT, { recursive: true });
   const buf = Buffer.from(await browser.takeScreenshot(), 'base64');
   fs.writeFileSync(path.join(OUT, name), buf);
@@ -159,21 +167,13 @@ async function waitForResults(timeoutMs = 30000) {
 describe('Editor Pro Feature Screenshots', () => {
   it('captures all Pro features', async function () {
     this.timeout(600000);
+    await ensureMaximized();
+    await assertGallerySize('editor-pro start');
 
     // ── Setup ──
     await browser.url('tauri://localhost/window.html?window=onboarding');
     await $('[data-testid="onboarding-wizard"]').waitForDisplayed({ timeout: 30000 });
     const aiReady = await seedAiConfig();
-    await browser.execute(() => {
-      const el = document.documentElement;
-      el.style.width = '2560px';
-      el.style.height = '1648px';
-    });
-    // Set Tauri window size
-    await invoke('set_size', {
-      kind: 'main',
-      value: { Logical: { width: 2560, height: 1648 } },
-    }).catch(() => {});
 
     // Complete wizard
     await $('[data-testid="onboarding-entry-sample"]').waitForDisplayed({ timeout: 15000 });

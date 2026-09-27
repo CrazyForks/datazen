@@ -65,6 +65,8 @@
     "e2e:journeys": "node e2e/run.mjs --skip-build --screenshot -- --suite journeys",
     "e2e:qb": "node e2e/run.mjs --pro -- --suite pro-query-builder",
     "e2e:qb:skip-build": "node e2e/run.mjs --pro --skip-build -- --suite pro-query-builder",
+    "e2e:qb:shot": "node e2e/run.mjs --pro --skip-build --capture -- --suite pro-screenshots",
+    "e2e:shots": "node e2e/run.mjs --skip-build --capture -- --spec e2e/specs/zz-screenshots.ts e2e/specs/editor-features-screenshots.ts e2e/specs/editor-pro-screenshots.ts e2e/specs/dashboard-screenshot.ts e2e/specs/plugins-screenshot.ts e2e/specs/sql-run-mode-screenshot.ts e2e/specs/wizard-screenshot.ts",
     "e2e:qb:build": "node e2e/run.mjs --pro -- --suite pro-query-builder",
     "e2e:qb:regression": "node e2e/run.mjs --skip-build --instances 5 -- --suite qb-regression",
     "e2e:journeys:edge": "node e2e/run.mjs --skip-build --screenshot -- --suite journey-edge",

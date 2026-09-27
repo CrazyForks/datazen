@@ -4,6 +4,7 @@
  * directly into site/assets/screenshots/ via the WebDriver screenshot API.
  */
 import { browser, $ } from '@wdio/globals';
+import { assertGallerySize, ensureMaximized } from '../lib/capture-window';
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
@@ -87,27 +88,57 @@ async function dismissLimitationsDialogIfOpen(testIdPrefix: string) {
   await browser.pause(400);
 }
 
-async function setWindowSize(w = 2400, h = 1600) {
+/**
+ * Resize a *child* window (Data Sync, Data Transfer) before capturing it.
+ *
+ * The main window is never resized: the capture run leaves it maximized, so the
+ * screenshot comes out at the display's natural 2x size. Child windows have no
+ * such guarantee — they open at whatever size the app last remembered — so they
+ * are pinned explicitly, to the same 1440x824 logical box the maximized main
+ * window occupies, so every frame lands on one pixel size.
+ */
+async function setWindowSize(w = 1100, h = 720) {
   await invoke('plugin:window|set_size', { size: { width: w, height: h } });
   await browser.pause(600);
 }
 
 async function setEditorContent(text: string) {
-  const editor = $('.cm-editor .cm-content');
+  // Every query tab keeps its CodeMirror instance mounted, so take the editor
+  // the user can actually see — otherwise the SQL lands in a background tab
+  // that is bound to a different database.
+  const editors = await browser.$$('.cm-editor .cm-content');
+  const editorCount = await editors.length;
+  let editor = null;
+  for (let i = 0; i < editorCount; i++) {
+    if (await editors[i].isDisplayed()) {
+      editor = editors[i];
+      break;
+    }
+  }
+  if (!editor) throw new Error(`no visible CodeMirror editor among ${editorCount} mounted`);
   await editor.waitForDisplayed({ timeout: 10000 });
   // A browser.execute().focus() is not equivalent to a user click here: the
   // database selector is portaled, so only the real outside click reliably
   // dismisses it before injecting the editor text.
   await editor.click();
-  await browser.waitUntil(
-    async () =>
-      browser.execute(
-        () =>
-          document.activeElement?.closest('.cm-editor .cm-content') != null &&
-          document.querySelector('[id^="dz-select-listbox-"]') == null,
-      ),
-    { timeout: 2000, timeoutMsg: 'editor focus/selector cleanup did not settle' },
-  );
+  await browser
+    .waitUntil(
+      async () =>
+        browser.execute(() => document.activeElement?.closest('.cm-editor .cm-content') != null),
+      { timeout: 6000, timeoutMsg: 'editor focus/selector cleanup did not settle' },
+    )
+    .catch(async () => {
+      const diag = await browser.execute(() => ({
+        activeInEditor: document.activeElement?.closest('.cm-editor .cm-content') != null,
+        activeTag: document.activeElement?.tagName,
+        openListboxes: document.querySelectorAll('[id^="dz-select-listbox-"]').length,
+        listboxLabels: Array.from(document.querySelectorAll('[id^="dz-select-listbox-"]')).map(
+          (l) =>
+            (l.getAttribute('aria-label') || '?') + ' :: ' + (l.textContent || '').slice(0, 60),
+        ),
+      }));
+      throw new Error(`editor focus/selector cleanup did not settle; diag=${JSON.stringify(diag)}`);
+    });
   await browser.execute((t: string) => {
     const el = document.querySelector('.cm-editor .cm-content') as HTMLElement | null;
     if (!el) return;
@@ -122,18 +153,37 @@ async function setEditorContent(text: string) {
   await browser.pause(300);
 }
 
-async function clickExecute() {
-  const clicked = await browser.execute(() => {
-    const btn = Array.from(document.querySelectorAll('button')).find(
-      (b) => (b.textContent || '').trim() === '执行',
-    );
-    if (btn && !btn.hasAttribute('disabled')) {
-      btn.click();
-      return true;
-    }
-    return false;
-  });
-  if (!clicked) throw new Error('执行 button not found');
+/** The run button is icon-only; its label lives in title/aria-label, not text. */
+const EXEC_SEL = '[data-testid="editor-execute-button"]';
+
+/**
+ * Run the query in the tab the user is actually looking at.
+ *
+ * Every query panel keeps its editor mounted, so a document-wide
+ * querySelector returns the button of the *first* tab — which is usually a
+ * background tab bound to a different database. Clicking it executes the
+ * wrong panel's SQL against the wrong database, which surfaces much later as
+ * "relation does not exist". Pick the button inside the visible editor instead.
+ */
+async function clickExecute(sel: string = EXEC_SEL) {
+  const buttons = await browser.$$(sel);
+  const count = await buttons.length;
+  for (let i = 0; i < count; i++) {
+    if (!(await buttons[i].isDisplayed())) continue;
+    if (!(await buttons[i].isEnabled())) continue;
+    await buttons[i].click();
+    return;
+  }
+  throw new Error(
+    `execute button "${sel}" not found: ${count} mounted, ${await browser.execute(
+      (s) =>
+        Array.from(document.querySelectorAll(s)).filter((b) => {
+          const r = (b as HTMLElement).getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        }).length,
+      sel,
+    )} visible`,
+  );
 }
 
 /**
@@ -158,27 +208,112 @@ async function clickExecuteWithRetry(minRows: number, attempts = 3) {
 }
 
 async function countDtRows() {
-  return browser.execute(
-    () =>
-      document.querySelectorAll('[data-dt-row]').length ||
-      document.querySelectorAll('table tbody tr').length,
-  );
+  // `[data-dt-row]` appears on BOTH the row wrapper and every cell, so counting
+  // nodes over-reports by the column count. Count DISTINCT row indices.
+  return browser.execute(() => {
+    const indices = new Set<string>();
+    document.querySelectorAll('[data-dt-row]').forEach((el) => {
+      indices.add(el.getAttribute('data-dt-row') ?? '');
+    });
+    return indices.size || document.querySelectorAll('table tbody tr').length;
+  });
 }
 
 async function waitResults(minRows = 1, timeout = 20000) {
-  await browser.waitUntil(async () => (await countDtRows()) >= minRows, {
-    timeout,
-    timeoutMsg: `结果行数未达到 ${minRows}`,
-  });
+  await browser
+    .waitUntil(async () => (await countDtRows()) >= minRows, {
+      timeout,
+      timeoutMsg: `结果行数未达到 ${minRows}`,
+    })
+    .catch(async (e: Error) => {
+      // A virtualized grid only mounts the rows in view, so "too few rows" is
+      // ambiguous between "query returned nothing" and "rows exist but are not
+      // mounted". Report the real counts so the two can be told apart.
+      const diag = await browser.execute(() => ({
+        dtRows: document.querySelectorAll('[data-dt-row]').length,
+        tableRows: document.querySelectorAll('table tbody tr').length,
+        bodyHasEmptyState: /没有数据|暂无数据|无数据|no data|empty/i.test(
+          (document.body.textContent || '').slice(0, 4000),
+        ),
+        errorBanner: Array.from(document.querySelectorAll('[role="alert"], .text-destructive'))
+          .map((n) => (n.textContent || '').trim().slice(0, 80))
+          .filter(Boolean)
+          .slice(0, 3),
+      }));
+      const actual = await countDtRows();
+      throw new Error(`${e.message} (actual=${actual}); diag=${JSON.stringify(diag)}`);
+    });
 }
 
-async function newQueryTab() {
-  await browser.execute(() => {
+/**
+ * Open a new query tab, entering a connection workspace first if needed.
+ *
+ * 新建查询 only exists once a database workspace is open. Left on the home
+ * page, the old lookup silently did nothing — the `?.` swallowed the miss and
+ * every downstream wait then failed with a misleading "执行 button not found",
+ * which reads like an i18n or a rendering problem rather than "wrong screen".
+ * So: enter the workspace, and fail loudly if the button is *still* missing.
+ */
+async function newQueryTab(dbName = DEMO_PG_DB) {
+  await ensureQueryWorkspaceOpen(dbName);
+  const clicked = await browser.execute(() => {
     const btn = Array.from(document.querySelectorAll('button')).find((b) =>
       (b.textContent || '').includes('新建查询'),
     );
-    btn?.click();
+    if (!btn) return false;
+    btn.click();
+    return true;
   });
+  if (!clicked) throw new Error('新建查询 button not found inside a connection workspace');
+  await browser.pause(600);
+  // A fresh tab inherits whatever database the session was last pointed at, and
+  // the schema store defaults a multi-database connection to the *other* one
+  // (datazen_demo_analytics) — so demo_sales then "does not exist" at execute
+  // time, long after the tab looked healthy. Pin it here, once, for every tab.
+  await selectQueryPanelDatabase(dbName);
+}
+
+/**
+ * Make sure a database workspace is open, so 新建查询 is on screen.
+ *
+ * The navigator tree can be fully expanded while the workspace still shows the
+ * home page — expanding is not the same as entering — so this clicks the
+ * database node and waits for the query panel to actually mount.
+ */
+async function ensureQueryWorkspaceOpen(dbName = DEMO_PG_DB) {
+  // Wait on the button we actually need, not on `query-context-selectors`:
+  // that testid sits behind a `hasContextSelectors` guard in
+  // QueryEditorSection.tsx, so it legitimately stays absent for a single
+  // database and would time out on a workspace that is open and working.
+  const mounted = () =>
+    browser.execute(() =>
+      Array.from(document.querySelectorAll('button')).some(
+        (b) =>
+          (b.textContent || '').includes('新建查询') || (b.textContent || '').trim() === '执行',
+      ),
+    );
+
+  if (await mounted()) return;
+
+  // The db node is a child of the connection node: a collapsed connection
+  // would leave us waiting on a node that can never render.
+  await ensureDemoPgConnectedInTree();
+  const sel = `button[data-tree-node="db"][data-db-name="${dbName}"]`;
+  await browser.waitUntil(
+    async () => browser.execute((s: string) => !!document.querySelector(s), sel),
+    { timeout: 20000, timeoutMsg: `database node ${dbName} never appeared in the tree` },
+  );
+  await browser.execute((s: string) => {
+    (document.querySelector(s) as HTMLElement | null)?.click();
+  }, sel);
+  try {
+    await browser.waitUntil(mounted, {
+      timeout: 20000,
+      timeoutMsg: `clicking ${dbName} did not open a query workspace`,
+    });
+  } catch {
+    throw new Error(`no query workspace after opening ${dbName}`);
+  }
   await browser.pause(600);
 }
 
@@ -186,11 +321,10 @@ async function ensureQueryPanelReady() {
   await newQueryTab();
   await browser.waitUntil(
     async () =>
-      browser.execute(() =>
-        Array.from(document.querySelectorAll('button')).some(
-          (b) => (b.textContent || '').trim() === '执行' && !b.hasAttribute('disabled'),
-        ),
-      ),
+      browser.execute((sel) => {
+        const btn = document.querySelector(sel);
+        return !!btn && !btn.hasAttribute('disabled');
+      }, EXEC_SEL),
     { timeout: 15000, timeoutMsg: '执行 button not ready in query panel' },
   );
   await browser.pause(400);
@@ -332,12 +466,21 @@ async function openSettingsSection(sectionId: string) {
 
 /** True when an AI provider is configured (ai_get_config returns a config). */
 async function aiConfigured(): Promise<boolean> {
-  try {
-    const cfg = await invoke<unknown>('ai_get_config');
-    return !!cfg && typeof cfg === 'object' && !('__error' in (cfg as object));
-  } catch {
-    return false;
-  }
+  // Do NOT reuse the shared `invoke` helper here. It substitutes the string
+  // 'ok' when a command resolves to null, and `ai_get_config` legitimately
+  // resolves to null when unconfigured — so the result read as a string,
+  // failed the `typeof === 'object'` probe below, and the AI screenshots were
+  // skipped even on a machine that HAS a saved provider. Classify the value
+  // instead of guessing at it.
+  const kind = await browser.executeAsync((done: (r: string) => void) => {
+    (window as any).__TAURI_INTERNALS__
+      .invoke('ai_get_config')
+      .then((r: unknown) =>
+        done(r === null || r === undefined ? 'null' : typeof r === 'object' ? 'object' : 'other'),
+      )
+      .catch(() => done('error'));
+  });
+  return kind === 'object';
 }
 
 /** Right-click a database node and click the context item containing `itemText`. */
@@ -382,82 +525,255 @@ async function softShot(name: string, settleMs = 800) {
 }
 
 /**
- * Select a database via the Query Panel's multidb dropdown
- * ([data-testid="query-context-selectors"] → Host Select listbox).
- * This drives the real user path: the panel switches its session to the
- * target database through schemaStore.switchDatabase.
+/**
+ * Point the query panel at `dbName` through its own database Select.
+ *
+ * The Select is the *searchable* variant: it renders
+ * `<input role="combobox" aria-haspopup="listbox">`, not a button. That has
+ * two consequences this function has to respect:
+ *   - the trigger carries no `textContent`, so matching a trigger by label
+ *     finds nothing and `hasContextSelectors` looks broken when it is not;
+ *   - `click()` alone does not reveal the option list, so we type into the
+ *     combobox (a real WebDriver `setValue`, which fires React's onChange) and
+ *     then pick the exact option.
+ * Option text is compared EXACTLY — `datazen_demo` and `datazen_demo_analytics`
+ * are both offered, and a prefix match would silently pick the wrong database.
  */
-async function selectQueryPanelDatabase(dbName: string) {
-  // Open the dropdown trigger (only click when currently closed to avoid
-  // toggle-flapping between retries).
-  await browser.waitUntil(
-    async () => {
-      const opened = await browser.execute(() => {
-        if (document.querySelector('[id^="dz-select-listbox-"]')) return true;
-        const host = document.querySelector('[data-testid="query-context-selectors"]');
-        const btn = host?.querySelector('button[aria-haspopup="listbox"]') as HTMLElement | null;
-        if (!btn) return false;
-        btn.click();
-        return false; // portal mounts asynchronously; re-check next poll
-      });
-      return opened;
-    },
-    { timeout: 10000, timeoutMsg: `db selector trigger not found for ${dbName}` },
-  );
-  // Pick the option whose text matches EXACTLY (demo vs demo_analytics!).
-  // The selected option renders a trailing "✓" marker inside its text, so
-  // strip it before comparing. If the target is ALREADY selected we're done.
-  let picked = false;
-  let alreadySelected = false;
-  const dl = Date.now();
-  while (Date.now() - dl < 8000 && !picked && !alreadySelected) {
-    const probe = await browser.execute((target: string) => {
-      const list = document.querySelector('[id^="dz-select-listbox-"]');
-      if (!list) return { state: 'closed' as const };
-      for (const el of Array.from(list.children)) {
-        const raw = (el.textContent || '').replace(/✓/g, '').trim();
-        if (raw !== target) continue;
-        if ((el.textContent || '').includes('✓')) return { state: 'selected' as const };
-        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-        return { state: 'picked' as const };
-      }
-      return { state: 'missing' as const };
-    }, dbName);
-    if (probe.state === 'selected') alreadySelected = true;
-    else if (probe.state === 'picked') picked = true;
-    else {
-      await browser.pause(300);
-      await browser.execute(() => {
-        if (document.querySelector('[id^="dz-select-listbox-"]')) return;
-        const host = document.querySelector('[data-testid="query-context-selectors"]');
-        const btn = host?.querySelector('button[aria-haspopup="listbox"]') as HTMLElement | null;
-        btn?.click();
-      });
-      await browser.pause(200);
-    }
-  }
-  if (!picked && !alreadySelected) {
-    // Diagnostic dump: what's actually inside the listbox?
-    const diag = await browser.execute(() => {
-      const list = document.querySelector('[id^="dz-select-listbox-"]');
-      const host = document.querySelector('[data-testid="query-context-selectors"]');
-      return {
-        listExists: !!list,
-        childCount: list ? list.children.length : -1,
-        childTexts: list
-          ? Array.from(list.children)
-              .map((c) => (c.textContent || '').trim())
-              .slice(0, 15)
-          : [],
-        hostExists: !!host,
-        hostHtmlLen: host ? host.innerHTML.length : -1,
-      };
+/** True while the query panel's own database dropdown is still mounted. */
+function panelListboxOpen() {
+  return browser.execute(() => {
+    const host = Array.from(
+      document.querySelectorAll('[data-testid="query-context-selectors"]'),
+    ).find((h) => {
+      const r = h.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
     });
+    const combobox = host?.querySelector('[role="combobox"]');
+    const id = combobox?.getAttribute('aria-controls');
+    if (!id) return false;
+    return document.getElementById(id) != null;
+  });
+}
+
+/**
+ * The database the active query panel is actually bound to.
+ *
+ * Read from the active tab's label (`<连接名> · <database> · …`) rather than the
+ * toolbar's combobox. The combobox is driven by the schema store's
+ * `currentDatabase`, which lags behind the panel — only ContentView's sync
+ * effect ties the two together — so right after a selection it can still
+ * display the previous database. The tab label renders `panel.database`, which
+ * is the value the stream actually executes against, so it is the honest
+ * assertion target here.
+ */
+function panelBoundDatabase() {
+  return browser.execute(() => {
+    const tab = Array.from(document.querySelectorAll('[role="tab"]')).find(
+      (t) => t.getAttribute('aria-selected') === 'true',
+    );
+    const parts = (tab?.textContent || '')
+      .split('·')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    return parts.length >= 2 ? parts[1] : null;
+  });
+}
+
+/**
+ * The query context toolbar of the tab the user is actually looking at.
+ *
+ * Every open query panel keeps its own toolbar in the DOM, so a document-wide
+ * lookup binds to the first tab — which is usually a background tab on a
+ * different database.
+ */
+async function visibleQueryContextHost() {
+  const hosts = await browser.$$('[data-testid="query-context-selectors"]');
+  const n = await hosts.length;
+  for (let i = 0; i < n; i++) {
+    if (await hosts[i].isDisplayed()) return hosts[i];
+  }
+  return null;
+}
+
+async function selectQueryPanelDatabase(dbName: string) {
+  const HOST = '[data-testid="query-context-selectors"]';
+  const TRIGGER = `${HOST} [aria-haspopup="listbox"]`;
+
+  await browser.waitUntil(
+    async () => browser.execute((s) => !!document.querySelector(s), TRIGGER),
+    {
+      timeout: 15000,
+      timeoutMsg: `query toolbar has no database selector for ${dbName}`,
+    },
+  );
+
+  // What is the panel actually bound to?
+  //
+  // The searchable Select shape renders an `<input role="combobox">`, which has
+  // no textContent at all — so reading the trigger's text always yields "" and
+  // every commit looks like a failure. That input's `value` is the *search text*
+  // while the dropdown is open and the *selection* once it closes, so:
+  //   open   -> read the option the listbox marks as selected
+  //   closed -> read the input's value
+  // Scope both to the toolbar on screen: every open query tab keeps its own.
+  const selected = () =>
+    browser.execute(() => {
+      const visibleHost = Array.from(
+        document.querySelectorAll('[data-testid="query-context-selectors"]'),
+      ).find((h) => {
+        const r = h.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+      if (!visibleHost) return null;
+      const strip = (s: string | null | undefined) => (s || '').replace(/\u2713/g, '').trim();
+      const combobox = visibleHost.querySelector<HTMLInputElement>('[role="combobox"]');
+      if (combobox) {
+        const listId = combobox.getAttribute('aria-controls');
+        if (listId) {
+          const marked = document
+            .getElementById(listId)
+            ?.querySelector('[role="option"][aria-selected="true"]');
+          if (marked) return strip(marked.textContent);
+        }
+        return strip(combobox.value);
+      }
+      // Non-searchable shape: a <button> trigger, whose text is the selection.
+      return strip(visibleHost.querySelector('[aria-haspopup="listbox"]')?.textContent);
+    });
+  if ((await selected()) === dbName) return;
+
+  const host = await visibleQueryContextHost();
+  if (!host) throw new Error('no visible query context toolbar to drive');
+  const combobox = await host.$('[role="combobox"]');
+  if (await combobox.isExisting()) {
+    await combobox.click();
+    await combobox.setValue(dbName);
+  } else {
+    await (await host.$('[aria-haspopup="listbox"]')).click();
+  }
+  await browser.pause(400);
+
+  // Scope the search to the listbox this trigger owns. The dropdown is
+  // portaled to <body>, so a document-wide [role="option"] also matches options
+  // belonging to any other Select that happens to be open, and clicking one of
+  // those leaves our listbox open and our database unchanged.
+  const listId = await browser.waitUntil(
+    async () =>
+      browser.execute(() => {
+        const host = Array.from(
+          document.querySelectorAll('[data-testid="query-context-selectors"]'),
+        ).find((h) => {
+          const r = h.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        });
+        const listId = host?.querySelector('[role="combobox"]')?.getAttribute('aria-controls');
+        const list = listId ? document.getElementById(listId) : null;
+        if (!list) return null;
+        // The listbox we want is the one that contains an option with our value.
+        const opts = Array.from(list.querySelectorAll('[role="option"]')).map((o) =>
+          (o.textContent || '').replace(/\u2713/g, '').trim(),
+        );
+        return opts.length ? list.id : null;
+      }),
+    { timeout: 8000, timeoutMsg: `database dropdown for "${dbName}" never opened` },
+  );
+  // Click the option in ONE synchronous evaluate. A WebDriver click is three
+  // separate round trips (resolve -> scroll -> dispatch) and each re-resolves
+  // the element; React re-renders the filtered list between them, so the click
+  // can land on a detached node and the commit silently never happens.
+  const clicked = await browser.execute(
+    (listId: string, name: string) => {
+      const list = document.getElementById(listId);
+      const opt = Array.from(list?.querySelectorAll('[role="option"]') ?? []).find(
+        (o) => (o.textContent || '').replace(/\u2713/g, '').trim() === name,
+      );
+      if (!opt) return false;
+      // The Select commits on mousedown/click; dispatch the full sequence so
+      // React's delegated root listener sees a normal gesture.
+      for (const type of ['mousedown', 'mouseup', 'click']) {
+        opt.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+      }
+      return true;
+    },
+    listId,
+    dbName,
+  );
+  if (!clicked) {
+    const offered = await browser.execute(() =>
+      Array.from(document.querySelectorAll('[role="option"]')).map((o) =>
+        (o.textContent || '').replace(/\u2713/g, '').trim(),
+      ),
+    );
     throw new Error(
-      `database option "${dbName}" not found in query selector; diag=${JSON.stringify(diag)}`,
+      `database option "${dbName}" not offered by the query selector; offered=${JSON.stringify(offered)}`,
     );
   }
+  // The dropdown is portaled to <body> and its id is only referenced by the
+  // combobox's aria-controls, so close it through the trigger rather than
+  // Escape (which reverts the choice) and rather than a blind outside click
+  // (which races the next test's first click).
+  if (await panelListboxOpen()) {
+    // Close via the trigger's chevron button, not the input and not a body
+    // mousedown. The input carries onFocus={() => !open && handleOpen()}, so
+    // anything that moves focus back onto it reopens the dropdown; and the
+    // body mousedown blurs the input, which drops the just-committed choice.
+    // The chevron preventDefaults its mousedown (focus never moves) and
+    // toggles open -> close.
+    await (await host.$('button')).click();
+    await browser
+      .waitUntil(async () => !(await panelListboxOpen()), {
+        timeout: 5000,
+        timeoutMsg: 'database dropdown stayed open after selecting',
+      })
+      .catch(async () => {
+        throw new Error(
+          `database dropdown stayed open after selecting ${dbName}; diag=${JSON.stringify(
+            await browser.execute(() => ({
+              open: document.querySelectorAll('[id^="dz-select-listbox-"]').length,
+              selected: Array.from(
+                document.querySelectorAll('[role="option"][aria-selected="true"]'),
+              ).map((o) => (o.textContent || '').replace(/✓/g, '').trim()),
+            })),
+          )}`,
+        );
+      });
+  }
   await browser.pause(900); // allow get_tables refreshes to settle
+  await browser
+    .waitUntil(async () => (await panelBoundDatabase()) === dbName, {
+      timeout: 8000,
+      timeoutMsg: `query panel did not commit database "${dbName}" (tab says "${await panelBoundDatabase()}", selector shows "${await selected()}")`,
+    })
+    .catch(async (e) => {
+      const diag = await browser.execute(() => ({
+        tabs: Array.from(document.querySelectorAll('[role="tab"]')).map((t) => ({
+          label: (t.textContent || '').trim().slice(0, 28),
+          selected: t.getAttribute('aria-selected'),
+          id: t.id,
+        })),
+        hosts: Array.from(document.querySelectorAll('[data-testid="query-context-selectors"]')).map(
+          (h, i) => {
+            const r = h.getBoundingClientRect();
+            const trig = h.querySelector('[aria-haspopup="listbox"]');
+            const cb = h.querySelector('[role="combobox"]');
+            return {
+              i,
+              visible: r.width > 0 && r.height > 0,
+              label: (trig?.textContent || '').replace(/✓/g, '').trim(),
+              comboboxValue: (cb as HTMLInputElement | null)?.value ?? null,
+              open: cb?.getAttribute('aria-controls') ?? null,
+              nearestTabpanel:
+                h.closest('[role="tabpanel"]')?.getAttribute('aria-labelledby') ?? null,
+            };
+          },
+        ),
+        editors: Array.from(document.querySelectorAll('.cm-editor')).map((ed) => {
+          const r = ed.getBoundingClientRect();
+          return { visible: r.width > 0 && r.height > 0 };
+        }),
+      }));
+      throw new Error(`${e.message}; diag=${JSON.stringify(diag)}`);
+    });
 }
 
 /**
@@ -535,7 +851,11 @@ async function ensureDemoPgConnectedInTree(timeout = 30000) {
   );
   if (ready) return;
 
-  await browser.execute((connName: string) => {
+  // Only click when the connection is genuinely collapsed. The chevron is a
+  // toggle, and the node is often already open by the time we get here — an
+  // unconditional click then *closes* it, and the db child never renders, so
+  // the wait below times out with a message that blames the database.
+  const expanded = await browser.execute((connName: string) => {
     const items = Array.from(document.querySelectorAll('[data-conn-item]'));
     const pg = items.find((el) => (el.getAttribute('data-conn-name') || '').includes(connName));
     const chev = Array.from(pg?.querySelectorAll('button') ?? []).find(
@@ -543,8 +863,13 @@ async function ensureDemoPgConnectedInTree(timeout = 30000) {
         !!b.querySelector('svg.lucide-chevron-right') ||
         !!b.querySelector('svg.lucide-chevron-down'),
     );
-    if (chev) (chev as HTMLElement).click();
+    if (!chev) return null;
+    if (chev.querySelector('svg.lucide-chevron-right')) (chev as HTMLElement).click();
+    return true;
   }, DEMO_PG_CONN_NAME);
+  if (expanded === null) {
+    throw new Error(`connection node ${DEMO_PG_CONN_NAME} not found in the tree`);
+  }
   await browser.waitUntil(
     async () =>
       browser.execute(
@@ -565,6 +890,32 @@ async function expandDemoDbTables(dbName: string) {
   if (dbName === DEMO_PG_DB) {
     await pinDemoPgDatabase();
   }
+  // The db nodes only mount once the demo connection is EXPANDED in the
+  // navigator. Tests that run after a page switch (e.g. the Workflows page)
+  // arrive here with the connection collapsed, so the `data-tree-node="db"`
+  // wait used to time out with "db node not rendered".
+  await browser.waitUntil(
+    async () =>
+      browser.execute((cn: string) => {
+        const item = Array.from(document.querySelectorAll<HTMLElement>('[data-conn-item]')).find(
+          (el) => (el.getAttribute('data-conn-name') || '').includes(cn),
+        );
+        return !!item;
+      }, DEMO_PG_CONN_NAME),
+    { timeout: 20000, timeoutMsg: `${DEMO_PG_CONN_NAME} not listed in the navigator` },
+  );
+  await browser.execute((cn: string) => {
+    const item = Array.from(document.querySelectorAll<HTMLElement>('[data-conn-item]')).find((el) =>
+      (el.getAttribute('data-conn-name') || '').includes(cn),
+    );
+    const chev = Array.from(item?.querySelectorAll<HTMLElement>('button') ?? []).find(
+      (b) =>
+        !!b.querySelector('svg.lucide-chevron-right') ||
+        !!b.querySelector('svg.lucide-chevron-down'),
+    );
+    if (chev?.querySelector('svg.lucide-chevron-right')) chev.click();
+  }, DEMO_PG_CONN_NAME);
+
   const dbIndex = () =>
     browser.execute((name: string) => {
       const all = Array.from(document.querySelectorAll<HTMLElement>('button[data-tree-node]'));
@@ -740,6 +1091,7 @@ connection: ${DEMO_PG_CONN_ID}
 steps:
   - type: query
     id: orders
+    database: ${DEMO_PG_DB}
     sql: "SELECT order_id, product_name, amount, status FROM public.test_orders WHERE uid = 'U001' ORDER BY created_at DESC"
     timeout_secs: 10
   - type: query
@@ -871,8 +1223,10 @@ describe('site screenshots', () => {
   let demoDashboardExisted = false;
 
   before(async () => {
+    // Gallery frames come off a maximized window: 2x backing pixels, one size.
+    await ensureMaximized();
+    await assertGallerySize('zz-screenshots before');
     mainWindow = await browser.getWindowHandle();
-    await setWindowSize();
 
     await browser.waitUntil(
       async () => browser.execute(() => document.querySelectorAll('[data-conn-item]').length > 0),
@@ -1060,8 +1414,19 @@ describe('site screenshots', () => {
     );
     await softShot('29-new-connection.png', 700);
     // Close the dialog without saving.
+    //
+    // Scoped to the dialog on purpose. An unscoped `document.querySelectorAll
+    // ('button')` matches the first 取消/关闭 in the *whole document*, and the
+    // main window has its own 关闭 controls — clicking one of those closes the
+    // main window, which exits the app and leaves the WebDriver port dead
+    // (everything after this point then fails with ECONNREFUSED).
     await browser.execute(() => {
-      const btns = Array.from(document.querySelectorAll('button'));
+      const dialog =
+        document.querySelector('[role="dialog"]') ??
+        document.querySelector('[data-testid*="connection-dialog"]') ??
+        document.querySelector('.fixed.inset-0');
+      const root: ParentNode = dialog ?? document.body;
+      const btns = Array.from(root.querySelectorAll('button'));
       const cancel = btns.find(
         (b) => (b.textContent || '').trim() === '取消' || (b.textContent || '').trim() === '关闭',
       );
@@ -1292,8 +1657,16 @@ describe('site screenshots', () => {
       console.warn(`[warn] 05-ai-diagnosis skipped: ${e}`);
     } finally {
       // Close any open dialog.
+      //
+      // Scoped to the dialog: an unscoped 关闭 match can hit a main-window
+      // control, which closes the main window and exits the app. See the note
+      // in the 29-new-connection test.
       await browser.execute(() => {
-        const btns = Array.from(document.querySelectorAll('button'));
+        const dialog =
+          document.querySelector('[role="dialog"]') ??
+          document.querySelector('[data-testid*="dialog"]');
+        const root: ParentNode = dialog ?? document.body;
+        const btns = Array.from(root.querySelectorAll('button'));
         const close =
           btns.find((b) => (b.textContent || '').trim() === '关闭') ??
           btns.find((b) => b.querySelector('svg.lucide-x'));
@@ -1347,7 +1720,7 @@ describe('site screenshots', () => {
         }
         if (!el) return false;
         el.scrollIntoView({ block: 'center' });
-        el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         return true;
       });
       if (!demo) await browser.pause(250);
@@ -1434,6 +1807,12 @@ describe('site screenshots', () => {
   // ─────────────────────── 07-ai-chat ──────────────────────────────────────
 
   it('07-ai-chat: assistant conversation', async () => {
+    // Without a provider the chat panel renders no composer, so there is
+    // nothing to type into — skip rather than fail (same guard as 03/05/06).
+    if (!(await aiConfigured())) {
+      console.log('[skip] AI not configured — 07-ai-chat screenshot skipped');
+      return;
+    }
     // Open a query panel so the ContentToolbar (with the AI chat toggle)
     // renders — the toolbar only appears when an active panel exists.
     await ensureDemoPgConnectedInTree();
@@ -1507,20 +1886,43 @@ describe('site screenshots', () => {
     // 12: editor view showing the cross-db steps before running.
     await softShot('12-workflow-crossdb.png', 600);
 
-    // Click Execute.
-    await browser.execute(() => {
-      const btn = Array.from(document.querySelectorAll('button')).find(
-        (b) => (b.textContent || '').trim() === '执行' && !b.hasAttribute('disabled'),
-      );
-      btn?.click();
+    // Click Execute. The workflow page has its own run button — the SQL
+    // editor's `editor-execute-button` does not exist here, so a document-wide
+    // querySelector used to click nothing and time out waiting for results.
+    // The run panel renders its own result header, so wait on that first: the
+    // executor logs nothing at INFO, so a silent backend log proves nothing.
+    await clickExecute('[data-testid="workflow-execute-button"]');
+    let runOk = false;
+    const runDl = Date.now();
+    while (Date.now() - runDl < 30000 && !runOk) {
+      runOk = await browser.execute(() => {
+        const s = document.querySelector<HTMLElement>('[data-testid="workflow-run-status"]');
+        return !!s && s.getAttribute('data-success') === 'true';
+      });
+      if (!runOk) await browser.pause(500);
+    }
+    if (!runOk) {
+      const diag = await browser.execute(() => {
+        const wf = document.querySelector<HTMLElement>('[data-testid="workflow-workspace"]');
+        const status = document.querySelector<HTMLElement>('[data-testid="workflow-run-status"]');
+        const exec = document.querySelector<HTMLElement>('[data-testid="workflow-execute-button"]');
+        return {
+          status: status ? status.getAttribute('data-success') : 'no-status-span',
+          execVisible: exec ? exec.getBoundingClientRect().width > 0 : 'no-exec-button',
+          hasWorkspace: !!wf,
+          text: (wf?.textContent || document.body.textContent || '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 500),
+        };
+      });
+      throw new Error(`workflow run status not successful: ${JSON.stringify(diag)}`);
+    }
+    // Then the step grid: the first query step returns 3 seeded U001 orders.
+    await browser.waitUntil(async () => (await countDtRows()) >= 1, {
+      timeout: 15000,
+      timeoutMsg: 'workflow 结果未出现',
     });
-    await browser.waitUntil(
-      async () => {
-        const rows = await countDtRows();
-        return rows >= 3;
-      },
-      { timeout: 30000, timeoutMsg: 'workflow 结果未出现' },
-    );
     await shot('04-workflow.png', 1000);
 
     // 13: run history side-tab — the execution above guarantees one entry.
@@ -1612,6 +2014,7 @@ describe('site screenshots', () => {
 
   it('19-backup-sync: backup window prefilled', async () => {
     await browser.switchToWindow(mainWindow);
+    await ensureMaximized(0);
     await goToConnections();
     await browser.pause(500);
 
@@ -1661,6 +2064,7 @@ describe('site screenshots', () => {
     await shot('19-backup-sync.png');
     await browser.closeWindow();
     await browser.switchToWindow(mainWindow);
+    await ensureMaximized(0);
   });
 
   // ─────────────────────── 26/27/28 sub-windows ────────────────────────────
@@ -1695,17 +2099,20 @@ describe('site screenshots', () => {
         await shot('26-data-sync-en.png');
         await browser.closeWindow();
         await browser.switchToWindow(mainWindow);
+        await ensureMaximized(0);
       } catch (e) {
         console.warn(`[warn] 26-data-sync-en skipped: ${e}`);
         if ((await browser.getWindowHandles()).length > 1) {
           await browser.closeWindow();
           await browser.switchToWindow(mainWindow);
+          await ensureMaximized(0);
         }
       }
 
       // Schema Diff: five-step wizard — compare step with PG ↔ MySQL on test_orders.
       try {
         await browser.switchToWindow(mainWindow);
+        await ensureMaximized(0);
         await invoke('create_sub_window', {
           options: {
             label: 'schema-diff-shot',
@@ -1737,11 +2144,13 @@ describe('site screenshots', () => {
         await shot('27-schema-diff-en.png');
         await browser.closeWindow();
         await browser.switchToWindow(mainWindow);
+        await ensureMaximized(0);
       } catch (e) {
         console.warn(`[warn] 27-schema-diff-en skipped: ${e}`);
         if ((await browser.getWindowHandles()).length > 1) {
           await browser.closeWindow();
           await browser.switchToWindow(mainWindow);
+          await ensureMaximized(0);
         }
       }
 
@@ -1770,11 +2179,13 @@ describe('site screenshots', () => {
         await shot('28-data-transfer-en.png');
         await browser.closeWindow();
         await browser.switchToWindow(mainWindow);
+        await ensureMaximized(0);
       } catch (e) {
         console.warn(`[warn] 28-data-transfer-en skipped: ${e}`);
         if ((await browser.getWindowHandles()).length > 1) {
           await browser.closeWindow();
           await browser.switchToWindow(mainWindow);
+          await ensureMaximized(0);
         }
       }
     } finally {
@@ -1789,7 +2200,9 @@ describe('site screenshots', () => {
     await ensureDemoPgConnectedInTree();
 
     // Both are connection-level panels opened from the connection ctx menu;
-    // they render inside the main window as regular panels.
+    // they render inside the main window as regular panels. Both live under
+    // the "server" SUBMENU (`server-submenu`), which only renders its children
+    // on mouseenter — a flat DOM scan therefore never sees them.
     const openPanelViaConnMenu = async (itemText: string) => {
       const clicked = await browser.execute((name: string) => {
         const conn = Array.from(document.querySelectorAll('[data-conn-item]')).find((el) =>
@@ -1803,16 +2216,57 @@ describe('site screenshots', () => {
       }, DEMO_PG_CONN_NAME);
       if (!clicked) throw new Error(`${DEMO_PG_CONN_NAME} row not found`);
       await browser.pause(600);
+
+      // Hover the server submenu so its children mount. React derives
+      // onMouseEnter from the native `mouseover` event (plus relatedTarget),
+      // NOT from a native `mouseenter` event — dispatching `mouseenter`
+      // alone silently does nothing. relatedTarget must be outside the
+      // element, so it is left null.
+      const openedSub = await browser.execute(() => {
+        const trig = document.querySelector<HTMLElement>(
+          '[data-testid="web-context-submenu-trigger-server-submenu"]',
+        );
+        if (!trig) return false;
+        trig.scrollIntoView({ block: 'center' });
+        for (const type of ['mouseover', 'mouseenter', 'pointerover']) {
+          trig.dispatchEvent(
+            new MouseEvent(type, { bubbles: true, cancelable: true, relatedTarget: null }),
+          );
+        }
+        return true;
+      });
+      if (openedSub) await browser.pause(500);
+
       const hit = await browser.execute((text: string) => {
         const items = Array.from(
           document.querySelectorAll('[data-testid="web-context-menu"] *, [role="menuitem"]'),
         );
         const item = items.find((el) => (el.textContent || '').includes(text));
         if (!item) return false;
-        (item as HTMLElement).click();
+        // Atomic dispatch: a WebDriver click re-resolves the node between its
+        // three round trips, and the menu can re-render underneath it.
+        for (const type of ['mousedown', 'mouseup', 'click']) {
+          item.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+        }
         return true;
       }, itemText);
-      if (!hit) throw new Error(`connection menu item ${itemText} not found`);
+      if (!hit) {
+        const dump = await browser.execute(() => {
+          const menu = document.querySelector('[data-testid="web-context-menu"]');
+          const subs = Array.from(
+            document.querySelectorAll<HTMLElement>('[data-testid^="web-context-submenu-trigger"]'),
+          ).map((s) => s.getAttribute('data-testid') + '=' + (s.textContent || '').trim());
+          const items = Array.from(document.querySelectorAll('[role="menuitem"]')).map((i) =>
+            (i.textContent || '').trim(),
+          );
+          return {
+            hasMenu: !!menu,
+            subs,
+            items,
+          };
+        });
+        throw new Error(`connection menu item ${itemText} not found: ${JSON.stringify(dump)}`);
+      }
       await browser.pause(1500);
     };
 
@@ -1882,7 +2336,17 @@ describe('site screenshots', () => {
       (item as HTMLElement).click();
       return true;
     });
-    if (!hit) throw new Error('打开结构 menu item not found');
+    if (!hit) {
+      const seen = await browser.execute(() =>
+        Array.from(
+          document.querySelectorAll('[role="menuitem"], [data-testid="web-context-menu"] *'),
+        )
+          .map((el) => (el.textContent || '').trim())
+          .filter((t) => t && t.length < 30)
+          .slice(0, 25),
+      );
+      throw new Error(`打开结构 menu item not found; menu showed ${JSON.stringify(seen)}`);
+    }
     // Structure tab mounts with column grid + DDL section; settle generously.
     await browser.waitUntil(
       async () =>
@@ -1925,7 +2389,7 @@ describe('site screenshots', () => {
           );
         }
         el.scrollIntoView({ block: 'center' });
-        el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         return true;
       });
       if (!opened) await browser.pause(250);
@@ -1938,19 +2402,16 @@ describe('site screenshots', () => {
       timeoutMsg: 'demo_customers rows not rendered',
     });
     // Double-click the first editable data cell of the first row (skip any
-    // leading checkbox/select column). Generic on purpose — cell rendering
-    // differs between table implementations.
+    // leading checkbox/select column). The DataTable is a VIRTUALIZED div
+    // grid, not a <table>: only the CELLS carry data-dt-row / data-dt-col and
+    // onDoubleClick (the row wrapper has no data-dt-row at all), so a `td`
+    // query — and a `[data-dt-row]:not([data-dt-col])` row query — find nothing.
     const editing = await browser.execute(() => {
-      const row =
-        document.querySelector<HTMLElement>('[data-dt-row]') ??
-        document.querySelector<HTMLElement>('table tbody tr');
-      if (!row) return false;
-      const cells = Array.from(row.querySelectorAll('td, span[title]'));
+      const cells = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="data-table-cell"]'),
+      ).filter((c) => c.getAttribute('data-dt-row') === '0');
       const target =
-        cells.find((c) => /^\d[\d,]*$/.test((c.textContent || '').trim())) ??
-        cells.find((c) => c.tagName === 'TD') ??
-        cells[1] ??
-        cells[0];
+        cells.find((c) => /^\d[\d,.]*$/.test((c.textContent || '').trim())) ?? cells[1] ?? cells[0];
       if (!target) return false;
       target.scrollIntoView({ block: 'center' });
       target.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
@@ -2037,13 +2498,80 @@ describe('site screenshots', () => {
     }
     if (!openedDb) throw new Error('no kv-db node rendered for redis connection');
 
-    // Wait for keys to list (demo: prefix) then shoot.
-    await browser.waitUntil(
-      async () =>
-        browser.execute(() => (document.body.textContent || '').includes('demo:app:name')),
-      { timeout: 20000, timeoutMsg: 'redis demo keys not listed' },
-    );
+    // The Redis KV panel groups keys into a lazy, VIRTUALIZED tree: the backend
+    // runs `list_children` (root → `demo` folder + one loose key) and the rows
+    // only appear once the virtualizer paints, and `demo:*` keys only after
+    // each prefix folder is expanded. Loop over both states — expand a collapsed
+    // folder if one is painted, otherwise just wait for the first paint.
+    // NOTE: a row renders only its LAST segment ("app:name"); the full key lives
+    // in `data-row-path`, so assert on that rather than on body text.
+    const wantKey = 'demo:app:name';
+    let keyShown = false;
+    for (let i = 0; i < 14; i++) {
+      keyShown = await browser.execute(
+        (k: string) =>
+          !!document.querySelector(`[data-row-path="${k}"]`) ||
+          !!document.querySelector(`[data-testid="redis-tree-key-check-${k}"]`),
+        wantKey,
+      );
+      if (keyShown) break;
+      const acted = await browser.execute(() => {
+        const collapsed = document.querySelector<HTMLElement>(
+          '[data-testid^="redis-tree-folder-"][data-expanded="false"][data-breadcrumb="false"]',
+        );
+        if (collapsed) {
+          collapsed.scrollIntoView({ block: 'center' });
+          collapsed.click();
+          return 'expanded';
+        }
+        const tree = document.querySelector<HTMLElement>('[data-testid="redis-key-tree"]');
+        if (tree?.querySelector('[data-row-kind], [data-testid^="redis-tree-row-"]')) {
+          return 'painted';
+        }
+        return 'wait';
+      });
+      if (acted === 'wait' && i >= 8) break;
+      await browser.pause(700);
+    }
+    if (!keyShown) {
+      const diag = await browser.execute(() => {
+        const pane = document.querySelector<HTMLElement>('[data-testid="redis-tree-pane"]');
+        const rect = pane?.getBoundingClientRect();
+        const inputs = Array.from(pane?.querySelectorAll<HTMLInputElement>('input') ?? []).map(
+          (i) => `${i.getAttribute('data-testid') || '(no-id)'}=${JSON.stringify(i.value)}`,
+        );
+        const inner = Array.from(
+          new Set(
+            Array.from(pane?.querySelectorAll<HTMLElement>('[data-testid]') ?? [])
+              .map((e) => e.getAttribute('data-testid') || '')
+              .filter(Boolean),
+          ),
+        ).slice(0, 20);
+        return {
+          rect: rect ? `${Math.round(rect.width)}x${Math.round(rect.height)}` : 'no-pane',
+          inputs,
+          inner,
+          innerLen: pane?.innerHTML.length ?? -1,
+          innerHead: (pane?.innerHTML ?? '').slice(0, 300),
+        };
+      });
+      throw new Error(
+        `redis demo keys not listed — pane: ${diag.rect} | inputs: ${JSON.stringify(diag.inputs)} | inner: ${JSON.stringify(diag.inner)} | len ${diag.innerLen} | ${diag.innerHead}`,
+      );
+    }
     await shot('15-redis.png', 900);
+
+    // ── 35-redis-workbench: the v0.2.2 workbench rebuild ───────────────────
+    // 15-redis shows the key browser only. This second frame deliberately keeps
+    // the right-hand tab bar in shot so the promoted first-level tabs (Slowlog
+    // is no longer nested under a "more" menu) and the MEMORY USAGE switch are
+    // both visible — those are the structural changes of the rebuild.
+    const wbTabBar = await $('[data-testid="redis-right-tab-bar"]');
+    if (await wbTabBar.isExisting()) {
+      await wbTabBar.scrollIntoView({ block: 'center' });
+    }
+    await shot('35-redis-workbench.png', 900);
+
     await goToConnections();
   });
 

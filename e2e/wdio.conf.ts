@@ -34,6 +34,89 @@ import { browser } from '@wdio/globals';
 
 const WD_PORT = parseInt(process.env.E2E_WD_PORT || '4445', 10);
 
+/**
+ * Pin the main window for the whole run.
+ *
+ * Without this the window keeps whatever geometry the host monitor hands it, so
+ * `saveScreenshot` returns a different pixel size on every machine and every
+ * display. That is how site/assets/screenshots/ accumulated 12 different
+ * resolutions — unusable for stitching into a video.
+ *
+ * ## The window size is a layout constraint, not a video constraint
+ *
+ * The Tauri webdriver returns a screenshot that is 1:1 with the window's CSS
+ * size and ignores devicePixelRatio. Widening the window therefore does not buy
+ * resolution, it buys *more UI in the frame* — and DataZen has a real minimum:
+ * below about 1280x800 CSS the connection rail, navigator, toolbar, query
+ * editor and result grid no longer all fit, and the capture silently clips the
+ * right-hand panel. A clipped screenshot is worse than a wrong-sized one.
+ *
+ * So capture runs at `fit16x9` — the largest 16:9 viewport the display can show
+ * (1440x810 on a 1440x900 screen). Only height is given up, which the app has
+ * plenty of room for, so the whole app is in frame and the capture is already
+ * a 16:9 image. `fullscreen` (1440x900) also works but is 16:10, so it has to be
+ * cropped down to 16:9 later, which costs the title bar. Resizing every image to
+ * 1920x1080 for the video is a separate, purely pixel-level step
+ * (`scripts/normalize-screenshots.mjs`).
+ *
+ * Opt-in via E2E_WINDOW_SIZE, which is either the literal `fullscreen` or an
+ * explicit "<w>x<h>" in CSS px. Behaviour specs leave it unset so
+ * responsive-layout assertions keep testing the real default
+ * (MAIN_WINDOW_DEFAULT_W x _H = 1280x900).
+ */
+const PINNED_WINDOW_SIZE = process.env.E2E_WINDOW_SIZE || '';
+
+let _windowPinned = false;
+async function pinWindowGeometry(): Promise<void> {
+  if (!PINNED_WINDOW_SIZE || _windowPinned) return;
+  _windowPinned = true;
+
+  let w: number;
+  let h: number;
+  if (PINNED_WINDOW_SIZE === 'fullscreen' || PINNED_WINDOW_SIZE === 'fit16x9') {
+    try {
+      const screen = await browser.execute(() => ({
+        w: window.screen.width,
+        h: window.screen.height,
+      }));
+      w = Number(screen?.w);
+      h = Number(screen?.h);
+    } catch (e) {
+      console.warn(`[wdio] could not read screen size: ${String(e)}`);
+      return;
+    }
+    if (!w || !h) {
+      console.warn('[wdio] screen size came back empty; leaving the window alone');
+      return;
+    }
+    if (PINNED_WINDOW_SIZE === 'fit16x9') {
+      // Largest 16:9 viewport the display can actually show. Only height is
+      // given up (810 of 900 on a 1440x900 screen), which the app has plenty of
+      // room for, so nothing clips — and the capture already *is* 16:9, so it
+      // needs no cropping to become a video frame.
+      h = Math.min(h, Math.round((w * 9) / 16));
+    }
+  } else {
+    const m = /^(\d+)\s*[x×]\s*(\d+)$/.exec(PINNED_WINDOW_SIZE);
+    if (!m) {
+      console.warn(
+        `[wdio] E2E_WINDOW_SIZE="${PINNED_WINDOW_SIZE}" is neither "fullscreen" nor "<w>x<h>"; ignoring.`,
+      );
+      return;
+    }
+    w = Number(m[1]);
+    h = Number(m[2]);
+  }
+
+  try {
+    await browser.setWindowSize(w, h);
+    console.log(`[wdio] window pinned to ${w}x${h} (CSS px)`);
+  } catch (e) {
+    // The window may not be addressable yet on the very first suite.
+    console.warn(`[wdio] could not pin window size: ${String(e)}`);
+  }
+}
+
 /** Per-worker isolated database name — set in runSessionBootstrap, dropped in after. */
 let _workerDb: string | undefined;
 
@@ -117,7 +200,21 @@ async function runSessionBootstrap() {
 export const config: WebdriverIO.Config = {
   runner: 'local',
   specs: ['./specs/**/*.ts'],
-  exclude: ['./specs/zz-screenshots.ts', './specs/demo-recording.ts', './specs/zz-diag.ts'],
+  // Gallery capture is a separate, deliberate task, not part of the suite.
+  //
+  // Every `*screenshot*` spec rewrites committed binaries under
+  // site/assets/screenshots, so running one from a plain `pnpm e2e` would
+  // silently republish whatever happened to be on the developer's screen. They
+  // also want a hand-sized, maximized window and seeded demo data, which a
+  // normal test run cannot arrange. Opt in with `--capture` (`pnpm e2e:shots`).
+  exclude: process.env.E2E_CAPTURE
+    ? []
+    : [
+        './specs/zz-screenshots.ts',
+        './specs/demo-recording.ts',
+        './specs/zz-diag.ts',
+        './specs/*screenshot*.ts',
+      ],
   /**
    * Named groups run via `pnpm e2e:<group>` (package.json) → `--suite <group>`.
    * Single source of truth for group membership; paths are relative to this
@@ -215,11 +312,17 @@ export const config: WebdriverIO.Config = {
     // SQL Editor Pro enhanced features (S4-A statement frame/gutter, S5-B bind-param panel),
     // migrated to the Pro extension's own e2e dir — requires a Pro build:
     // `pnpm e2e:pro:sql-editor`. Not part of the default Community run.
-    'pro-sql-editor': ['../packages/pro-extensions/sql-editor-pro/e2e/specs/*.ts'],
+    // `!(*-screenshot)` keeps the gallery-capture spec below out of this
+    // behaviour suite, matching the host-side `*screenshot*` exclusion.
+    'pro-sql-editor': ['../packages/pro-extensions/sql-editor-pro/e2e/specs/!(*-screenshot).ts'],
     // Query Builder journeys belong to the Pro extension and require its test bridge.
     'pro-query-builder': [
       '../packages/pro-extensions/sql-editor-pro/e2e/specs/journeys/visual-query-builder-*.ts',
     ],
+    // Release-gallery captures that need the Pro build but assert no behaviour
+    // (`pnpm e2e:qb:shot`). Kept out of pro-sql-editor so a normal regression
+    // run never rewrites files in site/assets/screenshots/.
+    'pro-screenshots': ['../packages/pro-extensions/sql-editor-pro/e2e/specs/*-screenshot.ts'],
     // AI features (`pnpm e2e:ai`)
     ai: [
       './specs/ai-features.ts',
@@ -354,6 +457,7 @@ export const config: WebdriverIO.Config = {
   },
   beforeSuite: async function (suite) {
     beginJourneySuite(suite.file);
+    await pinWindowGeometry();
     // Same Tauri process is reused across spec files; close leftover sub-windows
     // so Host specs do not attach to a previous MultiDb / SQLite session.
     try {
