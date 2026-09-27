@@ -223,7 +223,7 @@ export function createMultipleSelectionsExtension(): Extension[] {
      *
      * Deliberately NO `preventDefault` on the Escape binding. CodeMirror
      * applies a binding's `preventDefault` even when its `run` returns false
-     * (`runHandlers`, @codemirror/view index.js:4932), so declaring it would
+     * (`runHandlers`, @codemirror/view index.js:9164), so declaring it would
      * make Escape swallow the event unconditionally — including the
      * degenerate one-cursor case where our command declines. Omitting it
      * matches `defaultKeymap`'s own Escape binding and keeps "nobody handled
