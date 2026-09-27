@@ -157,8 +157,12 @@ git -C "$MAIN" show-ref --verify --quiet "refs/heads/${BRANCH}" && PRE_BRANCH_EX
 
 CREATED_WT=0
 ROLLBACK_DONE=0
-# 1 = worktree 因有未提交改动被**刻意保留**（此时其分支仍被该 worktree 检出）
+# 「worktree 被保留」有两种成因（两种都意味着：worktree 还在 ⇒ 其分支仍被检出
+# ⇒ git branch -D 必然拒绝）：
+#   WT_KEPT_DIRTY   1 = 因有未提交改动**刻意**保留（安全策略；数据完好）
+#   WT_KEPT_FAILED  1 = worktree remove **意外**失败而残留（可能有半成品）
 WT_KEPT_DIRTY=0
+WT_KEPT_FAILED=0
 
 cleanup_hint() {
   printf '\n手动清理命令（确认无用后再执行）:\n  git -C %s worktree remove --force %s\n  git -C %s branch -D %s\n' \
@@ -193,6 +197,7 @@ rollback() {
       elif git -C "$MAIN" worktree remove --force "$WT" 2>/dev/null; then
         printf '✔ 已移除 worktree %s\n' "$WT" >&2
       else
+        WT_KEPT_FAILED=1
         printf '⚠ worktree remove 失败，目录可能残留：%s\n' "$WT" >&2
         cleanup_hint >&2
       fi
@@ -213,6 +218,16 @@ rollback() {
       printf 'ℹ 分支 %s **未删除**：它仍被上面那个「有改动因而保留」的 worktree 检出，git 必然拒绝删除。\n' "$BRANCH" >&2
       printf '  这是**预期行为**，不是回滚失败：你的改动一条都没丢，也**不要**用 rm -rf 绕过。\n' >&2
       printf '  确认这些改动无用后，按上面「手动清理命令」的两条**按序**执行即可。\n' >&2
+    elif [ "$WT_KEPT_FAILED" -eq 1 ]; then
+      # worktree remove 失败的**直接延续**，不是又一处独立的岔子：worktree 没移走，
+      # 分支多半还被它检出。⚠ 此处**不能**说「改动一条都没丢」—— remove 失败意味着
+      # 目录可能已被部分动过，安全性未知。
+      # 实测仅覆盖「worktree 被 git worktree lock 锁住」这一种成因（单 -f remove
+      # exit 128、worktree 仍登记、其分支删不掉）；别的 remove 失败成因未测，
+      # 所以机制那句用「多半」而不说死。
+      printf '⚠ 分支 %s **未删除**：上面的 worktree 没能移走，分支多半还被它检出，git 因而拒绝删除。\n' "$BRANCH" >&2
+      printf '  这与上面「worktree remove 失败」**同源**，不是又一处新岔子：worktree 不在，分支就删不掉。\n' >&2
+      printf '  先把那个 worktree 处理掉（必要时先 git worktree unlock），再按「手动清理命令」的两条**按序**重试。\n' >&2
     elif git -C "$MAIN" branch -D "$BRANCH" >/dev/null 2>&1; then
       printf '✔ 已删除本次创建的分支 %s\n' "$BRANCH" >&2
     else
