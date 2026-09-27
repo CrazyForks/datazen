@@ -60,7 +60,13 @@ if (planContent) {
 // Bug 开放态计数：新格式为 bugs/<id>.md 一 Bug 一文件（消除多人共写单文件的合并冲突）；
 // 旧格式单文件 bugs.md 保留兼容（历史轮次台账只读）。状态行命中开放态即计数；
 // 文件名以 -closed- 开头或目录内 README.md 不计（归档件）。
-const OPEN_BUG_RE = /状态[:：]\s*(?:\*\*)?(待验证|待修复|修复中|待复测|新建|OPEN)/i;
+//
+// 状态行按 tester.md 约定写作 `- **状态**：待修复`，位于标题之后；强调标记在冒号**之前**。
+// 旧正则把 `(?:\*\*)?` 放在冒号之后，于是所有按规程登记的 Bug 一条都匹配不上，
+// hub 长期恒显 0 bug。这里按行首锚定并允许两侧星号，闭合态（已修复等）仍不命中。
+// 只匹配文件头部若干行：文末「状态流转 / 复测记录」段的叙述不应被当成开放态。
+const OPEN_BUG_RE = /^[ \t]*[-*]?[ \t]*\*{0,2}状态\*{0,2}[:：][ \t]*(?:\*\*)?[ \t]*(待验证|待修复|修复中|待复测|新建|OPEN)/im;
+const BUG_STATUS_SCAN_LINES = 15;
 function countOpenBugs(trackId) {
   let n = 0;
   const dir = path.join(TRACKS_DIR, trackId, 'bugs');
@@ -68,7 +74,8 @@ function countOpenBugs(trackId) {
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith('.md') || f === 'README.md' || f.startsWith('-closed-') || f.startsWith('closed-')) continue;
       const content = fs.readFileSync(path.join(dir, f), 'utf8');
-      if (OPEN_BUG_RE.test(content)) n += 1;
+      const head = content.split('\n').slice(0, BUG_STATUS_SCAN_LINES).join('\n');
+      if (OPEN_BUG_RE.test(head)) n += 1;
     }
   }
   const legacy = path.join(TRACKS_DIR, trackId, 'bugs.md');
@@ -104,7 +111,9 @@ function parseProgress(trackId, content) {
     const trimmed = line.trim();
     const kvMatch = trimmed.match(/^[-*]\s*([^:]+):\s*(.+)$/);
     if (!kvMatch) continue;
-    const key = kvMatch[1].trim().toLowerCase();
+    // 键名可能带 Markdown 强调标记（`- **状态**: x`）。比较前剥掉 `*`，
+    // 否则下面用等值匹配的字段永远命中不了，台账 phase 恒为「未开始」。
+    const key = kvMatch[1].trim().replace(/\*/g, '').trim().toLowerCase();
     const val = kvMatch[2].trim();
     if (key.length > 24 || key.includes('`') || key.includes('（')) continue;
 
@@ -112,9 +121,10 @@ function parseProgress(trackId, content) {
     else if (key.includes('编码 commit') || key === 'coding_commit' || key === 'codingcommit') data.codingCommit = val;
     else if (key.includes('测试 commit') || key === 'test_commit' || key === 'testcommit') data.testCommit = val;
     else if (key.includes('合并 commit') || key === 'merge_commit' || key === 'mergecommit') data.mergeCommit = val;
-    else if (key.includes('代理') || key.includes('agent')) data.agent = val;
+    else if (key === '代理' || key === 'agent') data.agent = val;
     else if (key.includes('worktree')) data.worktree = val;
-    else if (key.includes('branch') || key.includes('分支')) data.branch = val;
+    // `分支` 必须用等值匹配：`- **Pro 分支**: x` 会因子串命中而覆盖宿主分支。
+    else if (key === 'branch' || key === '分支') data.branch = val;
     else if (key.includes('心跳') || key.includes('heartbeat')) data.lastHeartbeat = val;
     else if (key.includes('task') || key.includes('任务')) data.task = val;
   }

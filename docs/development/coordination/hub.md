@@ -40,8 +40,10 @@
 | tunnel-backend | — | 未开始 | — | — | — |
 | tunnel-form | — | 未开始 | — | — | — |
 | tunnel-settings | — | 未开始 | — | — | — |
-| e2e-ops-menu | — | 未开始 | — | — | — |
-| e2e-schema-tree | — | 未开始 | — | — | — |
+| e2e-ops-menu | — | PASSED（复测第 1 轮：`e2e-ops-menu-BUG-001` 已修复，完整回归通过，无新增 Bug；复测记录见文末「复测记录（第 2 轮 · 测试子代理）」） | — | — | — |
+| e2e-schema-tree | — | PASSED（READY_TO_MERGE，Tester 第 1 轮 TEST_DONE；E2E 实跑见下方登记表【留待 R 回归】） | — | — | — |
+| e2e-spec-rest | — | READY_TO_MERGE**（Tester round-1 独立复验通过：tsc 门零新增 / 7 目标 spec 0 错误 / 全部 8 处根因自报独立复核成立；全量 E2E 复跑因本 worktree 无 webdriver binary 留待 R 回归 —— 见 §6 E2E 登记表。测试 commit 见 §7。） | — | — | — |
+| qb-editor-pro | — | 未开始 | — | — | — |
 
 ## 写锁台账
 
@@ -66,11 +68,11 @@
 | redis-host-slots | 无活跃子代理 | `.worktrees/datazen-redis-host-slots` | `feature/redis-host-slots`（基准 `feat/redis-workspace-ux` @ ae65ae375） | MERGED（2026-09-22 · 第 1 轮修复复测 PASSED） | 2026-09-22 已合流至 `feat/redis-workspace-ux` |
 | redis-kvbar-ui | w2a-kvbar-rescuer-a（编码）→ 第 1 轮 Tester 第 1 任（死于 150 轮，未交判定）→ 第 1 轮 Tester 第 2 任（接管收尾）→ 第 1 轮修复回合 Coder → 第 2 轮 Tester（全新实例）→ 第 2 轮修复回合 Coder（BUG-005 单条）→ 第 3 轮 Tester 第 1 任（**死于服务错误**，已交阶段 B `a32267124`、遗留未提交的阶段 A/C 半成品）→ **第 3 轮 Tester 第 2 任（接管实例，关账）** → **第 3 轮修复回合 Coder（BUG-006 单条）** → 协调者合流轮（免第 4 轮 Tester，见「合流轮」节） | .worktrees/datazen-redis-kvbar-ui | feature/redis-kvbar-ui | MERGED（第 3 轮 TEST_DONE；BUG-006 协调者裁定免第 4 轮 Tester，合流复验 64 次 0 红后合入） | 2026-09-22 15:46（**第 3 轮修复回合 Coder 交回协调者，返回 `READY_FOR_MERGE`**：只修 BUG-006 一条 = `59c062da1`（单个测试文件 +14/−4，等待谓词与被断言 DOM 挪进同一渲染根，断言只增不减）；稳定性实测目标 spec 单文件串行 **20×0 红** / 全量串行 **3×0 红**（41 files · 328 tests）/ 6 路并发 **6×6 = 36 次 0 红**（追加：与满负荷 `tsc` 并发 5 次 0 红，即 Tester 登记该红的原触发条件）；非空转证明 = M1「回包链永不填充 type」→ 目标用例红（1015ms 超时后红）+ M2「`attributeViewState` 永不 `ready`」→ 旧写法与修法 2 均**漏检为绿**、本轮写法红 + 宏任务放大器下旧写法 8ms 必红 / 本轮写法 17/17 绿；注入已全部 `git checkout HEAD --` 还原、生产码零改动。便宜门禁：tsc exit 0 · vitest 41/328 全绿 · 边界护栏 `1434 files · 0 blocking · 4 advisory`（与第 3 轮 Tester 在 `05af287d7` 的逐字一致 —— 本轮零新增文件、零生产改动，扫描面不可能变；exit 0 + `2 allow-listed reference(s) skipped`） · `ui/kv-bar/**` 覆盖率 100×4（**本回合在 `59c062da1` 实跑**，非沿用；本轮零生产改动 ⇒ 四指标与第 3 轮一致）。上一棒心跳（第 3 轮 Tester 15:06 关账）内容已完整留档在本文件「第 3 轮 Tester 判定」节） |
 | redis-overview | w2b-overview-tester-1 / 修复第 1 棒（死于 150 轮，BUG-002 已入库）/ 修复第 2 棒 rescuer（现场保全 + BUG-001/003 收尾）/ w2b-overview-tester-2（第 2 轮复测，TEST_DONE） | .worktrees/datazen-redis-overview | feature/redis-overview | MERGED（第 2 轮 Tester TEST_DONE，BUG-001/002/003 已修复、BUG-005 当场补测闭环，已合入集成分支） | 2026-09-22 13:25 |
-| redis-codec-write | w3c-codec-write-tester（全新实例，未复用编码代理） | .worktrees/datazen-redis-codec-write | feature/redis-codec-write | **TEST_DONE**（第 2 轮 Tester 682f2878 复测通过、5 条 bug 全部闭环，已随 W3-C 合流 feat/redis-workspace-ux；状态归一化由协调者补记） | 2026-09-22 20:48（修复轮完成，READY_FOR_TEST） |
+| redis-codec-write | w3c-codec-write-coder（待登记 agentId） | .worktrees/datazen-redis-codec-write | feature/redis-codec-write | **TEST_DONE**（第 2 轮 Tester 682f2878 复测通过、5 条 bug 全部闭环，已随 W3-C 合流 feat/redis-workspace-ux；状态归一化由协调者补记） | 2026-09-22 20:48（修复轮完成，READY_FOR_TEST） |
 | redis-console-safety | rescuer（接管 w3f-console-safety-coder；父 session-61319db9-6e5c-4f32-a35e-cad750b647dd） | .worktrees/datazen-redis-console-safety | feature/redis-console-safety | READY_FOR_TEST | 2026-09-22 20:40 |
 | redis-kv-contract | w3a-kv-contract-coder（死于 150 轮上限，§1.3 半成品）→ **w3a-kv-contract-rescuer（接管收尾：补 §1.3 接线 + 契约冻结 + 四道门禁）** | .worktrees/datazen-redis-kv-contract | feature/redis-kv-contract | READY_FOR_TEST | 2026-09-22 18:15（接管轮返回 `READY_FOR_TEST`） |
-| redis-tree-backend | w3b-tester-round2（全新实例，不复用第 1 轮 Tester、不用修复 Coder；同样串行 + 逐项 commit） | .worktrees/datazen-redis-tree-backend | feature/redis-tree-backend | **TEST_DONE**（第 2 轮全新 Tester 复验：BUG-001/002/003 三条定点全绿（含 4 次独立变异反证） | 2026-09-23 10:11（round-2 Tester 判定时刻） |
-| driver-ui-type-gate | driver-ui-type-gate-tester（全新实例 session-61319db9-6e5c-4f32-a35e-cad750b647dd，未复用编码代理） | .worktrees/datazen-driver-ui-type-gate | feature/driver-ui-type-gate（基线 `feat/redis-workspace-ux` @ `1b77ce149`） | **TEST_DONE（第 3 轮复测通过，Tester session-61319db9-6e5c-4f32-a35e-cad750b647dd，2026-09-23）** | 2026-09-23 11:47（全部目标完成，READY_FOR_TEST） |
+| redis-tree-backend | w3b-tree-backend-rescuer（session-61319db9-6e5c-4f32-a35e-cad750b647dd，接管阵亡 coder 的未提交现场） | .worktrees/datazen-redis-tree-backend | feature/redis-tree-backend | **TEST_DONE**（第 2 轮全新 Tester 复验：BUG-001/002/003 三条定点全绿（含 4 次独立变异反证） | 2026-09-23 10:11（round-2 Tester 判定时刻） |
+| driver-ui-type-gate | driver-ui-type-gate-coder（子代理，session 见协调者登记） | .worktrees/datazen-driver-ui-type-gate | feature/driver-ui-type-gate（基线 `feat/redis-workspace-ux` @ `1b77ce149`） | **TEST_DONE（第 3 轮复测通过，Tester session-61319db9-6e5c-4f32-a35e-cad750b647dd，2026-09-23）** | 2026-09-23 11:47（全部目标完成，READY_FOR_TEST） |
 | redis-tree-ui | w3d-tree-ui-rescuer（编码，接管原编码代理收尾）；Tester 第 1 轮 = 全新实例（前任 Tester 死于服务错误，无半成品）；原编码代理父会话 session-61319db9-6e5c-4f32-a35e-cad750b647dd | .worktrees/datazen-redis-tree-ui | feature/redis-tree-ui | **TEST_DONE（第 3 轮复测通过，Tester e7c9c98b，2026-09-23）** | 2026-09-23 11:57（Coder 修复轮第 1 回合，HEAD = eb733a757 + 本台账 commit；四件套实测见「修复轮第 1 回合」§4） |
 | redis-detail-ui | **w3e-rescuer-finish**（收尾代理，全新实例；链：w3e-detail-ui-coder → Rescuer(实现落盘于 `f5a273cd2`) → 本代理）。本代理只执行门禁四件套 + 覆盖率 + 台账收口，**未新增功能、未改生产码**。 | .worktrees/datazen-redis-detail-ui | feature/redis-detail-ui | **TEST_DONE（第 4 轮复测通过，Tester ecf1171f-aaa7-424e-8271-8114bbfa98c4，2026-09-23）**（**BUG-008（高）+ BUG-009（低）均翻「已修复」**，Bug 循环 4/5 → **已合入集成分支 `feat/redis-workspace-ux`，合流 commit `1135b2ff4`**。合流期为语义冲突（D 轨已把 `RedisWorkbench.tsx` 从 705 拆到 369 行 + 抽出 6 个模块），按协调手册 §6.1.1 处置：保留 D 的结构、把本轨 I-1 守卫语义移植进 D 的 hook/组件（`inPlace` 下沉 `useKeyDetailState.selectKey`、`refreshKeys` 取 D 的 `clearFocus()` + 本轨 `requestDraftLeave()`、`refreshKeysForDialogs` 保留、`handleRefresh` 两道链式守卫按 round2Probe P2 不变）；合流后 12 例红全部为 D 拆分导致的 **testid 迁移未同步**（`redis-refresh`→`redis-tree-refresh` 等，语义零丢失），由协调者定位、Rescuer 修复）（第 4 轮复测历史：文件面审计 `3e25a3c0f..b7ef8a009` 恰 7 文件全落许可面、禁改面反向 grep NONE；BUG-008 基线 8/8 绿 · 0 skipped，变异矩阵 (i) 语义等价故绿（已归因：修复前偏差⑥ 唯一机制是被删的 `onUpdateSelectedKey`，`await onSelectKey` 前移/后移为等价变换）、(ii) 守卫后加回无条件写入 **5 failed/3 passed** 红、(ii-a) 忠实回退 `3e25a3c0f` 亦红、(iii) 守卫前直改选中键 亦红 ⇒ 因果面钉住；不变式实测 三路径 保存目标键===面板键===选中键 成立；裁定独立验证 **成立**（4 个 `onSelectKey` 调用点 + 删除/批量路径逐一核对，无合法路径丢失选中键更新）；BUG-009 `wc -l`=795（≤800）、守卫 3 行 md5 逐字节未动、`cbecba255` = `6 15` 纯注释；四门 G1 `60 files/564 passed/0 skipped` · tsc 0 · build `✓ built in 4.83s` 0 · boundaries `1474/0/4` 0；覆盖率 方法经 round-3 态逐位复现自证（A 88.88/91.22、B 92.43/95.43），like-for-like 旧口径 B **92.43/95.43 逐位相同（零回归）**，本轮全量口径 B 85.95/89.03 · A 84.34/86.93 均 ≥80%；断言纪律零文案字面量/零几何反查/无 vacuous/skip 零残留）。（第 3 轮复测判定 TEST_FAILED 历史：BUG-007 复测通过翻「已修复」，但追出新 BUG-008（高）+ BUG-009（低）；round-2/1 历史见下文。） | 2026-09-22 23:42 |
 | redis-kv-context-bar | w4-redis-kv-context-bar-coder | .worktrees/datazen-redis-kv-context-bar | feature/redis-kv-context-bar | **TEST_DONE**（第 3 轮独立复测通过；GUI E2E 旅程留待 R；已合入集成分支 `feat/redis-workspace-ux`） | 2026-09-23 18:39（Rescuer 修复与三件套自验完成，`READY_FOR_TEST`） |
@@ -79,8 +81,10 @@
 | tunnel-backend | — | — | `feature/tunnel-backend`（worktree `.worktrees/datazen-tunnel-backend`） | 未开始 | — |
 | tunnel-form | — | — | `feature/tunnel-form`（worktree `.worktrees/datazen-tunnel-form`） | 未开始 | — |
 | tunnel-settings | — | — | `feature/tunnel-settings`（worktree `.worktrees/datazen-tunnel-settings`） | 未开始 | — |
-| e2e-ops-menu | — | — | `feature/e2e-ops-menu` | 未开始 | — |
-| e2e-schema-tree | — | — | feature/e2e-schema-tree | 未开始 | — |
+| e2e-ops-menu | — | — | `feature/e2e-ops-menu` | PASSED（复测第 1 轮：`e2e-ops-menu-BUG-001` 已修复，完整回归通过，无新增 Bug；复测记录见文末「复测记录（第 2 轮 · 测试子代理）」） | — |
+| e2e-schema-tree | — | — | feature/e2e-schema-tree | PASSED（READY_TO_MERGE，Tester 第 1 轮 TEST_DONE；E2E 实跑见下方登记表【留待 R 回归】） | — |
+| e2e-spec-rest | — | — | feature/e2e-spec-rest | READY_TO_MERGE**（Tester round-1 独立复验通过：tsc 门零新增 / 7 目标 spec 0 错误 / 全部 8 处根因自报独立复核成立；全量 E2E 复跑因本 worktree 无 webdriver binary 留待 R 回归 —— 见 §6 E2E 登记表。测试 commit 见 §7。） | — |
+| qb-editor-pro | — | — | feature/qb-editor-pro | 未开始 | — |
 
 ## 波次记录
 
