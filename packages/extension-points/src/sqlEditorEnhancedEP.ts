@@ -116,11 +116,28 @@ export interface SqlEditorEnhancedFeatures {
   /**
    * Generic escape hatch for capabilities the host has no dedicated slot for.
    *
-   * The host installs the result in its own re-configurable `extra` compartment
-   * (e.g. code folding), so the extension never needs a host release to ship
-   * a new editor capability. Returns `[]` when nothing applies.
+   * The host installs the result in its own re-configurable `extra` compartment,
+   * so the extension never needs a host release to ship a new editor
+   * capability. Returns `[]` when nothing applies.
    */
   createExtraExtensions?: (opts?: SqlEditorEnhancedOptions) => Extension[];
+  /**
+   * Code folding: fold state, fold gutter and fold keymap.
+   *
+   * The host installs the result in a dedicated `fold` compartment rather than
+   * in the generic `extra` bucket, because folding carries a keymap. It needs
+   * a known position in the mount order — which is the precedence order — and
+   * it has to be reconfigurable on its own, without rewriting the generic
+   * bucket's contents in the same transaction.
+   *
+   * Optional and absent-means-empty, so adding it required no
+   * `EXTENSION_POINTS_VERSION` bump: that guard is exact string equality
+   * (`security.ts`), and bumping it would reject every EP whose manifest still
+   * declares 1.1.0. Both directions of version drift degrade rather than
+   * break — an extension this new running against an older host has its
+   * extensions folded into `extra` by the host's overflow path.
+   */
+  createFoldExtensions?: (opts?: SqlEditorEnhancedOptions) => Extension[];
   /**
    * Extra keymap bindings.
    *
