@@ -35,11 +35,15 @@ import {
 } from '../../../components/sql-editor/editorExtensions';
 // @ts-expect-error - `scripts/sign-ep.mjs` is untyped Node ESM (no .d.ts).
 import { signEpPackage as signEpPackageUntyped } from '../../../../scripts/sign-ep.mjs';
-// @ts-expect-error - `scripts/pack-ep.mjs` is untyped Node ESM (no .d.ts).
 import {
   stagePackageTree as stagePackageTreeUntyped,
   createDzxArchive as createDzxArchiveUntyped,
   REQUIRED_PACKAGE_PATHS as requiredPackagePathsUntyped,
+  // `scripts/pack-ep.mjs` is untyped Node ESM (no .d.ts). Must sit immediately
+  // above the module-specifier line: for a multi-line import TS anchors TS7016
+  // to `} from '...'`, not to the `import {` line, so a directive placed above
+  // `import {` silently fails to suppress.
+  // @ts-expect-error
 } from '../../../../scripts/pack-ep.mjs';
 
 const signEpPackage = signEpPackageUntyped as (opts: { packageDir: string }) => { sigDoc: unknown };
