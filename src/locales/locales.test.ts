@@ -146,6 +146,33 @@ describe('locales', () => {
     expect(getHostTranslations('en')['redis.batchDelete']).toBeUndefined();
   });
 
+  it('keeps host document-view strings out of the driver `mongo.*` namespace', async () => {
+    // The host and the mongodb driver both defined `mongo.*` until the host set
+    // moved to `docView.*`. The driver pack self-registers *after* the host
+    // (host at ./index module load, pack via ui/meta.ts → locales/index.ts on
+    // every build that selects the driver), and `registerTranslations` merges
+    // with `Object.assign` — so all 15 host values were overwritten and 9 of
+    // the English strings DocumentConnectionView actually renders were
+    // replaced ('Insert document' → 'Insert', '{count} document(s)' →
+    // '{count} docs'). Asserting the host value survives a *later* driver
+    // registration is what makes this a regression test rather than a
+    // dictionary snapshot: before the rename this same assertion failed.
+    await import('../../packages/drivers/mongodb/locales');
+
+    const docViewKeys = (Object.keys(en) as string[]).filter((k) => k.startsWith('docView.'));
+    expect(docViewKeys).toHaveLength(15);
+    // Every one of the 19 t() call sites in DocumentConnectionView.tsx resolves
+    // to a host-owned key, so no driver pack can reach them.
+    for (const key of docViewKeys) {
+      expect(getTranslation('en', key), key).toBe(en[key as TranslationKey]);
+      expect(getTranslation('en', key), key).not.toBe(key);
+    }
+    // The host no longer defines any `mongo.*` key at all…
+    expect((Object.keys(en) as string[]).filter((k) => k.startsWith('mongo.'))).toEqual([]);
+    // …and the driver's own namespace is untouched by the host.
+    expect(getTranslation('en', 'mongo.insert')).toBe('Insert');
+  });
+
   it('interpolates params for built-in locales', () => {
     for (const locale of BUILTIN_LOCALES) {
       expect(getTranslation(locale, 'win.query', { db: 'testdb' })).toContain('testdb');
