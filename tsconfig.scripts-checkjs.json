@@ -1,0 +1,25 @@
+{
+  "$comment": [
+    "HONEST BACKLOG, NOT A GATE. The build scripts under scripts/ are written as",
+    "plain .mjs with no JSDoc, so type-checking their bodies surfaces hundreds of",
+    "errors that have never been anyone's expectation. This config exists to make",
+    "that number measurable and to let it be ratcheted down, not to be forced to",
+    "zero in one sitting.",
+    "",
+    "It is deliberately NOT wired into `pnpm typecheck` or into CI: a permanently",
+    "failing command teaches people to ignore it. `pnpm typecheck:scripts:checkjs`",
+    "is opt-in and reports the count; see",
+    "docs/development/coordination/tracks/scripts-gate/progress.md for the",
+    "measurement recorded when this config was added.",
+    "",
+    "What IS enforced is tsconfig.scripts.json: the 23 .ts test files that guard",
+    "this pipeline, checked against the real inferred signatures of the .mjs they",
+    "import."
+  ],
+  "extends": "./tsconfig.scripts.json",
+  "compilerOptions": {
+    "checkJs": true
+  },
+  "include": ["scripts"],
+  "exclude": ["scripts/e2e-screenshots"]
+}

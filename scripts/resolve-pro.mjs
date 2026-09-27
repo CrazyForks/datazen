@@ -37,7 +37,44 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } fr
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
-import { packEp, DEFAULT_BUILTIN_EP_ROOT } from './pack-ep.mjs';
+import {
+  packEp,
+  DEFAULT_BUILTIN_EP_ROOT,
+  stagedTreeComplete,
+  stagingMarkerPath,
+  markStagingIncomplete,
+  clearStagingIncomplete,
+} from './pack-ep.mjs';
+
+/**
+ * Whether a tree already staged under `builtin-ep` may be used verbatim.
+ *
+ * The short-circuit this feeds is load-bearing for CI — the release matrix
+ * builds the extension once in `prepare-pro-extension` and hands the tree to
+ * all 11 variant jobs — so a complete, unmarked tree is still reused as-is.
+ *
+ * A tree whose last staging run did not finish is NOT reused. `packEp` only
+ * rewrites `builtin-ep/<ext>` as its final step, so a build that died earlier
+ * (vite build, or the artifact-level host-key gate) leaves the previous tree
+ * complete and signed. Reusing it would exit 0 on artifacts that were never
+ * produced from the source under test, i.e. "it built" would stop meaning
+ * "this built". Rebuilding is the only safe answer; the marker is what makes
+ * the two states distinguishable.
+ */
+export function stagedTreeUsable(builtinEpDir) {
+  if (!stagedTreeComplete(builtinEpDir)) {
+    console.log(
+      `[resolve-pro] staged builtin-ep at ${builtinEpDir} was left incomplete by a failed ` +
+        `build (${stagingMarkerPath(builtinEpDir)}); refusing to reuse it`,
+    );
+    return false;
+  }
+  return (
+    existsSync(resolve(builtinEpDir, 'manifest.json')) &&
+    existsSync(resolve(builtinEpDir, 'dist/index.esm.js'))
+  );
+}
+
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(__dirname, '..');
@@ -275,6 +312,8 @@ export function initProExtensions(): void {
  */
 export function clearBuiltinEpStaging(extension = 'sql-editor-pro', { stageDir } = {}) {
   const target = stageDir ? resolve(stageDir) : resolve(DEFAULT_BUILTIN_EP_ROOT, extension);
+  // A tree that no longer exists cannot be stale, so drop the marker with it.
+  clearStagingIncomplete(target);
   if (existsSync(target)) {
     rmSync(target, { recursive: true, force: true });
     console.log(`[resolve-pro] removed staged builtin-ep at ${target}`);
@@ -291,7 +330,14 @@ export function clearBuiltinEpStaging(extension = 'sql-editor-pro', { stageDir }
  */
 export function downloadPrebuiltEp({ prebuiltUrl, extension = 'sql-editor-pro', stageDir } = {}) {
   const target = stageDir ? resolve(stageDir) : resolve(DEFAULT_BUILTIN_EP_ROOT, extension);
+
+  // The previous tree must not survive into the freshly downloaded one. A stale
+  // `signature.sig` sitting next to a new `dist/index.esm.js` is a signature
+  // over bytes that are no longer on disk, and the tarball is free to ship
+  // fewer files than the tree it replaces.
+  rmSync(target, { recursive: true, force: true });
   mkdirSync(target, { recursive: true });
+  markStagingIncomplete(target, `prebuilt download from ${prebuiltUrl} started at ${new Date().toISOString()}`);
 
   const tmpDir = resolve(ROOT, '.pro-prebuilt-download');
   mkdirSync(tmpDir, { recursive: true });
@@ -335,9 +381,15 @@ export function downloadPrebuiltEp({ prebuiltUrl, extension = 'sql-editor-pro', 
       }
     }
 
+    clearStagingIncomplete(target);
     console.log(`[resolve-pro] prebuilt EP extracted to ${target}`);
     return target;
   } catch (err) {
+    // A half-extracted tree must not become the next run's short-circuit input.
+    markStagingIncomplete(
+      target,
+      `prebuilt download from ${prebuiltUrl} FAILED at ${new Date().toISOString()}: ${err.message}`,
+    );
     console.error(`[resolve-pro] prebuilt download failed: ${err.message}`);
     throw err;
   } finally {
@@ -346,6 +398,25 @@ export function downloadPrebuiltEp({ prebuiltUrl, extension = 'sql-editor-pro', 
   }
 }
 
+/**
+ * Build, rewrite, sign and stage the Pro extension into `builtin-ep`.
+ *
+ * The `@param` is not decoration: with a bare destructuring pattern, TypeScript
+ * synthesizes the option type from the *default initializers only*, so
+ * `stageProExtension({ extensionDir, skipBuild })` from the tests would be
+ * rejected for having "no properties in common" with `{ mode?, log? }`. Naming
+ * the real shape is what lets the test file be checked against the real
+ * signature.
+ *
+ * @param {{
+ *   extensionDir?: string,
+ *   skipBuild?: boolean,
+ *   mode?: 'stage' | 'dzx' | 'both',
+ *   log?: (...args: unknown[]) => void,
+ *   stageDir?: string,
+ *   outDir?: string,
+ * }} [opts]
+ */
 export function stageProExtension({
   extensionDir,
   skipBuild = false,
@@ -386,6 +457,15 @@ export function pinProCheckout(dir, ref, { log = console.log } = {}) {
  * `proDest` and `tmpFallbackDir` are path overrides for callers that must not
  * write into the real tree (tests redirect both into a tmp sandbox). Omitting
  * them keeps the historical paths exactly as they were.
+ *
+ * @param {{
+ *   proPath?: string | null,
+ *   proGit?: string | null,
+ *   proRef?: string | null,
+ *   codegenOnly?: boolean,
+ *   proDest?: string,
+ *   tmpFallbackDir?: string,
+ * }} [opts]
  */
 export function ensureProCheckout({
   proPath,
@@ -504,9 +584,7 @@ export function resolvePro(opts = {}) {
   if (edition === 'pro') {
     // Fast path: prebuilt tarball (downloaded in CI or via --pro-prebuilt-url)
     const builtinEpDir = stageDir ?? resolve(DEFAULT_BUILTIN_EP_ROOT, 'sql-editor-pro');
-    const hasPrebuiltFiles =
-      existsSync(resolve(builtinEpDir, 'manifest.json')) &&
-      existsSync(resolve(builtinEpDir, 'dist/index.esm.js'));
+    const hasPrebuiltFiles = stagedTreeUsable(builtinEpDir);
 
     if (prebuiltUrl && !codegenOnly) {
       if (hasPrebuiltFiles) {

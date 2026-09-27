@@ -128,7 +128,7 @@ describe('ci-tauri-build pro staging preflight', () => {
   });
 
   it('reports missing files and emits a ::notice:: line when staging is absent', () => {
-    const notices = [];
+    const notices: string[] = [];
     const root = mkdtempSync(join(tmpdir(), 'datazen-pro-missing-'));
     const missing = checkProStagingReady({ root, log: (m) => notices.push(m) });
     expect(missing).toEqual(REQUIRED_PRO_STAGED_PATHS);

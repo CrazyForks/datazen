@@ -68,6 +68,10 @@ src-tauri/src/driver_init.rs
 packages/pro-extensions/
 src-tauri/resources/builtin-ep/
 artifacts/
+# "staging run did not finish" markers written next to a staged EP tree
+# (pack-ep.mjs / resolve-pro.mjs). A stale one must survive `git status` so a
+# failed build cannot be mistaken for a clean one.
+*.incomplete
 
 # Built-in locale codegen (written by generate-builtin-locales.mjs; not committed)
 src/locales/builtinLocales.ts
