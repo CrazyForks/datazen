@@ -244,7 +244,9 @@ describe('[tester] BUG-001 differential reproduction (227b6af8e^ vs HEAD)', () =
     //   a) the generated banner names the source commit
     //   b) its body is byte-identical to that commit's blob  → a stale fixture
     //      (the maintenance trap: someone edits the real store, forgets this)
-    //      fails here instead of quietly becoming a different historical moment
+    //      fails here instead of quietly becoming a different historical moment.
+    //      **This layer is not optional**: if the blob cannot be produced the test
+    //      FAILS by default rather than warning and passing. See the G4 note below.
     //   c) no production file imports it
     const source = readFileSync(FIXTURE_PATH, 'utf8');
 
@@ -276,15 +278,40 @@ describe('[tester] BUG-001 differential reproduction (227b6af8e^ vs HEAD)', () =
       blob = null; // shallow clone / no git — handled below
     }
     if (blob === null) {
-      // Cannot be a silent pass: say so loudly, and still pin the parts that do
-      // not need git (the banner above already ran and would have failed first).
+      // ── G4: this used to `console.warn` and PASS ──────────────────────────
+      // A warn-and-pass here is a conditional failure mode, and a CI that reads
+      // only the exit code cannot see it. Measured consequence: with the blob
+      // unavailable, an equal-length in-place mutation of the fixture body
+      // (`p.id !== panelId` → `p.id === panelId`) left the whole suite green,
+      // so the "fixture is byte-identical to the commit it claims to snapshot"
+      // claim was simply not being checked at all.
+      //
+      // The rule this restores: a guard must not report success for a check it
+      // did not run. So the default is a FAILURE, not a warning. The escape
+      // hatch is an explicit, greppable acknowledgement for environments where
+      // the commit is genuinely unreachable (shallow clone with the fix commit
+      // outside the fetched history, exported tarball, vendored source).
+      const acknowledgement =
+        'Set DATAZEN_ALLOW_MISSING_FIXTURE_BLOB=1 to acknowledge that this ' +
+        'provenance check did not run.';
+      if (process.env.DATAZEN_ALLOW_MISSING_FIXTURE_BLOB !== '1') {
+        throw new Error(
+          '[provenance] the byte-identity check did NOT run: git could not produce ' +
+            `${FIXTURE_SOURCE_COMMIT}^:${FIXTURE_SOURCE_PATH} (shallow clone / no git / ` +
+            `commit outside fetched history). Refusing to pass: an in-place, equal-length ` +
+            'edit of the fixture would go undetected in this state, which is exactly the ' +
+            'maintenance trap this layer exists to catch. ' +
+            acknowledgement,
+        );
+      }
+      // Acknowledged. Still not a silent pass — say what was not verified, and
+      // keep the two checks that need no git (a fixture that had drifted onto the
+      // post-fix API would still be caught).
       console.warn(
-        '[provenance] git blob for ' +
-          `${FIXTURE_SOURCE_COMMIT}^:${FIXTURE_SOURCE_PATH} unavailable (shallow clone?); ` +
-          'the byte-identity check was NOT run. Regenerate the fixture manually to verify.',
+        '[provenance] ACKNOWLEDGED SKIP — byte-identity NOT checked for ' +
+          `${FIXTURE_SOURCE_COMMIT}^:${FIXTURE_SOURCE_PATH}. ` +
+          'The fixture body is unverified against its source commit.',
       );
-      // Normalised comparison still catches a fixture that drifted from the shape
-      // of the store it claims to be: it must not mention the post-fix API.
       expect(body).not.toContain('focusedPaneIdByPanel');
       expect(body).toContain('focusedPaneId');
       return;

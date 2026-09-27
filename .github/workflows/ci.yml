@@ -72,7 +72,52 @@ jobs:
         continue-on-error: true
 
       - name: Frontend unit tests
+        # ── Explicit, acknowledged absence of the Pro package ───────────────
+        # `packages/pro-extensions/sql-editor-pro` is a SEPARATE git repository
+        # that the host gitignores (`.gitignore:68`). This job checks out the
+        # host repo only, so the Pro is structurally absent here — it is not
+        # fetched, not built, not tested.
+        #
+        # Four host guards (pack-ep's Pro integration, the proSettingsSeam host
+        # → EP → Pro guard, and scripts/pro-seam-gate.mjs) therefore cannot
+        # walk the Pro seam from this job. They are fail-by-default precisely
+        # so that this is a LOUD, named failure rather than a quiet green.
+        #
+        # Setting this variable does NOT mean "the Pro checks passed". It means
+        # "this checkout knowingly has no Pro repo" — the guards short-circuit
+        # and the Pro-side coverage stays UNTESTED here. The Pro's own suite is
+        # not run by any CI job; run it locally with `pnpm test:pro-seam`.
+        #
+        # ⚠️ REMOVE this env block the moment CI can obtain the Pro checkout
+        # (a checkout step / submodule / artifact fetch). With the Pro present
+        # these guards must run and must be green — do not leave the opt-out
+        # behind, or CI will report coverage it does not have.
+        #
+        # Note this is a *different* failure line from
+        # `packages/extension-points/src/__tests__/security.test.ts`, which
+        # ENOENTs on the Pro manifest in this same environment. Same root
+        # cause, but a distinct assertion: fixing one does not fix the other.
+        env:
+          DATAZEN_ALLOW_MISSING_PRO: '1'
         run: pnpm test:unit
+
+      - name: Cross-repo seam gate (Pro) — reported, not run
+        # Runs `scripts/pro-seam-gate.mjs`, which would execute the Pro
+        # typecheck + suite. This job has no Pro checkout, so with the opt-out it
+        # prints a loud SKIPPED banner and exits 0.
+        #
+        # The step exists so CI does NOT stay silent about the gap: an engineer
+        # reading the log can see that the Pro seam was untested here, rather
+        # than inferring "all green" from an absence of failures. Without this
+        # step the coverage hole is invisible by construction — which is the
+        # failure mode that let BUG-003 and G1 through.
+        #
+        # ⚠️ REMOVE the env block below together with the one on the unit-test
+        # step as soon as CI can obtain the Pro checkout. Then this step becomes
+        # a real gate and must go green.
+        env:
+          DATAZEN_ALLOW_MISSING_PRO: '1'
+        run: pnpm test:pro-seam
 
       - name: Check site changes
         id: site-changes
