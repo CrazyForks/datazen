@@ -1,6 +1,6 @@
 # BUG-002：编辑器挂载时多发一次 8 槽位重配事务
 
-- **状态**：待修复
+- **状态**：已修复（由 `4c528fc0a` 合流；round-1 复测判定通过，状态由复测方代翻——修复方属另一轨且从未碰过本文件，故按协调者授权代签）
 - **严重度**：低
 - **轨道**：ep-hooks-settings
 - **发现者**：Tester（第 1 轮）
@@ -133,3 +133,46 @@ appliedPayloadRef.current = proPayload;
 这正是本缺陷的最小可复现断言，也是防止回归的唯一护栏。
 注意：按 `docs/development/subagent/tester.md`，Tester 不修改业务代码，
 该测试在修复落地前会失败，建议由 Coder 在同一 commit 内补上。
+
+---
+
+## 复测记录（round-1）
+
+- **复测人**：全新 Tester 实例（未阅读第 1 轮报告，不采信任何台账数字）。
+- **复测基线**：`b93b804b2`（含修复 `4c528fc0a`）；**对照基线**：其父提交 `4c528fc0a^`。
+- **完整证据见**
+  `docs/development/coordination/tracks/compartment-retest/progress.md`（验收 1–5 与门禁全表），
+  本段不重述，仅给结论与判据。
+
+### 结论
+
+**已修复。** §一 描述的缺陷独立复现成立，修复后消失。
+
+- **【管线】** Tester 自写探针（`src/components/__tests__/SqlEditorMountRepro.tester.test.tsx`，
+  打桩 `EditorView.prototype.dispatch`，记录每笔事务的 `effects.length` 与发起它的 `SqlEditor.tsx` 栈帧）
+  在**同一文件**上跑两个基线：
+
+  | 探针 | 修复前 `4c528fc0a^` | 修复后 `4c528fc0a` |
+  | --- | --- | --- |
+  | 挂载 | `[8, null, null]` | `[null, null]` |
+  | 设置写入 | `[8]` | `[8]` |
+  | 全新实例二次挂载 | `[8, null, null]` | `[null, null]` |
+
+  修复前那笔 `effects=8` 的发起点为 `SqlEditor.tsx:536`（`reconfigureProCompartments` 调用行），
+  与本文件 §三 的结论一致，且**在全新组件实例上同样复现**（说明缺陷对每个挂载成立，
+  不限于首个实例）。
+- **【变异】** 删除 `SqlEditor.tsx` 挂载 effect 内的 `appliedPayloadRef.current = proPayload`：
+  **3 例转红**（Tester 探针 ×2 + Coder 的 `SqlEditorProMountTransaction` ×1）⇒ 防线承重，无洞。
+- **未过度修复**：§三 中那两笔 `effects=0` 的单槽位事务（主题预设 / SQL 舱位）
+  修复前后**均在**，发起行为 `SqlEditor.tsx:578` / `:588`（修复前 `:559` / `:569`，仅行号平移）。
+  它们各自 `effects` 是单个 `StateEffect` 而非数组，故对舱位批计数贡献 0 —— 与本文件原表述一致。
+- **§五 期望行为已达成**：重配 effect 只在 `proPayload` **真正变化**后动作；
+  既有验收 `SqlEditorProSettingsJourney > sends one settings write through as a single reconfiguration`
+  （`expect(dispatches).toBe(1)`）绿。
+- **§四.5「注释在说谎」已消除**：`SqlEditor.tsx:551-553` 现在描述的行为与实测一致。
+  §三「补充实测：工厂没有被重复调用」本轮**未**重做——该结论与本缺陷的修复无关，
+  且修复后挂载本就不再发冗余事务，该风险面已被进一步收窄。列为本轮未独立验证项。
+
+### 门禁（复测方实测）
+
+`npx tsc --noEmit` exit 0；`npx vitest run` 478 文件 / 4781 用例全绿。

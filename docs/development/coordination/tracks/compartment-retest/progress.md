@@ -31,12 +31,15 @@ Tester 自写探针 `src/components/__tests__/SqlEditorMountRepro.tester.test.ts
 
 **BUG-003 死分支独立确认**
 
-- 【管线】把已删除的 `if (id === EXTRA_COMPARTMENT_ID) continue;` **重新插回**，
+- 【管线 · 覆盖率驱动，本判据等级最高的一档】把已删除的
+  `if (id === EXTRA_COMPARTMENT_ID) continue;` **重新插回**，
   对 `proCompartments.ts` 跑 v8 覆盖率并用 `coverage-final.json` 精确定位分支计数：
   `id=7 type=if loc=184:8 counts=[0, 7]` —— **命中 0 次，未命中 7 次**。
+  这不是"读代码推断不可达"，而是**真实执行中该行从未被触及**的机器证据。
 - 【变异】守卫插回后 `proCompartments.test.ts` + `proCompartments.tester.test.ts` **22 例全绿**，
   即该行对可观测行为零影响。
-- 【机制】分类谓词 `compartment && compartment.get(view.state) !== undefined`（`:161`）
+- 【机制 · 仅作辅证，不与上面两档同句并置】分类谓词
+  `compartment && compartment.get(view.state) !== undefined`（`:161`）
   与外层守卫 `extraCompartment && extraCompartment.get(view.state) !== undefined`（`:174`）**逐字相同**；
   两次读的是同一个 `view.state`（其间无任何 dispatch），故外层守卫为真时 `extra` 必已归入 `directIds`。
 
@@ -166,12 +169,18 @@ File               | % Stmts | % Branch | % Funcs | % Lines
    `tracks/ep-hooks-settings/bugs/ep-hooks-settings-BUG-002.md` 与 `-003.md`**。
    ⇒ 本次**未**按虚构编号建档；`compartment-retest/progress.md`（本文件）是本轨留档。
 
-2. **两条 bug 台账状态行陈旧**。`ep-hooks-settings-BUG-002.md` 与 `-003.md` 的
-   `- **状态**：` 至今仍是 `待修复`，且文件末尾**无** `## 修复记录` 块——
-   尽管 `4c528fc0a` 已修。按 tester.md §3，该行归修复者所有，本次复测**未越界改写他轨台账**。
-   建议协调者指派原 Coder 补 `## 修复记录（round-1）` 并翻状态，或授权本 Tester 追加
-   `## 复测记录（round-1）` 并改判 `已修复`（证据见上，可直接引用）。
+2. **两条 bug 台账状态行陈旧 —— ✅ 已按协调者授权代翻（round-1 收尾）**。
+   `ep-hooks-settings-BUG-002.md` 与 `-003.md` 的 `- **状态**：` 原本在 `4c528fc0a` 修复落地后
+   仍是 `待修复`、且无 `## 修复记录` 块。复测方初版**未越界改写他轨台账**，
+   经协调者裁决授权后已：改判 `已修复（……状态由复测方代翻）` 并各追加
+   `## 复测记录（round-1）`（只指向本文件，不重述证据）。两条 bug 的**修复记录块仍缺**，
+   需原 Coder 按 §写面所有权自行补 `## 修复记录（round-1）`。
 
-3. **M2 仅 1 条用例承重**（见验收 4 表格下方）。若后续有人重构 `reconfigureProCompartments`，
-   建议把「payload 不含 `extra`」的边界固化到 `proCompartments.tester.test.ts` 而非只留在
-   `proCompartments.test.ts` 单点。
+3. **【留档观察，不建 bug 文件】M2 兜底目前仅 1 条用例承重**。
+   上一任 Tester 的 `proCompartments.tester.test.ts` 四条 overflow 用例**每条都在 payload 里带了
+   `extra` 键**，故**全都拦不住** `?? []` 被删；M2 变异下只有 Coder 那条转红。
+   协调者裁定：**登记为观察，不要求补测**——该分支的防御纵深来自
+   「`proCompartments.ts` 四项 100%」这个显式实测，不来自用例条数；且实质加强的正确方向不是再加
+   同类用例，而是让既有 overflow 用例中至少一条不带 `extra`，那属于修改他人测试意图，代价大于收益。
+   **已在 `proCompartments.tester.test.ts` 的 overflow describe 块加一行注释**：
+   *若将来有人重构 overflow 用例，注意勿让全部用例都携带 `extra`，否则该 `?? []` 兜底会失去覆盖。*
