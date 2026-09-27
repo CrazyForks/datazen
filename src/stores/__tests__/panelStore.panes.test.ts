@@ -72,7 +72,6 @@ describe('panelStore pane dimension', () => {
   let isPaneKeyOfPanel: typeof import('../paneKeys').isPaneKeyOfPanel;
   let resolveFocusedPaneId: typeof import('../paneKeys').resolveFocusedPaneId;
   let paneArgs: typeof import('../paneKeys').paneArgs;
-  type Panel = import('../panelStore').Panel;
   type QueryPanel = import('../panelStore').QueryPanel;
 
   const PANEL_ID = 'panel-q-1';
@@ -88,6 +87,8 @@ describe('panelStore pane dimension', () => {
       connectionName: 'TestDB',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
+      schema: null,
     };
   }
 
@@ -212,6 +213,8 @@ describe('panelStore pane dimension', () => {
       connectionName: 'TestDB',
       dbSessionId: 'sess-1',
       databaseType: 'postgresql',
+      database: 'app',
+      tableSchema: 'public',
     });
 
     usePanelStore.getState().openPane('missing-panel', PANE_2);

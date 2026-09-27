@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
-import { render, fireEvent, cleanup, screen, act, waitFor } from '@testing-library/react';
+import { render, fireEvent, cleanup, screen, act } from '@testing-library/react';
 import { QueryPanel } from '../QueryPanel';
 import {
   usePanelStore,
@@ -245,6 +245,8 @@ describe('QueryPanel routes editor actions to the focused pane', () => {
           connectionName: 'Test connection',
           databaseType: 'postgresql',
           title: 'Test query',
+          database: 'app',
+          schema: null,
         } satisfies QueryPanelState,
       ],
       // Two panes of the same tab: the default one and a secondary one.
@@ -263,7 +265,10 @@ describe('QueryPanel routes editor actions to the focused pane', () => {
       executeQuery: spies.executeQuery,
       executeSelection: spies.executeSelection,
       cancelQuery: spies.cancelQuery,
-    } as Partial<ReturnType<typeof usePanelStore.getState>>);
+      // Only the handful of store fields this test overrides; the rest keep
+      // their real implementations. `unknown` bridges the PanelState &
+      // PanelActions intersection that `getState()` returns.
+    } as unknown as Partial<ReturnType<typeof usePanelStore.getState>>);
   });
 
   function editor(): RecordedEditorProps {
@@ -278,6 +283,8 @@ describe('QueryPanel routes editor actions to the focused pane', () => {
         dbSessionId="sess-conn-1"
         connectionId="cfg-1"
         databaseType="postgresql"
+        database="app"
+        schema={null}
       />,
     );
   }
