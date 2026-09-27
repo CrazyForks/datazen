@@ -393,6 +393,7 @@ export function ContentView({
         openCreateSchema: () => setCreateSchemaOpen(true),
         openCreateUser: () => setCreateUserOpen(true),
         openErDiagram: handlers.handleOpenErDiagram,
+        openTableStructure: handlers.handleOpenStructure,
         refresh: handlers.handleRefresh,
         openObject: handlers.handleOpenDbObject,
         openTableAction: handlers.handleOpenTableAction,

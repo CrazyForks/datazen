@@ -846,6 +846,10 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             },
             onGenerateSelect:
               kind === 'table' ? () => void handleGenerateTableSql('select') : undefined,
+            onOpenStructure:
+              kind === 'table' && viewActions?.openTableStructure
+                ? () => viewActions.openTableStructure?.(name)
+                : undefined,
             onGenerateInsert:
               kind === 'table' ? () => void handleGenerateTableSql('insert') : undefined,
             onGenerateUpdate:
@@ -978,6 +982,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
           readOnly,
           safeMode,
           showErFocus: supportsErDiagram,
+          showOpenStructure: Boolean(viewActions?.openTableStructure),
         }),
         { x: e.clientX, y: e.clientY },
       );

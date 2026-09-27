@@ -44,6 +44,13 @@ export interface ConnectionViewActions {
   openCreateSchema?: () => void;
   openCreateUser?: () => void;
   openErDiagram: (focusTable?: string, database?: string) => void;
+  /**
+   * Open a table's structure. The navigator's table context menu needs this to
+   * offer 打开结构 — `buildSchemaTreeContextMenuItems` drops the item unless
+   * `showOpenStructure` is set, and the navigator has no other way to know the
+   * host exposes a structure action.
+   */
+  openTableStructure?: (tableName: string) => void;
   refresh: () => void;
   openObject?: (
     kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',

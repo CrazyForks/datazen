@@ -744,6 +744,7 @@ export function ConnectionPage() {
                     openCreateSchema: () => actionsRef.current?.openCreateSchema?.(),
                     openCreateUser: () => actionsRef.current?.openCreateUser?.(),
                     openErDiagram: (...args) => actionsRef.current?.openErDiagram(...args),
+                    openTableStructure: (name) => actionsRef.current?.openTableStructure?.(name),
                     refresh: () => actionsRef.current?.refresh(),
                     openObject: (...args) => actionsRef.current?.openObject?.(...args),
                     openQueryHistory: () => actionsRef.current?.openQueryHistory?.(),
