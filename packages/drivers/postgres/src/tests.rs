@@ -522,3 +522,103 @@ fn apply_select_limit_is_independent_of_subquery_limit() {
         ("INSERT INTO t VALUES (1)".into(), None)
     );
 }
+
+/// 回归：流式执行必须把面板选中的库解析成对应的连接池。
+///
+/// 背景：`query_stream_with_execution` 只拿到会话默认库，于是查询面板里选的
+/// database 被静默丢弃，SQL 永远跑在默认库上（报 `relation does not exist`）。
+/// `pin_query_execution_pool` 是修复的关键一步，这里覆盖它的三条约束。
+mod stream_target_pool {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+
+    fn lazy_pool() -> sqlx::PgPool {
+        PgPoolOptions::new()
+            .connect_lazy("postgres://127.0.0.1:1/none")
+            .expect("connect_lazy never dials")
+    }
+
+    async fn registered(
+        driver: &PostgresDriver,
+        handle: &ConnectionHandle,
+        id: &QueryExecutionId,
+    ) -> sqlx::PgPool {
+        driver.query_executions.lock().await.insert(
+            id.clone(),
+            PgQueryExecution {
+                session_id: handle.id.clone(),
+                target_pool: None,
+                control_pool: None,
+                backend_pid: None,
+                cancel_requested: false,
+                transactional: false,
+            },
+        );
+        lazy_pool()
+    }
+
+    #[tokio::test]
+    async fn pin_installs_the_resolved_target_pool() {
+        let driver = PostgresDriver::new();
+        let handle = ConnectionHandle {
+            id: "s".into(),
+            pool_id: "p".into(),
+        };
+        let id = QueryExecutionId::new("exec-pin");
+        let pool = registered(&driver, &handle, &id).await;
+
+        driver
+            .pin_query_execution_pool(&handle, &id, pool.clone())
+            .await
+            .unwrap();
+
+        let stored = driver.query_executions.lock().await;
+        assert!(
+            stored[&id].target_pool.is_some(),
+            "target pool must be installed"
+        );
+    }
+
+    #[tokio::test]
+    async fn pin_rejects_a_foreign_session() {
+        let driver = PostgresDriver::new();
+        let handle = ConnectionHandle {
+            id: "s".into(),
+            pool_id: "p".into(),
+        };
+        let id = QueryExecutionId::new("exec-foreign");
+        let pool = registered(&driver, &handle, &id).await;
+
+        let other = ConnectionHandle {
+            id: "other".into(),
+            pool_id: "p".into(),
+        };
+        let err = driver
+            .pin_query_execution_pool(&other, &id, pool)
+            .await
+            .expect_err("a stream must not repin another session's execution");
+        assert!(
+            matches!(err, DriverError::QueryExecutionSessionMismatch),
+            "got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn pin_reports_an_unregistered_execution() {
+        let driver = PostgresDriver::new();
+        let handle = ConnectionHandle {
+            id: "s".into(),
+            pool_id: "p".into(),
+        };
+        let id = QueryExecutionId::new("exec-missing");
+
+        let err = driver
+            .pin_query_execution_pool(&handle, &id, lazy_pool())
+            .await
+            .expect_err("an unregistered execution cannot be pinned");
+        assert!(
+            matches!(err, DriverError::QueryExecutionNotFound(_)),
+            "got {err:?}"
+        );
+    }
+}

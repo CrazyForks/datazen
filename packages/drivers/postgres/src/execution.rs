@@ -48,7 +48,7 @@ impl PostgresDriver {
     /// database inside it would silently read the wrong catalog, so it is an
     /// error rather than a wrong answer. Without an open transaction the
     /// statement simply runs on that database's own pool, so nothing to check.
-    async fn ensure_transaction_reaches(
+    pub(crate) async fn ensure_transaction_reaches(
         &self,
         handle: &ConnectionHandle,
         target: SqlTarget<'_>,
@@ -305,6 +305,30 @@ impl PostgresDriver {
                 stmt_start.elapsed().as_millis() as u64,
             );
         }
+        Ok(())
+    }
+
+    /// Re-pin a registered execution to a target pool.
+    ///
+    /// [`Self::prepare_query_execution_impl`] snapshots the session's default
+    /// pool, which is what a target-less stream wants. The target-aware stream
+    /// resolves the right pool per statement and installs it here before the
+    /// statements run, so [`Self::stream_registered_execution`] acquires from
+    /// the database the caller asked for.
+    pub(crate) async fn pin_query_execution_pool(
+        &self,
+        handle: &ConnectionHandle,
+        execution_id: &QueryExecutionId,
+        pool: PgPool,
+    ) -> Result<(), DriverError> {
+        let mut executions = self.query_executions.lock().await;
+        let execution = executions.get_mut(execution_id).ok_or_else(|| {
+            DriverError::QueryExecutionNotFound(execution_id.as_str().to_string())
+        })?;
+        if execution.session_id != handle.id {
+            return Err(DriverError::QueryExecutionSessionMismatch);
+        }
+        execution.target_pool = Some(pool);
         Ok(())
     }
 
