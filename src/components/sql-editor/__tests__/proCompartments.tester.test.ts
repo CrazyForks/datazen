@@ -106,6 +106,13 @@ describe('[tester] proSettingFlag', () => {
   });
 });
 
+// [tester] Coverage caveat, not an assertion: every case in this block puts
+// `extra` in the payload, so none of them would catch the removal of the
+// `payload[EXTRA_COMPARTMENT_ID] ?? []` fallback in `reconfigureProCompartments`.
+// That fallback's only guard today is the single case
+// `'merges overflow into a mounted \`extra\` the payload never names'` in
+// `proCompartments.test.ts`. If you rework these cases, keep at least one that
+// omits `extra` from the payload — otherwise that fallback silently loses cover.
 describe('[tester] late-announced slots merge into `extra`', () => {
   it('folds an unregistered id into the mounted `extra` slot, preserving order', () => {
     const view = makeView({ [EXTRA_COMPARTMENT_ID]: [slot('base')] });
