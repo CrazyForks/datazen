@@ -27,8 +27,11 @@ export function Dialog({
   footer,
   className,
   testId,
-  closeLabel = 'Close',
+  closeLabel: closeLabelProp,
 }: DialogProps) {
+  // `||` rather than a `= 'Close'` default parameter, which does not trigger on
+  // an empty string: an empty accessible name is never what a caller wants.
+  const closeLabel = closeLabelProp || 'Close';
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const titleId = useId();

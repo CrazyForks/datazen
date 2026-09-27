@@ -1,8 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { AlertCircle, Check, CheckCircle2, Copy } from 'lucide-react';
 import { useI18n } from './i18n';
 import { Button } from './Button';
 import { Dialog } from './Dialog';
+import { useCopyFeedback } from './useCopyFeedback';
 
 export interface ResultMessageDialogProps {
   open: boolean;
@@ -10,7 +11,7 @@ export interface ResultMessageDialogProps {
   message: string;
   /**
    * Accessible label for the header close button. Defaults to the localized
-   * `common.close`; pass an explicit value to override it.
+   * `common.close`; pass an explicit non-empty value to override it.
    */
   closeLabel?: string;
   onClose: () => void;
@@ -28,21 +29,9 @@ export function ResultMessageDialog({
   onClose,
 }: ResultMessageDialogProps) {
   const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
 
-  const handleCopy = useCallback(() => {
-    // Optimistic: flip the label synchronously so the click reads as instant,
-    // then roll back if the write rejects. Telling the user "Copied" for a
-    // write that never landed is a lie, and the previous bare `void writeText()`
-    // also leaked an unhandled rejection on top of it. Matches the guard style
-    // already used by ConfirmDialog.handleCopy in this package.
-    setCopied(true);
-    const timer = window.setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS);
-    void navigator.clipboard.writeText(message).catch(() => {
-      window.clearTimeout(timer);
-      setCopied(false);
-    });
-  }, [message]);
+  const handleCopy = useCallback(() => copy(message), [copy, message]);
 
   return (
     <Dialog
@@ -50,7 +39,7 @@ export function ResultMessageDialog({
       title={kind === 'error' ? t('common.error') : t('common.success')}
       onClose={onClose}
       className="max-w-sm"
-      closeLabel={closeLabel ?? t('common.close')}
+      closeLabel={closeLabel || t('common.close')}
       footer={
         <div className="flex w-full items-center justify-between gap-2">
           {kind === 'error' ? (

@@ -1,8 +1,9 @@
 import { AlertTriangle, Copy } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { Button } from './Button';
 import { Dialog } from './Dialog';
 import { useI18n } from './i18n';
+import { useCopyFeedback } from './useCopyFeedback';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -19,7 +20,7 @@ export interface ConfirmDialogProps {
   description?: string;
   /**
    * Accessible label for the header close button. Defaults to the localized
-   * `common.close`; pass an explicit value to override it.
+   * `common.close`; pass an explicit non-empty value to override it.
    */
   closeLabel?: string;
   onConfirm: () => void;
@@ -28,6 +29,13 @@ export interface ConfirmDialogProps {
 
 const CODE_PREVIEW_MAX_LINES = 12;
 const CODE_PREVIEW_MAX_CHARS = 2000;
+
+/**
+ * Longer than the other copy affordances in this package: this one sits inside
+ * a confirmation for a destructive action, so the user gets more time to notice
+ * what they just copied.
+ */
+const COPIED_FEEDBACK_MS = 2000;
 
 function truncateCodePreview(raw: string): { text: string; truncated: boolean } {
   const lines = raw.split('\n');
@@ -53,18 +61,12 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
 
-  const handleCopy = useCallback(async () => {
+  const handleCopy = useCallback(() => {
     if (!codePreview) return;
-    try {
-      await navigator.clipboard.writeText(codePreview);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* clipboard unavailable — silent fail */
-    }
-  }, [codePreview]);
+    copy(codePreview);
+  }, [copy, codePreview]);
 
   const preview = codePreview ? truncateCodePreview(codePreview) : null;
 
@@ -74,7 +76,7 @@ export function ConfirmDialog({
       title={title}
       onClose={onCancel}
       className="max-w-lg"
-      closeLabel={closeLabel ?? t('common.close')}
+      closeLabel={closeLabel || t('common.close')}
       footer={
         <>
           <Button
@@ -125,7 +127,7 @@ export function ConfirmDialog({
               </span>
               <button
                 type="button"
-                onClick={() => void handleCopy()}
+                onClick={handleCopy}
                 className="flex items-center gap-1 text-[10px] text-fg-muted hover:text-fg"
                 data-testid="confirm-dialog-copy-sql"
               >
