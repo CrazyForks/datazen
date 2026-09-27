@@ -36,14 +36,34 @@ function dbIndexFromName(dbName: string): number {
  */
 const TOP_LEVEL = 1;
 
-function treeItemLevel(depth: number): number {
-  return depth + TOP_LEVEL;
+/** The depth `buildFlatRows` paints a connection's first child at. */
+const FIRST_CHILD_DEPTH = 2;
+
+/**
+ * The level a screen reader announces, which follows the logical parent rather
+ * than the painted indent.
+ *
+ * Search drops the section/group header and moves connections to depth 0, but
+ * every descendant keeps its absolute depth, so a database is still painted at
+ * depth 2. Reading that as `depth + 1` would announce it at level 3 under a
+ * level-1 connection, telling the user about a level-2 parent that does not
+ * exist. The visual indent stays as painted — only the level moves.
+ */
+function treeItemLevel(depth: number, searchCollapsed: boolean): number {
+  const collapsed = searchCollapsed && depth >= FIRST_CHILD_DEPTH;
+  return depth + TOP_LEVEL - (collapsed ? 1 : 0);
 }
 
 export type GroupDropTarget = { groupName: string; target: 'header' | 'empty' };
 
 export interface NavigatorTreeRowProps {
   row: UnifiedRow;
+  /**
+   * True while a search query is active, which removes the section/group level
+   * from the tree. It shifts the reported `aria-level` only — the painted
+   * indent still comes from `UnifiedRow.depth`.
+   */
+  searchCollapsed: boolean;
   t: (key: I18nKey, params?: Record<string, string | number>) => string;
   connections: ConnectionConfig[];
   activeConnections: Record<string, ConnectionEntry | undefined>;
@@ -126,6 +146,7 @@ export function NavigatorTreeRow({
   activeConnections,
   dropTarget,
   expandedDbs,
+  searchCollapsed,
   onNewConnection,
   onSelectConnection,
   onSelectTable,
@@ -212,6 +233,7 @@ export function NavigatorTreeRow({
           data-group-name={row.groupName}
           role="treeitem"
           aria-level={TOP_LEVEL}
+          aria-expanded={row.expanded}
           className={cn(
             'flex cursor-pointer select-none items-center gap-1.5 px-2 py-1 transition-colors hover:bg-surface-raised/50',
             isDropTarget && 'bg-accent/20 ring-1 ring-accent rounded-sm',
@@ -250,6 +272,10 @@ export function NavigatorTreeRow({
       const showDropAfter =
         isTargetGroup && dropTarget?.id === row.conn.id && dropTarget.position === 'after';
       const matchTitle = row.match ? `${row.match.reason}: ${row.match.context}` : undefined;
+      // Shared by the treeitem and its chevron button so they cannot drift: a
+      // screen reader walks the treeitem, so the connection has to say so there.
+      const expandedState =
+        row.status === 'connected' || row.status === 'connecting' ? row.expanded : undefined;
 
       return (
         <div
@@ -265,7 +291,8 @@ export function NavigatorTreeRow({
             data-conn-name={row.conn.name}
             data-conn-group={row.sectionGroup}
             role="treeitem"
-            aria-level={treeItemLevel(row.depth)}
+            aria-level={treeItemLevel(row.depth, searchCollapsed)}
+            aria-expanded={expandedState}
             draggable
             onDragStart={(e) => handleDragStart(e, row.conn.id)}
             onDragOver={(e) => handleDragOver(e, row.conn.id, row.sectionGroup)}
@@ -299,9 +326,7 @@ export function NavigatorTreeRow({
                 }
               }}
               onDoubleClick={(e) => e.stopPropagation()}
-              aria-expanded={
-                row.status === 'connected' || row.status === 'connecting' ? row.expanded : undefined
-              }
+              aria-expanded={expandedState}
             >
               {(row.status === 'connected' || row.status === 'connecting') && row.expanded ? (
                 <ChevronDown className="h-3 w-3" />
@@ -328,7 +353,7 @@ export function NavigatorTreeRow({
           data-tree-node="db"
           data-db-name={row.dbName}
           role="treeitem"
-          aria-level={treeItemLevel(row.depth)}
+          aria-level={treeItemLevel(row.depth, searchCollapsed)}
           aria-expanded={row.expanded}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] hover:bg-surface-raised text-fg-secondary"
           style={{ paddingLeft: depthPadding(row.depth) }}
@@ -371,7 +396,7 @@ export function NavigatorTreeRow({
           data-tree-node="schema"
           data-schema-name={row.schemaName}
           role="treeitem"
-          aria-level={treeItemLevel(row.depth)}
+          aria-level={treeItemLevel(row.depth, searchCollapsed)}
           aria-expanded={row.expanded}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] hover:bg-surface-raised text-fg-secondary"
           style={{ paddingLeft: depthPadding(row.depth) }}
@@ -403,7 +428,7 @@ export function NavigatorTreeRow({
           data-tree-node="category"
           data-cat-id={row.cat.id}
           role="treeitem"
-          aria-level={treeItemLevel(row.depth)}
+          aria-level={treeItemLevel(row.depth, searchCollapsed)}
           aria-expanded={row.expanded}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] text-fg-secondary hover:bg-surface-raised"
           style={{ paddingLeft: depthPadding(row.depth) }}
@@ -442,7 +467,7 @@ export function NavigatorTreeRow({
           data-tree-node={row.catId === 'views' ? 'view' : 'table'}
           data-item-name={row.item.name}
           role="treeitem"
-          aria-level={treeItemLevel(row.depth)}
+          aria-level={treeItemLevel(row.depth, searchCollapsed)}
           draggable
           onDragStart={(e) => {
             const sel = window.getSelection();
@@ -505,7 +530,7 @@ export function NavigatorTreeRow({
           data-tree-node={row.catId}
           data-item-name={row.obj.name}
           role="treeitem"
-          aria-level={treeItemLevel(row.depth)}
+          aria-level={treeItemLevel(row.depth, searchCollapsed)}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] text-fg-secondary hover:bg-surface-raised"
           style={{ paddingLeft: depthPadding(row.depth) }}
           onClick={() => {
@@ -534,7 +559,7 @@ export function NavigatorTreeRow({
           data-tree-node="kv-db"
           data-db-name={row.dbName}
           role="treeitem"
-          aria-level={treeItemLevel(row.depth)}
+          aria-level={treeItemLevel(row.depth, searchCollapsed)}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] hover:bg-surface-raised text-fg-secondary"
           style={{ paddingLeft: depthPadding(row.depth) }}
           onClick={() => {
@@ -567,7 +592,7 @@ export function NavigatorTreeRow({
       return (
         <div
           role="treeitem"
-          aria-level={treeItemLevel(row.depth)}
+          aria-level={treeItemLevel(row.depth, searchCollapsed)}
           className="flex items-center gap-2 py-1 text-xs text-fg-muted"
           style={{ paddingLeft: depthPadding(row.depth) }}
         >
@@ -594,7 +619,7 @@ export function NavigatorTreeRow({
             data-tree-node={menuKind}
             data-item-name={row.name}
             role="treeitem"
-            aria-level={treeItemLevel(row.depth)}
+            aria-level={treeItemLevel(row.depth, searchCollapsed)}
             draggable
             onDragStart={(e) => {
               const sel = window.getSelection();
@@ -692,7 +717,8 @@ export function NavigatorTreeRow({
           data-testid="schema-tree-node"
           data-tree-node="namespace"
           role="treeitem"
-          aria-level={treeItemLevel(row.depth)}
+          aria-level={treeItemLevel(row.depth, searchCollapsed)}
+          aria-expanded={row.expanded}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-[13px] text-fg-secondary hover:bg-surface-raised"
           style={{ paddingLeft: depthPadding(row.depth) }}
           onClick={() => {

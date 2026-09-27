@@ -3768,13 +3768,13 @@ describe('ConnectionNavigatorTree ARIA tree shape audit', () => {
     );
   });
 
-  // ── Known-broken contracts ────────────────────────────────────────────
+  // ── Level and expansion state contracts ───────────────────────────────
   //
-  // `it.fails` pins a contract the current DOM does not meet: the suite stays
-  // green while the defect stands and goes red the moment someone fixes it,
-  // which is the signal to delete the `.fails`.
+  // Every treeitem that owns children has to announce that state: a level the
+  // reader can resolve to a real parent, and an aria-expanded the reader can
+  // hear change. These were `it.fails` while the DOM did not meet them.
 
-  it.fails(
+  it(
     'search results must not skip a level: a db is one level under its connection',
     async () => {
       const { container, findByText } = await renderWithSqlite(
@@ -3785,8 +3785,9 @@ describe('ConnectionNavigatorTree ARIA tree shape audit', () => {
       await findByText('settings');
 
       // Searching drops the section/group header (buildFlatRows only emits one
-      // when `!query`) and moves connections to depth 0 — but databases stay at
-      // depth 2, so the tree jumps 1 → 3.
+      // when `!query`) and moves connections to depth 0, while databases stay
+      // painted at depth 2. The reported level follows the logical parent
+      // rather than that indent, so the connection owns the database directly.
       fireEvent.change(searchInput(container), { target: { value: 'SQLite' } });
       await waitFor(() => {
         expect(container.querySelector('[data-group-header]')).toBeNull();
@@ -3798,7 +3799,7 @@ describe('ConnectionNavigatorTree ARIA tree shape audit', () => {
     },
   );
 
-  it.fails(
+  it(
     'a group header is a treeitem with children, so it must expose aria-expanded',
     async () => {
       connectionsState.connections = [makeConn({ id: 'cfg-a1', name: 'A One', group: 'Group A' })];
@@ -3809,11 +3810,22 @@ describe('ConnectionNavigatorTree ARIA tree shape audit', () => {
         <ConnectionNavigatorTree {...baseProps} activeConnectionId={null} />,
       );
       const header = (await findByText('Group A')).closest('[data-group-header]')!;
-      expect(header.getAttribute('aria-expanded')).toBe('false');
+      expect(header.getAttribute('aria-level')).toBe('1');
+      // Groups are seeded expanded on mount (ConnectionNavigatorTree expands
+      // every known group on the first effect), so the contract to pin is that
+      // the attribute exists and tracks the toggle, not a fixed initial value.
+      expect(header.getAttribute('aria-expanded')).toBe('true');
+
+      fireEvent.click(header);
+      await waitFor(() => {
+        expect(
+          document.querySelector('[data-group-header]')?.getAttribute('aria-expanded'),
+        ).toBe('false');
+      });
     },
   );
 
-  it.fails(
+  it(
     'a connection treeitem must carry aria-expanded itself, not only its chevron button',
     async () => {
       const { container, findByText } = await renderWithSqlite(
@@ -3832,7 +3844,7 @@ describe('ConnectionNavigatorTree ARIA tree shape audit', () => {
     },
   );
 
-  it.fails(
+  it(
     'an expanded namespace branch is a treeitem with children and needs aria-expanded',
     async () => {
       connectionsState.connections = [
@@ -3855,14 +3867,20 @@ describe('ConnectionNavigatorTree ARIA tree shape audit', () => {
       });
       await findByText('public');
 
-      const branch = container.querySelector('[data-tree-node="namespace"]')!;
+      // A path-hierarchy driver paints one branch per path prefix, and branches
+      // share `data-tree-node="namespace"` with no name of their own, so pick
+      // the one under test by its label rather than by first match.
+      const branch = (await findByText('public')).closest('[data-tree-node="namespace"]')!;
       expect(branch.getAttribute('aria-expanded')).toBe('false');
 
       fireEvent.click(branch);
       await waitFor(() => {
         expect(container.querySelector('[data-item-name="users"]')).not.toBeNull();
       });
-      expect(branch.getAttribute('aria-expanded')).toBe('true');
+      // Re-resolve: expanding loads the path and adds sibling branches, so the
+      // node instance captured before the click must not be reused.
+      const expanded = (await findByText('public')).closest('[data-tree-node="namespace"]')!;
+      expect(expanded.getAttribute('aria-expanded')).toBe('true');
     },
   );
 });

@@ -339,9 +339,9 @@ describe('连接树 ARIA tree 语义 (NAV-ARIA)', () => {
     }
   });
 
-  // ── 搜索模式：已知跳级缺陷（留待修复后反转断言） ──────────────────
+  // ── 搜索模式 ─────────────────────────────────────────────────────────
 
-  it('搜索模式下的 level 跳级是已知缺陷 (DEFECT-1)', async () => {
+  it('搜索模式下不跳级：db 是 connection 的直接子节点', async () => {
     const input = await $(
       `input[placeholder="${t('main.searchPlaceholder')}"], [data-testid="connection-search-input"]`,
     );
@@ -350,12 +350,10 @@ describe('连接树 ARIA tree 语义 (NAV-ARIA)', () => {
     await input.setValue(first ? first.label.split(':').slice(1).join(':') : 'a');
     await browser.pause(800);
 
-    const violations = await structuralViolations();
-    // 搜索态没有分组/分区表头，connection 直接是 level 1，而 db/kv-db
-    // 仍然停在 depth 2（level 3），中间没有 level 2 祖先 —— 这是已知缺陷。
-    // 修复 buildFlatRows 的搜索态 depth 后，这里应改为 toEqual([])。
-    expect(violations.length).toBeGreaterThan(0);
-    expect(violations.join('\n')).toMatch(/aria-level \d+ has no aria-level \d+ ancestor/);
+    // 搜索态没有分组/分区表头，connection 直接是 level 1；db/kv-db 虽然仍
+    // 按 depth 2 缩进绘制，但 aria-level 跟随逻辑父节点报 level 2，
+    // 因此不存在断层的 level。
+    expect(await structuralViolations()).toEqual([]);
 
     await input.clearValue();
     await browser.pause(600);

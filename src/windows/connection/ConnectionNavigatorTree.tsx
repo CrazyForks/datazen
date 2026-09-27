@@ -884,6 +884,7 @@ export const ConnectionNavigatorTree = forwardRef<
             >
               <NavigatorTreeRow
                 row={flatRows[virtualRow.index]}
+                searchCollapsed={query !== ''}
                 t={t}
                 connections={connections}
                 activeConnections={activeConnections}
