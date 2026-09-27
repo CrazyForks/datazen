@@ -14,6 +14,11 @@ export interface LimitationsDialogProps {
   limitationKeys: readonly string[];
   /** Prefix for data-testid attributes (e.g. "schema-diff" → "schema-diff-limitations-dialog") */
   testIdPrefix: string;
+  /**
+   * Accessible label for the header close button. Defaults to the localized
+   * `common.close`; pass an explicit value to override it.
+   */
+  closeLabel?: string;
   /** Called when user checks "don't show again" and closes */
   onDismiss?: () => void;
 }
@@ -25,6 +30,7 @@ export function LimitationsDialog({
   dontShowAgainKey,
   limitationKeys,
   testIdPrefix,
+  closeLabel,
   onDismiss,
 }: LimitationsDialogProps) {
   const { t } = useI18n();
@@ -44,7 +50,7 @@ export function LimitationsDialog({
       onClose={handleClose}
       title={t(titleKey)}
       testId={`${testIdPrefix}-limitations-dialog`}
-      closeLabel={t('common.close')}
+      closeLabel={closeLabel ?? t('common.close')}
       footer={
         <Button
           variant="primary"

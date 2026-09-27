@@ -3,7 +3,7 @@
  * clipboard copy action with its "copied" confirmation state.
  */
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
-import { render, fireEvent, cleanup, screen, act } from '@testing-library/react';
+import { render, fireEvent, cleanup, screen, act, waitFor } from '@testing-library/react';
 import { CopyableError } from '../CopyableError';
 
 vi.mock('../i18n', () => ({
@@ -74,21 +74,24 @@ describe('CopyableError', () => {
   });
 
   /**
-   * KNOWN DEFECT (pre-existing, not introduced by the @datazen/ui move):
-   * `handleCopy` does `void navigator.clipboard.writeText(message); setCopied(true)`
-   * with no `.catch`, so a rejected clipboard write (permission denied, insecure
-   * context) both raises an unhandled rejection AND still claims "Copied" to the
-   * user. `ConfirmDialog.handleCopy` in the same package does guard the rejection,
-   * so the two copy buttons are inconsistent. `it.fails` records the correct
-   * contract and turns RED automatically once the component is fixed.
+   * The copy action is optimistic — it flips to "Copied" synchronously so the
+   * click reads as instant — but a rejected clipboard write (permission denied,
+   * insecure context) must roll that state back. Claiming success for a write
+   * that never landed is a lie, and the unguarded `void writeText()` this
+   * replaced also leaked an unhandled rejection.
+   *
+   * `waitFor` (not a single `await Promise.resolve()`) because the rollback
+   * reaches the DOM only once React commits the re-render, which lands a few
+   * microtasks after the rejection handler runs.
    */
-  it.fails('does not report "copied" when the clipboard write rejects', async () => {
+  it('does not report "copied" when the clipboard write rejects', async () => {
     stubClipboard(() => Promise.reject(new Error('clipboard denied')));
     render(<CopyableError message="connection refused" copyButton />);
 
     fireEvent.click(screen.getByTestId('copyable-error-copy'));
-    await Promise.resolve();
 
-    expect(screen.getByTestId('copyable-error-copy')).not.toHaveTextContent('common.copied');
+    await waitFor(() =>
+      expect(screen.getByTestId('copyable-error-copy')).not.toHaveTextContent('common.copied'),
+    );
   });
 });

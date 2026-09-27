@@ -8,18 +8,40 @@ export interface ResultMessageDialogProps {
   open: boolean;
   kind: 'error' | 'success';
   message: string;
+  /**
+   * Accessible label for the header close button. Defaults to the localized
+   * `common.close`; pass an explicit value to override it.
+   */
+  closeLabel?: string;
   onClose: () => void;
 }
 
+/** How long the "Copied" confirmation stays visible before reverting. */
+const COPIED_FEEDBACK_MS = 1500;
+
 /** Compact success/error alert with an explicit dismiss button. */
-export function ResultMessageDialog({ open, kind, message, onClose }: ResultMessageDialogProps) {
+export function ResultMessageDialog({
+  open,
+  kind,
+  message,
+  closeLabel,
+  onClose,
+}: ResultMessageDialogProps) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(message);
+    // Optimistic: flip the label synchronously so the click reads as instant,
+    // then roll back if the write rejects. Telling the user "Copied" for a
+    // write that never landed is a lie, and the previous bare `void writeText()`
+    // also leaked an unhandled rejection on top of it. Matches the guard style
+    // already used by ConfirmDialog.handleCopy in this package.
     setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    const timer = window.setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS);
+    void navigator.clipboard.writeText(message).catch(() => {
+      window.clearTimeout(timer);
+      setCopied(false);
+    });
   }, [message]);
 
   return (
@@ -28,7 +50,7 @@ export function ResultMessageDialog({ open, kind, message, onClose }: ResultMess
       title={kind === 'error' ? t('common.error') : t('common.success')}
       onClose={onClose}
       className="max-w-sm"
-      closeLabel={t('common.close')}
+      closeLabel={closeLabel ?? t('common.close')}
       footer={
         <div className="flex w-full items-center justify-between gap-2">
           {kind === 'error' ? (

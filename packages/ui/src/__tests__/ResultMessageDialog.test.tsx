@@ -10,7 +10,7 @@
  * The probe copy differs from every default, so a pass proves the wiring.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, act } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, act, waitFor } from '@testing-library/react';
 import { ResultMessageDialog } from '../ResultMessageDialog';
 import { registerTranslations } from '../i18n';
 
@@ -112,25 +112,28 @@ describe('ResultMessageDialog', () => {
     });
 
     /**
-     * KNOWN DEFECT (pre-existing, not introduced by the @datazen/ui move):
-     * `handleCopy` does `void navigator.clipboard.writeText(message); setCopied(true)`
-     * with no `.catch`, so a rejected clipboard write both (a) surfaces as an
-     * unhandled rejection and (b) still claims success in the UI.
-     * `ConfirmDialog.handleCopy` in the same package does guard this — the two
-     * components are inconsistent. `it.fails` documents the correct contract and
-     * turns RED automatically once the component is fixed.
+     * The copy action is optimistic — it flips to "Copied" synchronously so the
+     * click reads as instant — but a rejected clipboard write (permission
+     * denied, insecure context) must roll that state back. Claiming success for
+     * a write that never landed is a lie, and the unguarded `void writeText()`
+     * this replaced also leaked an unhandled rejection.
+     *
+     * `waitFor` (not a single `await Promise.resolve()`) because the rollback
+     * reaches the DOM only once React commits the re-render, which lands a few
+     * microtasks after the rejection handler runs.
      */
-    it.fails('does not report "copied" when the clipboard write rejects', async () => {
+    it('does not report "copied" when the clipboard write rejects', async () => {
       stubClipboard(() => Promise.reject(new Error('clipboard denied')));
       render(
         <ResultMessageDialog open kind="error" message="connection refused" onClose={() => {}} />,
       );
 
       fireEvent.click(screen.getByTestId('result-message-copy'));
-      await Promise.resolve();
 
-      expect(screen.getByTestId('result-message-copy')).not.toHaveTextContent(
-        PROBE['common.copied'],
+      await waitFor(() =>
+        expect(screen.getByTestId('result-message-copy')).not.toHaveTextContent(
+          PROBE['common.copied'],
+        ),
       );
     });
   });
