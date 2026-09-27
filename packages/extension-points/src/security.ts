@@ -238,11 +238,26 @@ function buildPublicKeyList(config: ExtensionSecurityConfig): string[] {
 /**
  * Full EP package verification gate.
  *
- * Trust precedence:
- * 1. Local directory link (`sourceKind: 'local-link'`) — bypass production signature gate.
- * 2. Engine compatibility — always enforced unless bypassed by local-dev.
- * 3. Signed packages — official or enterprise key must verify AND digests must match content.
- * 4. Unsigned — allowed only in developer mode, tagged as unverified.
+ * Control flow — note this is NOT a ranked "trust precedence" ladder, because the first
+ * case is a total bypass rather than a higher-priority tier:
+ *
+ * 1. `sourceKind: 'local-link'` — returns `{ ok: true, trustSource: 'local-dev' }`
+ *    immediately, skipping **every** check below: engine compatibility, signature,
+ *    and digests. A directory link is developer-local by construction, so nothing is
+ *    being shipped; a malformed manifest linked this way is still admitted.
+ * 2. Engine compatibility (`checkEngineCompatibility`) — enforced for every other
+ *    source kind. Compares by exact string equality against
+ *    `manifest.engines.extensionPointsVersion`; there is no semver range and no
+ *    negotiation window.
+ * 3. Unsigned package — admitted only under developer mode and tagged
+ *    `unverified`; otherwise rejected.
+ * 4. Signed package — the official or an enterprise key must verify AND the digests
+ *    must match the content.
+ *
+ * The normal Pro development flow is signed (it stages a real `.dzx` and passes
+ * `sourceKind: 'local-link'` from the generated loader), so case 1 is a convenience
+ * path, not the primary one. Behaviour here is unchanged; this comment only records
+ * what the code actually does.
  */
 export async function verifyExtensionPackage(
   options: VerifyExtensionOptions,
