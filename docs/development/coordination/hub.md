@@ -45,6 +45,7 @@
 | e2e-spec-rest | — | READY_TO_MERGE**（Tester round-1 独立复验通过：tsc 门零新增 / 7 目标 spec 0 错误 / 全部 8 处根因自报独立复核成立；全量 E2E 复跑因本 worktree 无 webdriver binary 留待 R 回归 —— 见 §6 E2E 登记表。测试 commit 见 §7。） | — | — | — |
 | qb-editor-pro | — | 未开始 | — | — | — |
 | multi-cursor | — | TEST_DONE | — | — | — |
+| ep-hooks-settings | — | TEST_FAILED (3 bugs) | — | — | — |
 
 ## 写锁台账
 
@@ -87,6 +88,7 @@
 | e2e-spec-rest | — | — | feature/e2e-spec-rest | READY_TO_MERGE**（Tester round-1 独立复验通过：tsc 门零新增 / 7 目标 spec 0 错误 / 全部 8 处根因自报独立复核成立；全量 E2E 复跑因本 worktree 无 webdriver binary 留待 R 回归 —— 见 §6 E2E 登记表。测试 commit 见 §7。） | — |
 | qb-editor-pro | — | — | feature/qb-editor-pro | 未开始 | — |
 | multi-cursor | — | `.worktrees/datazen-multi-cursor` | `feature/multi-cursor` | TEST_DONE | — |
+| ep-hooks-settings | — | — | `feature/ep-hooks-settings`（宿主）— commit `4192affd8` | TEST_FAILED | — |
 
 ## 波次记录
 
@@ -160,6 +162,33 @@
   **复验方法本身踩了两个坑，须写进判据**：① 注入若只写 `import` 不引用会被 tree-shaking 吃掉，
   产物里根本没这个键，闸门自然放行——**必须注入即引用**；
   ② `resolve-pro` 在 EP **已暂存**时会跳过构建，此时测的是旧产物——**复验前必须清暂存目录**。
+- **✅【高】打包白名单「预改写」绕过 —— 三个独立来源收敛到同一处，已修复并合流**。
+  **本轮最重要的结果：三名互不相关的 Tester/编码者各自独立发现了同一个缺陷。**
+  ① Track B Tester 的 `ep-hooks-settings-BUG-001`（高）：Pro vite 的 `hostGlobalsPlugin` 在
+  `enforce:'post'` 的 `renderChunk` 把裸 import 改写成 `globalThis.__DATAZEN_HOST__['x']`
+  （判据 `BARE_SPECIFIERS.has(s) || /^@codemirror\//`，**不查任何白名单**）；随后 `pack-ep` 的
+  `rewriteEpImportsToHostGlobals` **只扫「仍是裸形式」的 specifier** ⇒ 对已改写 key **零可见性**，
+  第 1 步与第 2 步互不校验。② BUG-002 轨的 Coder 独立定位到同一根因。③ 协调者端到端复验。
+  **修法与 Track B Tester 要求的「让宿主侧成为权威」完全一致**：`pack-ep.mjs` 增加**产物级**
+  宿主键不变量，扫描**将要签名的字节**（`stagePackageTree` 内、`signEpPackage` 之前）+
+  `createDzxArchive` 纵深防御，违规即 throw → exit 1、**不签发**。**未收窄任一侧的放行宽度**——
+  保持 §五.8 声明的「Pro 宽放行 / 宿主窄白名单」之差。
+  ⚠️ **两条独立的键数测量都对，但都对的是自己那条分支**：Track B Tester 报「宿主表 9 键」
+  （其分支早于 Track A 合流）；集成分支实测为 **11 键**，与 `HOST_SHARED_MODULES` **完全恒等**，
+  差集为空。⇒ **引用键数时必须声明分支**。
+  ⚠️ 另注：BUG-002 复现用的注入 `import { foldGutter } from '@codemirror/search'` 在**语义上虚构**
+  ——该导出并不存在于 `@codemirror/search`；但产物级不变量卡的是**键**（模块说明符）而非导出，
+  故闸门有效性不受影响。今后注入验证请用**白名单外且导出真实存在**的模块。
+- **【低】编辑器挂载时多发一次 8 槽位重配事务**（Track B `ep-hooks-settings-BUG-002`）。
+  `SqlEditor.tsx:433-521` 的挂载 effect 调 `mountProCompartments` 装好 payload 却**从不写**
+  `appliedPayloadRef`（`:529`，初值 `null`）；React 按声明顺序执行 effect，紧随其后的重配 effect
+  （`:530`）守卫失效，**多发一次完整 8 槽位批**——**恰是 `:532-533` 注释断言不会发生的事**。
+  实测各舱位工厂**各只调 1 次**，故影响面收窄为「多做一次 CM 配置重算」，不影响正确性、
+  不在 <5ms 击键路径。已派 `feature/compartment-cleanup` 一并修。
+- **【低】`proCompartments.ts:171` 的 `continue` 静态不可达**（Track B `ep-hooks-settings-BUG-003`）。
+  进循环前提是 `extra` 已挂载，而已挂载的 `extra` 必然进 `directIds`、永不进 `overflow`
+  （`extra` 属 `BASE_PRO_COMPARTMENT_IDS`，模块加载时已 `ensureProCompartment`）。
+  这是 `proCompartments.ts` **分支覆盖率停在 93.33%**（行已 100%）的**唯一**原因。
 - **🔴【高·潜伏】`focusedPaneId` 是全局单值而非按 tab 作用域，焦点跨 tab 泄漏**（Track C Tester 裁定
   TEST_FAILED，`pane-layout-BUG-001`）。`panelStore.ts:83` 的 `focusedPaneId: string | null` 是**单一
   全局字段**，而 pane 属于 panel；`ContentView.tsx:88` 把这一个值下发给当前 active 的**任意** panel；
