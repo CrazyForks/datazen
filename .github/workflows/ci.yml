@@ -55,9 +55,9 @@ jobs:
       - name: TypeScript typecheck
         run: pnpm typecheck
 
-      # 7 个严格守卫合并为一步：任何失败立即停止（fail-fast），
-      # 输出清晰标注哪条命令失败。省掉 6 次 shell launch 开销。
-      - name: All strict guards (stubs, caps, IDs, layers, ci-docs, version, boundaries)
+      # 8 个严格守卫合并为一步：任何失败立即停止（fail-fast），
+      # 输出清晰标注哪条命令失败。省掉 7 次 shell launch 开销。
+      - name: All strict guards (stubs, caps, IDs, layers, ci-docs, version, boundaries, i18n keys)
         run: |
           node scripts/check-managed-stubs.mjs
           node scripts/check-structure-editor-guardrails.mjs
@@ -66,6 +66,7 @@ jobs:
           pnpm test:ci-docs
           pnpm test:version
           pnpm test:boundaries
+          pnpm test:i18n-keys
 
       - name: Guard i18n sync (warning only)
         run: node scripts/i18n-sync-check.mjs
