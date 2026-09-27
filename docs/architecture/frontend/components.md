@@ -975,6 +975,29 @@ S 形绕行。同一套形态实测：**反向边 7/10 → 0/10，跨越 18 → 
 - 支持 `mode` 属性：`file` / `directory` / `save`
 - 已在所有需要路径输入的位置替换（SQLite 数据库路径、备份路径、上下文目录等）
 
+## 9.1 闭集 props 组件的 `data-*` 透传契约
+
+设计系统中**自声明 props 列表**的组件（`Select` 等，不继承 DOM `*Attributes`）
+必须实现 `packages/ui/src/dataAttrs.ts` 的 `DataAttrProps` 契约：调用方传入的
+任意 `data-*` 属性原样透传到**唯一可交互元素**上，`data-testid` 也不例外。
+
+`Select` 的落点：非 `searchable` 时是 `<button aria-haspopup="listbox">`；
+`searchable` 时是 combobox `<input>`。**不允许落在包裹用的 `<div>` 上** ——
+定位到一个不可点击、不可输入的外层壳，等于把同一个缺陷下移一层；E2E 因此
+不再需要 `[data-testid="x"] input` 这种穿透写法。
+
+契约两端都很窄，这是刻意的：
+
+- **类型侧**用**模式索引签名** ``[key: `data-${string}`]: string | undefined``，
+  而不是 `[key: string]`。TypeScript 的多余属性检查认这个 `data-` 前缀，
+  因此 `data-testid` / `data-foo` 通过，而 `dataTestId`（丢了连字符）与
+  `onchane`（拼错已声明 prop）**仍然是编译错误**。换成宽索引签名就是把
+  响亮的类型错误换成静默失效的 prop。
+- **运行时侧** `splitDataAttrs()` 只放行 `data-*`，其余键一律丢弃并（仅开发
+  构建）`console.warn` 点名。非 `data-*` 的 prop 若经 `...rest` 透传会落到
+  DOM 节点上，触发 React 未知属性告警；`{...rest}` 又不受多余属性检查保护，
+  所以开发期告警是覆盖「展开写法」这条路径的唯一护栏。
+
 ## 10. 开发阶段规划
 
 | 阶段 | 内容 | 输出 |

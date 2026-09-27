@@ -85,7 +85,9 @@ describe('SQL 查询模块（编辑器、执行、结果、历史与收藏）', 
 
   it('SQ-CTX-002: 数据库选择器下拉项可读且不在工具栏留下空白', async () => {
     const selectorHost = await $('[data-testid="query-context-selectors"]');
-    const trigger = await selectorHost.$('[data-testid="query-context-database"] input');
+    // The searchable Select puts its `data-*` attributes on the combobox input
+    // itself, so the locator addresses the clickable control directly.
+    const trigger = await selectorHost.$('[data-testid="query-context-database"]');
     await trigger.click();
 
     const list = await $('[data-testid="select-listbox"]');
@@ -147,7 +149,7 @@ describe('SQL 查询模块（编辑器、执行、结果、历史与收藏）', 
     const bar = await $('[data-testid="query-context-selectors"]');
     await bar.waitForDisplayed({ timeout: 10000 });
     // Searchable combobox shows selected value in the input's value attribute
-    const dbInput = await bar.$('[data-testid="query-context-database"] input');
+    const dbInput = await bar.$('[data-testid="query-context-database"]');
     const text = (await dbInput.getValue()) || (await bar.getText());
     expect(text).toContain(dbName);
   });
