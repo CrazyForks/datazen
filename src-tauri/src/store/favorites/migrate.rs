@@ -7,6 +7,9 @@
 //!
 //! ## Ordering
 //!
+//! 0. If `favorite_queries_legacy_v1` already exists, this database has run
+//!    the export: stop. See [`migrate_legacy_favorites`] for why a live
+//!    `favorite_queries` next to the archive must not trigger a re-export.
 //! 1. Read every legacy row.
 //! 2. Write one file per row, with a **deterministic** file name derived from
 //!    the row itself.
@@ -65,6 +68,21 @@ pub fn migrate_legacy_favorites(
     history: &HistoryDb,
     favorites: &FavoritesStore,
 ) -> Result<MigrationOutcome, super::FavoritesError> {
+    // The guard is the archive rename, checked *before* any row is read.
+    //
+    // A database that holds the archive has already run this export. If a live
+    // `favorite_queries` sits next to it — a backup restore, a rolled-back
+    // install, a hand-copied file — those rows are a resurrected copy, not
+    // pre-migration data, and re-exporting them would rewrite the user's
+    // current favorites on every single launch. The ids are deterministic, so
+    // the re-export would not duplicate: it would silently overwrite whatever
+    // the user has edited or deleted since, forever.
+    if history.legacy_favorites_archived().map_err(|e| {
+        super::FavoritesError::Migration(format!("cannot read the favorites archive state: {e}"))
+    })? {
+        return Ok(MigrationOutcome::NothingToDo);
+    }
+
     let legacy = history.read_legacy_favorites().map_err(|e| {
         super::FavoritesError::Migration(format!("cannot read the legacy table: {e}"))
     })?;
@@ -125,6 +143,11 @@ fn write_marker(root: &Path, count: usize) -> std::io::Result<()> {
 }
 
 /// Read the marker written by a previous export, if any.
+///
+/// The marker exists for the user and for `排查`; nothing in the app reads it
+/// back, because the archive table — not this file — is what makes the export
+/// idempotent (see [`migrate_legacy_favorites`]). It is therefore test-only.
+#[cfg(test)]
 pub fn read_marker(root: &Path) -> Option<MigrationMarker> {
     let raw = std::fs::read_to_string(marker_path(root)).ok()?;
     serde_json::from_str(&raw).ok()

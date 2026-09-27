@@ -100,9 +100,15 @@ impl Ulid {
         })
     }
 
-    /// True when `s` is a canonical ULID. Used as the only gate for turning
-    /// an identifier into a file name, so a hostile id can never escape the
-    /// favorites root.
+    /// True when `s` is a canonical ULID.
+    ///
+    /// **Not** the path-safety gate — that is `FavoritesStore::resolve_file`'s
+    /// `is_safe_stem`, which deliberately accepts a wider set than a ULID so a
+    /// favorite the user renamed by hand stays editable. This predicate is
+    /// stricter (26 canonical Crockford characters, correct length) and exists
+    /// for the tests that check the encoding and for a future strict-import
+    /// path; the tests use it, so it is test-only.
+    #[cfg(test)]
     pub fn is_valid(s: &str) -> bool {
         Self::parse(s).is_ok()
     }

@@ -96,6 +96,10 @@ impl FrontMatter {
     }
 
     /// Every key in file order, including keys DataZen does not recognize.
+    ///
+    /// Test-only: the read path asks for the six fields it knows by name, and
+    /// nothing in the app iterates the header.
+    #[cfg(test)]
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.fields.iter().map(|(k, _)| k.as_str())
     }

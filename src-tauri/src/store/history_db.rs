@@ -460,20 +460,35 @@ impl HistoryDb {
         })
     }
 
+    /// Whether the retired table has already been archived under its v1 name.
+    ///
+    /// This — not the marker file, and not the absence of an error — is what
+    /// "the export already ran" means. `migrate_legacy_favorites` consults it
+    /// *before* reading any row, so a database that somehow holds a live
+    /// `favorite_queries` next to an existing archive is recognised as already
+    /// migrated instead of being re-exported on every launch.
+    pub fn legacy_favorites_archived(&self) -> Result<bool, HistoryDbError> {
+        self.with_conn(|conn| table_exists(conn, LEGACY_FAVORITES_ARCHIVE_TABLE))
+    }
+
     /// Rename `favorite_queries` out of the way, keeping its rows.
     ///
     /// An `ALTER ... RENAME` is preferred over a `DROP` (this is the
     /// "保留原库备份" of plan §2.6.6) and over copying a live SQLite file: the
     /// rename is transactional, so either the table is archived or the export
     /// is retried next launch — never both half-done.
+    ///
+    /// Callers must have checked [`Self::legacy_favorites_archived`] first. The
+    /// guard below is a last-resort no-op, not an expected path: when both
+    /// names exist the live table is *not* pre-migration data (nothing in this
+    /// code leaves both behind — the rename is atomic), so archiving it now
+    /// would destroy rows this method has no reason to touch.
     pub fn archive_legacy_favorites_table(&self) -> Result<(), HistoryDbError> {
         self.with_conn(|conn| {
             if !table_exists(conn, LEGACY_FAVORITES_TABLE)? {
                 return Ok(());
             }
             if table_exists(conn, LEGACY_FAVORITES_ARCHIVE_TABLE)? {
-                // Already archived by an earlier run that died before this
-                // one could start; nothing to do.
                 return Ok(());
             }
             conn.execute_batch(&format!(

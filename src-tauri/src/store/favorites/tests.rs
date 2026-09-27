@@ -447,6 +447,184 @@ fn set_root_moves_the_whole_universe() {
     assert_eq!(titles(&store, None), ["In new"]);
 }
 
+// ── Path safety ────────────────────────────────────────────────────────────
+
+/// The whole allow-list, as an accept/reject table.
+///
+/// `resolve_file` is the only place an id becomes a path, so this function is
+/// the traversal gate. Both halves are asserted: the gate rejects what it must
+/// (reaching a `UnsafeId`, never a `NotFound`, which is what "rejected by the
+/// name check" looks like) and it accepts what the app itself mints, plus a
+/// user-renamed file (the reason the set is wider than a bare ULID check).
+#[test]
+fn the_name_gate_accepts_only_a_strict_stem() {
+    // Over the 64-byte cap. (Bytes, not chars — deliberately, so a multi-byte
+    // name cannot smuggle a long path past the bound.)
+    let at_cap = "a".repeat(64);
+    let over_cap = "a".repeat(65);
+    let over_cap_suffixed = format!("{}suffix", at_cap);
+
+    // Rejected. Each of these either escapes the root, names a directory the
+    // user never asked for, or cannot be represented as a file name at all.
+    for hostile in [
+        // Traversal, absolute paths, and mixed separators.
+        "..",
+        "../..",
+        "../../etc/passwd",
+        "..%2F..%2Fetc",
+        "a/../b",
+        "a/b",
+        "a\\b",
+        "/etc/passwd",
+        "/tmp/x",
+        "C:\\Windows\\system32",
+        "\\??\\C:\\x",
+        // The current directory, and the two names that mean "no name".
+        ".",
+        "",
+        "   ",
+        // Windows device names, in the casing Windows itself accepts and in
+        // the casing a user is likely to type.
+        "CON",
+        "con",
+        "CoN",
+        "PRN",
+        "AUX",
+        "NUL",
+        "COM1",
+        "com9",
+        "LPT1",
+        "lpt9",
+        // Characters outside ASCII alphanumerics + `-` + `_`.
+        "with space",
+        "with\ttab",
+        "with\nnewline",
+        "nul\0byte",
+        ".hidden",
+        "trailing.",
+        "a.sql",
+        "emoji😀",
+        // Homoglyphs: a Cyrillic "а" and a full-width "Ａ" both render like
+        // ASCII, and both are outside the ASCII allow-list.
+        "pаypal",
+        "ＡＢＣ",
+        // Over the 64-byte cap. (Bytes, not chars — deliberately, so a
+        // multi-byte name cannot smuggle a long path past the bound.)
+        over_cap.as_str(),
+        over_cap_suffixed.as_str(),
+    ] {
+        assert!(
+            !is_safe_stem(hostile),
+            "must be rejected as a name: {hostile:?}"
+        );
+    }
+
+    // Accepted: the app's own ids, a user-renamed stem, and the exact boundary.
+    for safe in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "my-favorite",
+        "my_favorite",
+        "My_Favorite-2",
+        "0",
+        "a",
+        "-",
+        "_",
+        at_cap.as_str(),
+    ] {
+        assert!(is_safe_stem(safe), "must be accepted as a name: {safe:?}");
+    }
+}
+
+/// The gate has to be reachable from the public API and it has to hold for a
+/// user who is not calling an internal function: a hostile id passed to
+/// `delete` is refused, and nothing lands outside — or inside — the root.
+#[test]
+fn a_hostile_id_is_refused_before_any_path_is_touched() {
+    let fx = Fixture::new();
+    let store = fx.store();
+    // A real favorite, so "refused" cannot be confused with "nothing there".
+    let saved = store.add(draft("c", "Real", "SELECT 1;")).unwrap();
+
+    // A canary outside the root, to prove no probe ever left the sandbox.
+    let outside = fx.path().join("outside.sql");
+    fs::write(&outside, b"canary").unwrap();
+    let outside_before = fs::metadata(&outside).unwrap().modified().unwrap();
+
+    let over_cap = "a".repeat(65);
+    for hostile in [
+        "..",
+        "../..",
+        "../../etc/passwd",
+        "/etc/passwd",
+        "a/b",
+        "a\\b",
+        "CON",
+        "con",
+        ".hidden",
+        "nul\0byte",
+        over_cap.as_str(),
+    ] {
+        let err = store
+            .delete(hostile)
+            .expect_err("a hostile id must not be deletable");
+        assert!(
+            matches!(err, FavoritesError::UnsafeId(ref id) if id.as_str() == hostile),
+            "{hostile:?} must fail the name check, got {err:?}"
+        );
+    }
+
+    // The canary is untouched, and the root holds only the one real favorite —
+    // no `.sql` file, no stray directory, nothing created by a rejected call.
+    assert_eq!(fs::read(&outside).unwrap(), b"canary");
+    assert_eq!(
+        fs::metadata(&outside).unwrap().modified().unwrap(),
+        outside_before
+    );
+    let entries: Vec<String> = fs::read_dir(fx.root())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(entries, [format!("{}.sql", saved.id)]);
+
+    // A well-formed id that is simply absent is a *different* error: the gate
+    // let it through and the lookup is what failed.
+    assert!(matches!(
+        store.delete("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        Err(FavoritesError::NotFound(_))
+    ));
+    // …and the real favorite is still deletable, so the gate is not simply
+    // refusing everything.
+    store.delete(&saved.id).unwrap();
+    assert!(store.list(None).is_empty());
+}
+
+/// A root that is a file, not a directory, is the one configuration mistake
+/// worth naming in a log — and it is reported as such rather than as a
+/// generic IO failure.
+#[test]
+fn a_root_that_is_a_file_is_reported_as_such() {
+    let fx = Fixture::new();
+    let not_a_dir = fx.path().join("favorites");
+    fs::write(&not_a_dir, b"a leftover from the JSON store").unwrap();
+
+    assert!(matches!(
+        FavoritesStore::open(&not_a_dir),
+        Err(FavoritesError::RootNotADirectory(_))
+    ));
+    let good = fx.path().join("elsewhere");
+    let store = FavoritesStore::open(&good).unwrap();
+    assert!(matches!(
+        store.set_root(&not_a_dir),
+        Err(FavoritesError::RootNotADirectory(_))
+    ));
+    // A refused repoint leaves the old root in place, and the store still works.
+    assert_eq!(store.root(), good);
+    assert!(store
+        .add(draft("c", "Still writing here", "SELECT 1;"))
+        .is_ok());
+}
+
 #[test]
 fn a_failed_write_leaves_no_temp_file_behind() {
     let fx = Fixture::new();
@@ -468,4 +646,5 @@ fn a_failed_write_leaves_no_temp_file_behind() {
 
 // ── Migration from the retired `favorite_queries` table ────────────────────
 
+mod executability;
 mod migration;

@@ -333,3 +333,78 @@ fn migrated_ordering_matches_the_old_created_at_desc() {
         ["Other db", "Weekly rollup", "Nightly recon"]
     );
 }
+
+/// The state the early-return in `archive_legacy_favorites_table` was written
+/// for: **both** `favorite_queries` and `favorite_queries_legacy_v1` present.
+///
+/// How it happens in the field: the app data directory is restored from a
+/// backup, or rolled back, while an archive from a completed run survives —
+/// `history.sqlite` is a single file, so a partial restore is enough. At that
+/// point the export is *done*; the resurrected table is stale input.
+///
+/// The hazard this pins down is not duplication (ids are deterministic, so a
+/// re-export rewrites the same paths) but **silent clobbering**: the stale
+/// rows would overwrite the user's edits and resurrect their deletions, on
+/// every launch, forever.
+#[test]
+fn a_live_table_next_to_the_archive_is_never_re_exported() {
+    let install = LegacyInstall::new(&ROWS);
+    let root = install.favorites_root();
+    let db = install.db();
+    let store = FavoritesStore::open(&root).unwrap();
+    assert_eq!(
+        migrate_legacy_favorites(&db, &store).unwrap(),
+        MigrationOutcome::Migrated { rows: 3 }
+    );
+    let ids: Vec<String> = store.list(None).into_iter().map(|f| f.id).collect();
+    assert_eq!(ids.len(), 3);
+    drop(store);
+    drop(db);
+
+    // The user edits one favorite and deletes another, as they would.
+    fs::write(
+        root.join(format!("{}.sql", ids[0])),
+        "-- title: my rewritten title\n-- connectionId: cfg-2\nSELECT 'mine';\n",
+    )
+    .unwrap();
+    let deleted = root.join(format!("{}.sql", ids[1]));
+    fs::remove_file(&deleted).unwrap();
+
+    // Now the restore: the archive is still there and a live copy of the
+    // *original* rows appears beside it.
+    let db = install.db();
+    db.with_raw_conn(|conn| {
+        conn.execute_batch(
+            "CREATE TABLE favorite_queries AS SELECT * FROM favorite_queries_legacy_v1;",
+        )
+        .unwrap();
+    });
+    assert!(db.legacy_favorites_archived().unwrap());
+
+    let store = FavoritesStore::open(&root).unwrap();
+    assert_eq!(
+        migrate_legacy_favorites(&db, &store).unwrap(),
+        MigrationOutcome::NothingToDo,
+        "an existing archive means the export already ran"
+    );
+
+    // The user's work is still theirs. (`list` is newest first, so the edited
+    // file — the newest of the three — stays first.)
+    assert_eq!(
+        titles(&store, None),
+        ["my rewritten title", "Nightly recon"]
+    );
+    assert!(
+        !deleted.exists(),
+        "a deleted favorite must not come back from a resurrected legacy table"
+    );
+    // And a second launch behaves identically — the state is stable, not a
+    // one-launch accident.
+    drop(store);
+    let store = FavoritesStore::open(&root).unwrap();
+    assert_eq!(
+        migrate_legacy_favorites(&db, &store).unwrap(),
+        MigrationOutcome::NothingToDo
+    );
+    assert_eq!(store.list(None).len(), 2);
+}

@@ -98,12 +98,7 @@ pub struct FavoritesStore {
 impl FavoritesStore {
     /// Open (creating if absent) a favorites store rooted at `root`.
     pub fn open(root: &Path) -> Result<Self, FavoritesError> {
-        std::fs::create_dir_all(root).map_err(|e| {
-            FavoritesError::Io(format!(
-                "cannot create favorites root {}: {e}",
-                root.display()
-            ))
-        })?;
+        create_root(root)?;
         Ok(Self {
             root: RwLock::new(root.to_path_buf()),
             cache: RwLock::new(None),
@@ -120,12 +115,7 @@ impl FavoritesStore {
 
     /// Repoint at a new root. Any cached listing belongs to the old tree.
     pub fn set_root(&self, root: &Path) -> Result<(), FavoritesError> {
-        std::fs::create_dir_all(root).map_err(|e| {
-            FavoritesError::Io(format!(
-                "cannot create favorites root {}: {e}",
-                root.display()
-            ))
-        })?;
+        create_root(root)?;
         let mut guard = self
             .root
             .write()
@@ -295,6 +285,26 @@ impl FavoritesStore {
             cached.retain(|f| f.id != id);
         }
     }
+}
+
+/// Create the favorites root if it is not there yet.
+///
+/// A path that exists and is *not* a directory gets its own error rather than a
+/// generic IO one: it is the one configuration mistake worth naming in a log —
+/// `favoritesRoot` pointed at a file, usually a stale `favorites` placeholder
+/// from the JSON store this design replaced.
+fn create_root(root: &Path) -> Result<(), FavoritesError> {
+    if root.is_file() {
+        return Err(FavoritesError::RootNotADirectory(
+            root.display().to_string(),
+        ));
+    }
+    std::fs::create_dir_all(root).map_err(|e| {
+        FavoritesError::Io(format!(
+            "cannot create favorites root {}: {e}",
+            root.display()
+        ))
+    })
 }
 
 /// Newest first, with the ULID as a tie-break so equal timestamps keep a

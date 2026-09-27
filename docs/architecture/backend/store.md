@@ -93,7 +93,7 @@ pub struct QueryHistoryEntry {
 }
 
 /// 收藏的查询 —— 自 §2.6 起每条是一个 `.sql` 文件，id 即文件名（ULID）
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FavoriteQuery {
     /// 文件名去扩展名，ULID；删除 / 改名只作用于这一个文件
@@ -104,12 +104,16 @@ pub struct FavoriteQuery {
     /// front-matter 之后的全部正文，逐字节可执行
     pub sql: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
     /// 收藏时选中的库，便于换库后重新绑定
+    #[serde(default)]
     pub database: Option<String>,
     /// 预留：关键词补全轨；只解析与回写，本期不做 UI
+    #[serde(default)]
     pub keyword: Option<String>,
     /// 相对收藏根目录的 `/` 分隔子目录，根目录为 None
+    #[serde(default)]
     pub folder: Option<String>,
 }
 
@@ -212,7 +216,7 @@ impl Store {
             .unwrap_or_default();
         
         // 收藏是文件，不在这里加载：见 §1.4 收藏（文件优先）
-        cache.favorites = self.store.favorites.list(None);
+        // FavoritesStore 自带 RwLock 缓存，列表在调用时按需扫描
         
         Ok(())
     }
@@ -416,7 +420,9 @@ unset + 其它             → Keyring（失败可回退已有 `.key`）
 
 ### 1.4 收藏（文件优先）
 
-收藏不再进 SQLite。每条收藏是收藏根目录下的**一个 `.sql` 文件**，文件名是去扩展名的 ULID，因此**列表顺序就是创建顺序**，`ls` 即可读，diff / merge / 备份都能交给 iCloud、Dropbox、Git 直接做。实现见 `src-tauri/src/store/favorites/`。
+收藏不再进 SQLite。每条收藏是收藏根目录下的**一个 `.sql` 文件**，文件名是去扩展名的 ULID，因此 `ls` 的时间序就是创建序，`diff` / `merge` / 备份都能交给 iCloud、Dropbox、Git 直接做。实现见 `src-tauri/src/store/favorites/`。
+
+根目录取 `AppSettings.favoritesRoot`，缺省或空串时是 `{appData}/favorites`。**目前没有设置界面**：改动只存在于 `settings.json`，`Store::init_with_path` 在启动时应用一次（解析失败则 `tracing::warn!` 并回落到缺省值），运行中改设置不会改指当前 store，界面上只以 `query.favoritesRoot`（"Saved in"）显示当前解析结果。面板会重扫，不会替用户搬文件。
 
 ```text
 {appData}/favorites/            ← 可用 AppSettings.favoritesRoot 改指到任意已同步目录
@@ -424,7 +430,7 @@ unset + 其它             → Keyring（失败可回退已有 `.key`）
 ├── reports/
 │   └── 01J8XK2MA1C2D3E.sql      ← 子目录递归扫描，folder = "reports"
 └── .trash/                      ← 软删除；不参与扫描
-    └── 1755000000000__01J8XK2M9Q7B4F.sql
+    └── 2026-08-18T10-00-00-000__01J8XK2M9Q7B4F.sql
 ```
 
 **front-matter 用 `--` SQL 注释承载**，与 SQL 注释结构同形，所以文件本身仍可直接执行：
@@ -439,29 +445,33 @@ SELECT * FROM orders WHERE d = CURRENT_DATE;
 
 不变量与理由：
 
-- **键序即文件序**。front-matter 是 `Vec<(String, String)>` 而非 `BTreeMap`：按字母序重写会让每次保存都改动所有文件，diff 全是噪声。`title / connectionId / createdAt / updatedAt / database / keyword` 的顺序固定，**未知键原序保留**，因此下一批功能接入时不会丢字段。
-- **值转义**。`\n` `\r` `\\` 转义后再落盘，值无法自己换行，front-matter 因此不可能渗进语句正文。
-- **只归一化一处**。`parse` 不改写任何内容（读手写文件不会被重写）；`render` 保证非空文件以**恰好一个** `\n` 结尾。所以编辑器里的 `SELECT 1` 读回是 `SELECT 1\n`，这是全部差异。
-- **id 只来自文件名**，且必须通过 `is_safe_stem`（ASCII 字母数字加 `-` `_`，≤ 64 字符，并拒绝 22 个 Windows 设备名）。路径穿越因此在构造上不可能。允许的字符集比 ULID 宽，是为了让用户在访达里改名后收藏仍可编辑。
+- **键序即文件序**。front-matter 是 `Vec<(String, String)>` 而非 `BTreeMap`：按字母序重写会让每次保存都改动所有文件，diff 全是噪声。`render_file` 的键序固定为 `title / connectionId / database / keyword / createdAt / updatedAt`（空值的键不写），因此一条未被编辑的收藏重写后逐字节不变。允许的字符集比 ULID 宽，是为了让用户在访达里改名后收藏仍可编辑。
+- **未知键会被丢弃**，这是有意的取舍而非遗漏。读回时只把上面 6 个字段装进 `FavoriteQuery`，重写时也只渲染这 6 个字段，所以**旧版本 App 改写新版本写的文件会丢掉新键**。换来的是格式永远由一处定义；代价只在跨版本混编的同步目录上出现。
+- **值转义**。`\n` `\r` `\\` 转义后再落盘，值无法自己换行，front-matter 因此不可能渗进语句正文。反向读取时每个值会被 `trim()`，所以标题末尾的手工空格读回即丢——仅影响显示，读操作从不重写文件。
+- **只归一化一处**。`parse` 不改写任何内容（读手写文件不会被重写）；`render` 在正文缺尾换行时补一个 `\n`。所以编辑器里的 `SELECT 1` 读回是 `SELECT 1\n`，这是全部差异；正文本来就以 `\n` 结尾的（哪怕是两个）不会被改动。
+- **id 只来自文件名**。写与删走 `FavoritesStore::resolve_file`，它先过 `is_safe_stem`（ASCII 字母数字加 `-` `_`，≤ 64 **字节**，并按大小写不敏感拒绝 22 个 Windows 设备名），不通过即 `UnsafeId`，因此穿越与绝对路径在任何情况下都到不了 `fs`。读方向不走这个门：扫描把文件名的 stem 当 id，所以用户在根目录里手工放一个怪名字的文件不会伤到任何东西，只是 id 不好看。
 - **写入是原子的**：临时文件 + `fs::rename`；失败不留临时文件。
-- **删除是软删除**：移入 `.trash/{unix秒}-{毫秒}__{id}.sql`，SQL 保留可恢复。`.trash` 与一切 `.` 开头目录都不参与扫描。
+- **删除是软删除**：移入 `.trash/{ISO 时间}-{毫秒:03}__{id}.sql`（如 `2026-08-18T10-00-00-000__01J8XK2M9Q7B4F.sql`），人眼可排序且 id 可还原。`.trash` 与一切 `.` 开头目录都不参与扫描。
 - **符号链接不跟随**（`symlink_metadata`），避免根目录外的内容被扫进来。
 - **扫描有内存缓存**，只有 App 自身的写操作会更新它。同步客户端在运行期间投递的文件要等 UI 显式重扫才会出现——面板在**打开时**和**窗口重新获得焦点时**调用 `refresh_favorites`，并提供手动重扫按钮。这是"缓存 + 显式失效"，不是文件监听器：监听一个用户随时可能指向 iCloud 的目录并不可靠，而重扫一个纯文本目录很便宜。
 - **无归属的收藏不会被隐藏或删除**：`connectionId` 缺失时 `connection_id` 为空串，按连接过滤时只在"全部"视图出现。
+- **文件本身始终是可执行 SQL**：`tests/executability.rs` 把带 front-matter 的文件原样交给 `rusqlite` 执行，断言结果与只执行语句正文完全一致（正文含 `--` 行注释、`/* */` 块注释，以及字符串字面量里的 `--` 与 `*/`）。
 
 #### 1.4.1 从 `favorite_queries` 表迁移
 
 `favorite_queries` 表已停用（v2 建表语句不再创建它，新装用户根本不会有）。老用户升级后，`Store::init_with_path` 在打开 `HistoryDb` 与 `FavoritesStore`、并应用 `favoritesRoot` 设置之后，执行一次导出：
 
-1. 表不存在 → 直接返回，不写标记文件。
-2. 表存在且**有行**：逐行写成 `.sql` 文件，ULID 由 `Sha256(legacy_id)[0..10]` 确定性导出（时间戳取该行的 `created_at`），因此同一行在任何一次重试里都落到同一路径。**全部写成功之后**才把表重命名为 `favorite_queries_legacy_v1`。
-3. 表存在但**为空**：不动 schema，直接返回。
+1. `favorite_queries_legacy_v1` 已存在 → 直接返回，不读任何行（见下）。
+2. 表不存在 → 直接返回，不写标记文件。
+3. 表存在且**有行**：逐行写成 `.sql` 文件，ULID 由 `Sha256(legacy_id)[0..10]` 确定性导出（时间戳取该行的 `created_at`），因此同一行在任何一次重试里都落到同一路径。**全部写成功之后**才把表重命名为 `favorite_queries_legacy_v1`。
+4. 表存在但**为空**：不动 schema，直接返回。
 
 关键性质：
 
 - **幂等的护栏是重命名，不是标记文件。** `.migration-v1.json` 只是给用户和排查用的记录；即便它被同步冲突吞掉，也不可能引起二次导出——因为护栏是「表已经不在原名下了」。反过来，同步冲突**不可能**造成漏导出。
+- **归档表在先，因此已迁移的库不会被反复导出。** 从备份恢复、或安装被回滚，可能让一个**陈旧的** `favorite_queries` 与 `favorite_queries_legacy_v1` 同时存在。此时导出早已完成，那张表是复活的数据而非迁移输入；由于 ULID 确定性，重跑不会产生副本，而会**每次启动都把用户改过或删掉的收藏按旧数据覆盖 / 复活**。所以 `migrate_legacy_favorites` 在读任何一行之前先查归档表，命中即返回 `NothingToDo`。
 - **失败不消耗任何东西。** 中途写失败则错误上抛、表原样保留（不重命名），下次启动从同一批行重跑，只重写同一批路径：已写好的被覆盖，不产生副本。
 - **原数据可回滚。** 表是重命名而非 `DROP`，`favorite_queries_legacy_v1` 里三行俱全。
-- **排序不变。** 旧面板是 `ORDER BY created_at DESC`，导出后按 ULID（即 `created_at`）倒序，一致。
+- **排序不变。** 旧面板是 `ORDER BY created_at DESC`，导出后按 `created_at` 倒序（同毫秒以 id 兜底），一致。
 
-覆盖以上各点的测试在 `src-tauri/src/store/favorites/tests.rs` 的 `mod migration`，全部使用真实 `tempfile` 临时目录。
+覆盖以上各点的测试在 `src-tauri/src/store/favorites/tests/migration.rs`（`tests.rs` 里的 `mod migration`），全部使用真实 `tempfile` 临时目录；文件可执行性在同目录的 `executability.rs`。把 `ALTER TABLE … RENAME` 换成空操作会让其中 4 个测试转红。
