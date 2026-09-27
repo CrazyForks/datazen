@@ -14,7 +14,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ConnectionViewProps } from '@datazen/driver-sdk';
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
 import type { RedisWorkbenchHandle } from '../key-browser/RedisWorkbench';
-import { RedisRightPanel, type RightTab } from '../key-browser/RedisRightPanel';
+import { RedisRightPanel } from '../key-browser/RedisRightPanel';
+import { useRightTab, writeRightTab, type RightTab } from '../shared/rightTabState';
 import { readPinnedNodeAddr } from './ClusterNodePicker';
 import type { RedisPendingAction } from '../overview/overviewNavigation';
 
@@ -70,7 +71,13 @@ export function RedisConnectionView({
   const workbenchRef = useRef<RedisWorkbenchHandle>(null);
   const pendingActionRef = useRef<RedisPendingAction | undefined>(pendingAction);
   // Right-panel tab state — the pending action may switch the active tab.
-  const [rightTab, setRightTab] = useState<RightTab>('detail');
+  // Module-level store, not useState: the host unmounts this whole subtree on a
+  // top-level tab switch, and component state would reset the user to 'detail'.
+  const rightTab = useRightTab(dbSessionId);
+  const setRightTab = useCallback(
+    (tab: RightTab) => writeRightTab(dbSessionId, tab),
+    [dbSessionId],
+  );
 
   // Sync the prop into the ref so that when the host calls `updatePanel` with a
   // new pendingAction on an EXISTING panel, the consumption effect picks it up.
@@ -130,9 +137,12 @@ export function RedisConnectionView({
   }, [selectTableRef, handleSelectDatabase, isActive]);
 
   /** Delegate right-panel tab switching to RedisRightPanel via callback. */
-  const handleRightTabChange = useCallback((tab: RightTab) => {
-    setRightTab(tab);
-  }, []);
+  const handleRightTabChange = useCallback(
+    (tab: RightTab) => {
+      setRightTab(tab);
+    },
+    [setRightTab],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

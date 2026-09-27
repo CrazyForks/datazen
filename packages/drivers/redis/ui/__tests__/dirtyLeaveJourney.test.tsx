@@ -92,6 +92,7 @@ vi.mock('../value-editors/keyEditorsInvokes', async (importOriginal) => ({
 
 import type { KeyDetail } from '../shared/types';
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
+import { resetRightTab } from '../shared/rightTabState';
 import { RedisConnectionView } from '../connection/RedisConnectionView';
 import {
   __resetDraftGuard,
@@ -185,6 +186,10 @@ beforeEach(() => {
   });
   dbSizes.mockResolvedValue([{ db: 0, keys: 2 }]);
   setString.mockResolvedValue(undefined);
+  // The active sub-tab is a module-level store so it survives the remount a
+  // top-level tab switch causes. Every case here shares `sess-i1`, so without
+  // this the tab chosen by one case leaks into the next.
+  resetRightTab('sess-i1');
 });
 
 afterEach(() => {

@@ -10,20 +10,23 @@
  * 只断言 `data-*`（PRD §7-6：禁英文字面量）。四个重型面板被 stub 掉，页签条的
  * 路由行为与 IPC 无关。
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 vi.mock('../key-browser/RedisWorkbench', async () => {
   const { forwardRef } = await import('react');
   const Stub = forwardRef<unknown, Record<string, unknown>>(function WorkbenchStub(props, _ref) {
-    // Simulate the renderRightPanel call so the right panel mounts
+    // Simulate the renderRightPanel call so the right panel mounts. The session
+    // id must be the one the view was rendered with: the right panel keys its
+    // module-level sub-tab store by it, and a stub that hardcodes a different id
+    // silently detaches the panel from the state under test.
     const renderRightPanel = props.renderRightPanel as
       | ((p: Record<string, unknown>) => React.ReactNode)
       | undefined;
     return (
       <div data-testid="stub-workbench">
         {renderRightPanel?.({
-          dbSessionId: 'sess',
+          dbSessionId: props.dbSessionId as string,
           dbIndex: 0,
           selectedKey: null,
           detail: null,
@@ -49,8 +52,16 @@ vi.mock('../observe/PubSubPanel', () => ({
 }));
 
 import { RedisConnectionView } from '../connection/RedisConnectionView';
+import { resetRightTab } from '../shared/rightTabState';
 
 afterEach(() => cleanup());
+
+beforeEach(() => {
+  // The active sub-tab lives in a module-level store so it survives the remount
+  // a top-level tab switch causes. Both cases render `sess-tabs`, so without this
+  // the tab chosen by one case leaks into the next.
+  resetRightTab('sess-tabs');
+});
 
 function rightTabActive(tab: string): string | null {
   return screen.getByTestId(`redis-right-tab-${tab}`).getAttribute('data-active');

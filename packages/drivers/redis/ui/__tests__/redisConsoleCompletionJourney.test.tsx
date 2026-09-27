@@ -32,6 +32,7 @@ vi.mock('../shared/redisInvoke', () => ({
 }));
 
 import { RedisConsole } from '../console/RedisConsole';
+import { resetTranscript } from '../console/consoleTranscript';
 
 // Harness capability bindings (host injects the real ones at startup).
 bindSettingsStore(
@@ -54,6 +55,10 @@ beforeEach(() => {
     cursor: 0,
     done: true,
   });
+  // The input draft lives in the module-level transcript store so it survives
+  // a panel switch; it therefore survives `cleanup()` too and must be reset
+  // per case or a leftover draft leaks into the next one.
+  resetTranscript('sess-1');
 });
 
 function setInput(input: HTMLTextAreaElement, value: string, cursor: number = value.length) {

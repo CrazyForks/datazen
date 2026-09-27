@@ -39,6 +39,7 @@ vi.mock('../shared/redisInvoke', () => ({
 }));
 
 import { RedisConsole } from '../console/RedisConsole';
+import { resetTranscript } from '../console/consoleTranscript';
 
 function setDriverSettings(redis: Record<string, unknown>) {
   useBoundSettingsStore.setState((s) => ({
@@ -88,6 +89,10 @@ beforeEach(() => {
   commandInvoke.mockResolvedValue({ results: [] });
   scanKeys.mockResolvedValue({ keys: [], cursor: 0, done: true });
   stubConfirm();
+  // The transcript is a module-level store (it has to outlive the unmount that
+  // a panel switch causes), so it is not reset by cleanup() the way component
+  // state is. Every case shares `sess-1`, so reset it explicitly.
+  resetTranscript('sess-1');
 });
 
 describe('typing journey — the badge leaves the unknown state as the command completes', () => {
@@ -145,8 +150,8 @@ describe('blocked commands never reach the server', () => {
     typeInto(input, 'KEYS *');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
-    expect(screen.getByTestId('redis-console-error').textContent).toContain(
+    await waitFor(() => expect(screen.getByTestId('redis-console-entry-error')).toBeTruthy());
+    expect(screen.getByTestId('redis-console-entry-error').textContent).toContain(
       'redis.consoleSafety.blockedDestructive',
     );
     expect(commandInvoke).not.toHaveBeenCalled();
@@ -161,8 +166,8 @@ describe('blocked commands never reach the server', () => {
     typeInto(input, 'JSON.GET doc');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
-    const text = screen.getByTestId('redis-console-error').textContent ?? '';
+    await waitFor(() => expect(screen.getByTestId('redis-console-entry-error')).toBeTruthy());
+    const text = screen.getByTestId('redis-console-entry-error').textContent ?? '';
     expect(text).toContain('redis.consoleSafety.blockedUnknown');
     expect(text).not.toContain('redis.consoleSafety.blockedDestructive');
     expect(commandInvoke).not.toHaveBeenCalled();
@@ -175,8 +180,10 @@ describe('blocked commands never reach the server', () => {
     typeInto(input, 'GET a\nEVAL "return 1" 0');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
-    expect(screen.getByTestId('redis-console-error').textContent).toContain('EVAL "return 1" 0');
+    await waitFor(() => expect(screen.getByTestId('redis-console-entry-error')).toBeTruthy());
+    expect(screen.getByTestId('redis-console-entry-error').textContent).toContain(
+      'EVAL "return 1" 0',
+    );
     expect(commandInvoke).not.toHaveBeenCalled();
   });
 
@@ -187,8 +194,8 @@ describe('blocked commands never reach the server', () => {
     typeInto(input, 'FLUSHDB');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
-    expect(screen.getByTestId('redis-console-error').textContent).toContain(
+    await waitFor(() => expect(screen.getByTestId('redis-console-entry-error')).toBeTruthy());
+    expect(screen.getByTestId('redis-console-entry-error').textContent).toContain(
       'redis.console.flushBlocked',
     );
     expect(commandInvoke).not.toHaveBeenCalled();
@@ -206,7 +213,9 @@ describe('batch gate semantics (R-3)', () => {
     await waitFor(() => expect(commandInvoke).toHaveBeenCalledTimes(1));
     expect(confirmCalls).toHaveLength(1);
     expect(confirmCalls[0].codePreview).toContain('DEL b, EXPIRE c 1');
-    expect(commandInvoke.mock.calls[0]?.[2]).toMatchObject({ commands: 'GET a\nDEL b\nEXPIRE c 1' });
+    expect(commandInvoke.mock.calls[0]?.[2]).toMatchObject({
+      commands: 'GET a\nDEL b\nEXPIRE c 1',
+    });
   });
 
   it('cancelling the single confirmation stops the whole batch', async () => {
@@ -281,17 +290,16 @@ describe('per-command results (P0-3 / R-3.2)', () => {
     typeInto(input, 'GET a\nGET hash:1\nPING');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-failed-count')).toBeTruthy());
-    expect(screen.getByTestId('redis-console-failed-count').textContent).toContain(
-      'redis.errorsCount',
+    await waitFor(() =>
+      expect(screen.getAllByTestId('redis-console-entry-result')).toHaveLength(3),
     );
-    // sequential execution: the third command is still there and selectable
-    const tabs = screen.getAllByRole('button').filter((b) => b.title?.startsWith('GET') || b.title === 'PING');
-    expect(tabs).toHaveLength(3);
-    fireEvent.click(tabs[1]);
-    expect(screen.getByTestId('redis-console-result').textContent).toContain('WRONGTYPE');
-    fireEvent.click(tabs[2]);
-    expect(screen.getByTestId('redis-console-result').textContent).toContain('PONG');
+    // All three land in the scrollback at once. The old model paginated them
+    // behind tabs, so "the later results are not dropped" only ever held for
+    // whichever tab happened to be selected.
+    const rows = screen.getAllByTestId('redis-console-entry-result');
+    expect(rows[0].textContent).toContain('1');
+    expect(rows[1].textContent).toContain('WRONGTYPE');
+    expect(rows[2].textContent).toContain('PONG');
   });
 
   it('renders the server-provided resultType instead of re-guessing it', async () => {
@@ -307,9 +315,13 @@ describe('per-command results (P0-3 / R-3.2)', () => {
     typeInto(input, 'HGETALL h');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-result')).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getAllByTestId('redis-console-entry-result')).toHaveLength(2),
+    );
     // `[a, b]` formatted as a scalar would print verbatim; as an array it becomes rows.
-    expect(screen.getByTestId('redis-console-result').textContent).not.toContain('[a, b]');
+    expect(screen.getAllByTestId('redis-console-entry-result')[0].textContent).not.toContain(
+      '[a, b]',
+    );
     expect(screen.getByText('a')).toBeTruthy();
     expect(screen.getByText('b')).toBeTruthy();
   });
@@ -324,7 +336,7 @@ describe('per-command results (P0-3 / R-3.2)', () => {
     typeInto(input, 'HGETALL h');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-result')).toBeTruthy());
-    expect(screen.getByTestId('redis-console-result').textContent).toContain('a');
+    await waitFor(() => expect(screen.getByTestId('redis-console-entry-result')).toBeTruthy());
+    expect(screen.getByTestId('redis-console-entry-result').textContent).toContain('a');
   });
 });
