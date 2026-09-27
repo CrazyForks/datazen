@@ -181,6 +181,59 @@ title: 多目标协调计划（hub 静态段落来源）
   - store **不阻止「从未打开过的 pane」成为焦点**，**孤儿 exec entry 那扇门仍开着** ⇒ 属**调用方契约**：
     P2 的 pane 点击处理器**只能传自己 tab 内已存在的 paneId**；
   - `ContentViewKvToolbar.test.tsx` 的 **4 键 store mock 是硬性前置** —— P2 一旦让视图改读 `map`，该 mock **会直接 `TypeError`**。
+- **🔴🔴【两条断言被复测实测推翻 · 我已撤回】Track E 复测推翻了我自己反复讲的东西：**
+  - **❌ 撤回「jsdom `w3c-keyname` 修饰键和弦陷阱」。** 我说过并写进简报：
+    「有修饰键时 `w3c-keyname` 丢弃 `event.key` 回退 `event.keyCode`，jsdom 从不设它
+    ⇒ 修饰键和弦静默不触发，除非显式定义 `keyCode`（`[`=219 等）」。
+    **复测做法是把整段垫片删掉，结果 10/10 仍绿，8 个和弦带不带 `keyCode` 解析完全相同。**
+    ⇒ **垫片是死代码，它的存在理由已被证伪。** 已核实垫片只出现在**两个测试文件**里共 **7 行**，
+    不在生产代码。**不予登记为仓库级陷阱** —— 我差点又立一条**没测过就传播**的规则。
+  - **❌ 撤回「两条根因都悄无声息」。** 复测实测：`RangeSetBuilder` 变体下
+    `announceFold` 执行 `state.doc.lineAt(undefined.to)`，**抛出显眼的 `TypeError`**（`console.error` 可见）。
+    **正确描述：根因①（config 字段被丢弃）确实静默；根因②（传 builder）是「折叠无效 + 抛 TypeError」。**
+    我把两个不同性质的现象合并成了一句「同样悄无声息地蒸发」，**这会误导后来人的排查方向**
+    —— 一个抛错一个不抛错，排查手法完全不同。
+  - **⚠️ 撤回「修复前所有既有测试仍然全绿」**：该**历史状态不可测**（`2dfba67^` 里**根本没有 `src/fold`**，
+    是新增文件，缺陷无历史形态可恢复）。Tester 改用重构 `codeFolding({foldService} as never)`
+    模拟，**与删除 `foldService.of` 完全同构（9 条同名红）**。
+    ⇒ **我原句应改为「不可验证」而非「全绿」。** 又是同一个错误形态：**把不可测的东西说成了已验证的。**
+  - **⚠️ 更正体积数字**：Coder 报 **278,754 B / 728,005 B**；复测在 retest worktree 实测产物
+    **393,860 B（384.6 kB）**。**量级差 40%** ⇒ 体积闸门的标定是在错的基线上做的（见 BUG-001）。
+  - **⚠️ 更正「5 个字符串标记均为 0」**：`foldInside` 在每个产物中**各出现 1 次**。
+    但**改用体积闸门的决定本身是对的** —— `LRLanguage`/`syntaxTree`/`TokenCache`/`@lezer` 在
+    `language` **确实被内联**时依然全 0，**原理上无法失败**。
+- **🐛 Track E 复测登记 4 个缺陷（均中），已派轨修 BUG-001/002/003：**
+  - **BUG-001（体积闸门形同虚设）**：上限 420 kB 而实际 384.6 kB，**余量仅约 9%**（注释称 ~50%）。
+    单独内联 `@codemirror/lint` = 403 kB、`@codemirror/state` = **418 kB** —— **都稳过上限**。
+    ⚠️ **`@codemirror/state` 正是 `Facet`/`StateField`/`RangeSet` 的定义所在** ——
+    **恰好是造成 BUG-003 那类「传错类型给 Facet」缺陷的模块，却漏过了闸门。**
+    只有内联 `@codemirror/language`（454 kB）才拦得住。⇒ **标定基线错了，就得整条重做。**
+  - **BUG-002（假守卫 —— 与本波新发现的判据正面撞上）**：
+    `foldJourney:495` 的 `toContain('Unfold line')` 是**夹具假象** ——
+    `foldGutter` **恒渲染一个 `visibility:hidden` 的占位符，其 title 就是 `"Unfold line"`**，
+    而 `arrowsIn` **不过滤它**。⇒ **折叠功能全死时，该用例的两个半句都通过**，
+    今天会红**全靠第一行**。**这正是「断言存在 ≠ 断言能失败」的一个实证**，且已由另一轨
+    （`feature/guard-audit`）在做全量审计 —— **两条独立工作在此交汇**。
+    更严重的是【真实管线实测】**完全降级**（只挂 gutter、不注册 `foldService`）后 `foldJourney:495` **两个半句都绿**。
+  - **BUG-003（第 4 次「注释说谎」）**：`sqlFoldService` 的注释写「只为**起始行**落在请求区间内的 region 提供箭头……
+    为一个开启 token 画多个箭头会暗示存在多个独立折叠」，**实现只判「重叠」**：
+    4 行 1 region 实测画出 **4 个** `Fold line` 箭头。
+  - **BUG-004 = P-TS-1 正式立项**：Pro 仓同时 `strict:false` + 排除 `__tests__`，
+    而**宿主 `AGENTS.md` 明文要求测试参与类型检查** ⇒ **本轨新增测试带 11 个真实 `TS2322` 通过全部门禁**。
+    最扎眼：`foldExtension.ts` 的**生产代码里恰好写着防这个错误的注释**（`push` 返回 `number`，隐式返回过不了 `strict`），
+    **而 11 行之外的测试踩了 11 次**。
+    【三组实测错误数，如实报数未调任何选项】(a) 原样 **0**；(b) 开 `strict` **2**（全在 `src` 源码，`TS2345`，与本轨无关）；
+    (c) 纳入 `__tests__` **94**（全在测试）。本轨贡献 **11/94**（`keymapConflicts` 10 + `foldJourney` 1），全为 `TS2322` number→boolean。
+    ⇒ **scripts-gate 范式适用，但第一步必须是「加只降不升的基线快照 ≤94」，不是直接开 `strict`。**
+- **✅ Track E 复测：`PASSED`，零业务代码改动。** Pro 侧新增回归守卫
+  `foldServiceFacetRegression.tester.test.ts`（5 例，断言 facet 长度 折叠前 0 → 折叠后 >0），建在 `835b10b`。
+  基线（自测）：宿主 `tsc` exit 0、**480 文件 / 4820 用例全绿**（164.87s，两次独立运行一致）；
+  Pro `tsc` exit 0、**66 文件 / 841 用例全绿**（22.44s）—— 与 Coder 一致，加其 5 例后 67/846。
+  【实测】**宿主门禁覆盖 Pro 零个文件**（`.gitignore:68` + `tsconfig` 均不含）⇒ **两套门禁无交集**，
+  「宿主全绿」对 Pro 侧**零信息量** —— 本轨最核心的结构性结论**已由复测独立坐实**。
+  **A5 调和完毕**：`proCompartments.ts` 在**两种口径下都是 100/100/100/100**；
+  Coder 报的 98.41/96.87 **在 `f7d13d81d` 两种方法下均不复现**。
+  ⇒ 回答协调方的问题：**引入 `fold` 舱位后分支覆盖率既没升也没降，仍 100%，无新增未覆盖分支。**
 - **🔴【方法论·第十类·我自己的话被 Coder 实测推翻】一个听起来合理的因果，我从没验证就复述了四轮。**
   我在台账里写「缺件 2：第三层 codegen `src/extensions/generated-locales.ts` 缺失导致大面积莫名失败」，
   并把这条**当作事实写进了此后每一轨的简报**（compartment、scripts-gate、folding、guard-audit）。
