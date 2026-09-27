@@ -386,10 +386,25 @@ SELECT ...
 ## 4. P0 地基（无此则后续全部返工）
 
 ### G1. 补齐 Pro 共享运行时模块
-- `src/main.tsx:45-56`：`__DATAZEN_HOST__` 增加 `@codemirror/language`、`@codemirror/commands`。
-- Pro `package.json` peerDeps 同步补 `@codemirror/language`（**不补会导致两实例的 `@codemirror/language` 身份分裂**）。
-- 同步核对 `pack-ep.mjs` 与 Pro `vite.config.ts` 的 externalize 列表。
-- **加一条"共享身份"自检**：Pro 激活时断言 `globalThis.__DATAZEN_HOST__['@codemirror/language']` 与其自身 import 同一对象，防止静默降级。
+
+**2026-08-18 实证结论（已构建验证，非读码推断）** —— G1 的失败模式是**构建期硬报错**，不是静默降级：
+
+Pro `vite.config.ts:11-12` 的 `isBareExternal = BARE_SPECIFIERS.has(s) || /^@codemirror\//.test(s)` 是**宽正则**，任意 `@codemirror/*` 都会被 externalize；
+而 `pack-ep.mjs:63-73` 的 `HOST_SHARED_MODULES` 是**窄白名单**，`rewriteEpImportsToHostGlobals` 遇到不在白名单的裸导入会 `throw unmappedError`。
+
+⇒ Pro 侧一旦 `import { codeFolding } from '@codemirror/language'`，构建必然在 `pack-ep` 阶段失败，并打印
+`[pack-ep] unmapped bare import "@codemirror/language" — add it to HOST_SHARED_MODULES and the host __DATAZEN_HOST__ table in src/main.tsx`。
+
+**这个"宽 vs 窄"的不对称是刻意设计的探针，不要抹平**：宽正则保证任何新 CM 包都逃不掉检查，窄白名单强制你逐个显式确认。**禁止**为了省事把 `/^@codemirror\//` 直接塞进 `HOST_SHARED_MODULES` —— 那等于拆掉探针，探针拆掉后失败模式就退化成"第二份 `@codemirror/language` 被静默打包进 bundle"，正是最难查的身份分裂。
+
+**当前基线实测**：两个白名单各 9 项且**完全一致**（`@datazen/extension-points` / `@datazen/ui` / `react` / `react-dom` / `react/jsx-runtime` / `@codemirror/{state,view,lint,autocomplete}`），同步不变量成立。产物实际引用 6 键，是宿主的真子集 ⇒ 现版本能跑。
+
+**改动清单（两处必须同批）**：
+1. `src/main.tsx:45-55`：`__DATAZEN_HOST__` 增加 `@codemirror/language`、`@codemirror/commands`。
+2. `scripts/pack-ep.mjs:63-73` `HOST_SHARED_MODULES` 同步增加同样两项。
+3. Pro `package.json` peerDeps 补 `@codemirror/language`、`@codemirror/commands`（**类型层保障**；peerDeps 缺失不会导致运行时身份分裂，因为运行时已由重写保证，但会导致 Pro 编译期拿不到类型）。
+
+⚠ **`@lezer/highlight` 是个例外**：它既不匹配 `/^@codemirror\//` 也不在白名单 ⇒ 会被**正常打包进 bundle**（不报错）。`tags.*` 走 `styleTags` 的字符串/数值键，当前无害；但若 Pro 侧需要与宿主共享同一份 `@lezer/*` 单例（如 `Tag.define()` 身份比较），必须同样提进两个白名单。折叠的 `foldNodeProp` 走 `@codemirror/language` 内部，不触及 `@lezer`，故 P1 无需处理。
 
 ### G2. EP 契约新增三个通用钩子
 在 `SqlEditorEnhancedFeatures`（`sqlEditorEnhancedEP.ts:59-104`）新增，遵循既有 fallback 纪律（`fallbackFeatures` 为 `Object.freeze`，每个钩子 null/空返回）：
@@ -513,7 +528,7 @@ SELECT ...
 | --- | --- | --- | --- |
 | **EP 版本精确匹配** | 契约改动未同批 bump | Pro 静默降级 community | G4；打包流水线加断言 |
 | **熔断一炸全灭** | 任一 Pro 工厂抛错 | 整个 `sqlEditorEnhancedEP` 被注销，六个舱位同时降级，用户看到"功能凭空消失" | 分特性熔断（宿主侧改 `SafeCompartmentWrapper` 语义）；`onCircuitBreak` 目前**未接线** |
-| **跨 realm 模块身份分裂** | `__DATAZEN_HOST__` 重写漏 specifier | 静默降级 / "invalid hook call"，**无报错** | G1 自检测试 |
+| **跨 realm 模块身份分裂** | `@lezer/*` 这类既不匹配宽正则、也不在白名单的包被静默打包 | 第二份实例，"invalid hook call"，**无报错** | 折叠路径不触及 `@lezer`；若将来需要共享，提进两个白名单（G1） |
 | **非原子重配** | 生产 6 次独立 dispatch（热插拔触发） | 中间帧舱位错配；`dispose()` 与重配竞争 | 把 `reconfigureProCompartments` 接进生产 |
 | **Pro 设置键 i18n 一次性求值** | 切换语言 | Pro 设置卡不重新翻译 | 改为渲染期求值 |
 | **明文历史库** | 任何导出/同步 | SQL 与错误信息泄露 | P3-1 之前必须先定方案 |
