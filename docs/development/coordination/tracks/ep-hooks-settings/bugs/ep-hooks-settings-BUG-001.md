@@ -45,6 +45,11 @@ Pro 源码  ──vite renderChunk(后置)──▶  产物 JS（裸 import 已�
 
 ## 三、复现步骤（不修改仓库）
 
+> **⚠ 复验时必读（2026-07-21 补）**：本节的探针键必须是**在修复前后都非法**的键。
+> 原探针 `@codemirror/commands` 已被提交 `5631f2bc8`（见文末出处）提升进 `HOST_SHARED_MODULES`，
+> 照抄本节会看到 case B **不抛错**，从而**错误判定修复无效**。
+> 现改用 `@codemirror/search`：它在两张表中皆无，修复前后**都**应被拦下。
+
 ```bash
 cd /Users/wuxiaolong/code/rust-projects/datazen/.worktrees/datazen-ep-hooks-settings
 node --input-type=module -e "
@@ -54,9 +59,9 @@ const tryIt = (label, code) => {
   catch (e) { console.log(label, '=> THREW:', e.message); }
 };
 // A：未预改写（闸门应当拦下）
-tryIt('A bare     ', 'import { indentWithTab } from \"@codemirror/commands\";');
+tryIt('A bare     ', 'import { indentWithTab } from \"@codemirror/search\";');
 // B：同一 specifier 已被 Pro 插件预改写（闸门应当仍然拦下 —— 这就是缺陷）
-tryIt('B pre-rewrit', 'const { indentWithTab } = globalThis.__DATAZEN_HOST__[\"@codemirror/commands\"];');
+tryIt('B pre-rewrit', 'const { indentWithTab } = globalThis.__DATAZEN_HOST__[\"@codemirror/search\"];');
 // C：非 @codemirror 裸依赖（闸门应当拦下）
 tryIt('C other    ', 'import { invoke } from \"@tauri-apps/api/core\";');
 "
@@ -65,7 +70,7 @@ tryIt('C other    ', 'import { invoke } from \"@tauri-apps/api/core\";');
 ### 实测输出
 
 ```
-A bare      => THREW: [pack-ep] unmapped bare import from "@codemirror/commands" — add it to HOST_SHARED_MODULES and the host __DATAZEN_HOST__ table in src/main.tsx
+A bare      => THREW: [pack-ep] unmapped bare import from "@codemirror/search" — add it to HOST_SHARED_MODULES and the host __DATAZEN_HOST__ table in src/main.tsx
 B pre-rewrit=> NO THROW []
 C other     => THREW: [pack-ep] unmapped bare import from "@tauri-apps/api/core" — ...
 ```
@@ -95,6 +100,12 @@ node scripts/resolve-pro.mjs --edition=pro --pro-path=<Pro 仓绝对路径>
 | `react/jsx-runtime` | ✅ 有 |
 
 - 产物 key 数 **7**，宿主表 key 数 **9**；**产物 ⊆ 宿主表：true**。
+
+> **⚠ 键数是分支限定值（2026-07-21 补）**：上面这组「宿主表 9 键 / 产物 7 键」是在
+> **`feature/ep-hooks-settings`**（本缺陷的发现分支）实测的。集成侧（`feature/editor-productivity`）
+> 宿主表已由 `5631f2bc8` 扩为 **11 键**（新增 `@codemirror/language`、`@codemirror/commands`），
+> 故集成侧为 **7 ⊆ 11**。**引用键数必须声明分支**，否则同一份产物会在两个分支上得到不同的差集。
+
 - 宿主表中未被产物使用：`react-dom`、`@codemirror/autocomplete`。
 - `HOST_SHARED_MODULES` 中无任何 key 缺失于宿主表。
 - 产物中 `__DATAZEN_HOST__` 出现 **8** 次（6 处方括号取值 + 2 处 `.react` 点号取值）。
@@ -150,3 +161,70 @@ Coder 在 `progress.md` §五.8 已明确声明：Pro vite 的 `/^@codemirror\//
 3. 未预改写形态的、非白名单 key ⇒ 必须抛错（A 用例，回归保护）；
 4. 宿主表 key 集合 ⊇ `HOST_SHARED_MODULES` ⇒ 读 `src/main.tsx` 断言，防止两侧漂移
    （与本轨道 `security.test.ts` 读 Pro manifest 的跨仓读法同构）。
+
+---
+
+## 复测记录（round-1）
+
+- **复测人**：Tester（原登记人）
+- **复测时基线**：`9556628c9`（集成分支 `feature/editor-productivity`），修复由 `ff103741b` 合入
+- **复测结论**：**通过**。缺陷本体已修复；建议 `- **状态**：` 翻为「已修复」。
+
+### 修复出处（勿再混淆）
+
+| commit | 内容 |
+| --- | --- |
+| `85594adb4` | 产物级宿主键不变量（**只动** `scripts/pack-ep.mjs`、`scripts/__tests__/pack-ep.test.ts`、计划文档；**未碰** `src/main.tsx`） |
+| `5631f2bc8` | **宿主表 9 → 11 键**（`src/main.tsx` +12、`pack-ep.mjs` +13、测试 +103），为 Track E 代码折叠与 Track D 多光标预授权 `@codemirror/language` / `@codemirror/commands` |
+
+宿主表扩容**不是** `85594adb4` 做的；把它算进 BUG-002 修复是归因错误（本轮由复测人误判、复测人更正）。
+
+### 复测方法与证据
+
+隔离复现（抽出 `9556628c9` 的 `pack-ep.mjs` / `sign-ep.mjs` / `main.tsx` 到一次性目录，未 merge/rebase/reset 集成分支），
+用 `TEST_EP_PRIVATE_KEY_PKCS8_B64` 真实出签。
+
+1. **闸门按新探针键正确拦截**：`@codemirror/search` 的双引号式、单引号式、点号式、带空格括号式全部抛
+   `unmapped host table key`；`@codemirror/merge` 抛错；前缀近似键 `react-evil`、`react/jsx-anything` 抛错
+   （证明是精确匹配而非前缀匹配）；计算键 `__DATAZEN_HOST__[k]`、整表读取、解构三种写法全部
+   以 `non-literal … cannot be verified` 失败即关闭。
+2. **签名前拦截（端到端）**：真跑 `stagePackageTree`，预改写 + `@codemirror/search` ⇒ 抛错，
+   **`signature.sig` 不存在**、无 `.dzx`。`createDzxArchive` 纵深防御同样抛错、无 `.dzx`。
+   调用顺序已核实：产物闸门在 `signEpPackage` **之前**。
+3. **对照组**（全合法键，含点号式 `.react`）：不抛错且 **`signature.sig` 存在** ⇒ 闸门不是「把一切打红」。
+4. **测试确实承重（变异测试，非读断言）**：
+   - 删 `stagePackageTree` 内闸门 → **恰好 5 个**测试转红，其中 `createDzxArchive` 那条**仍绿**
+     ⇒ 两个调用点独立覆盖；
+   - 删 `createDzxArchive` 内闸门 → **恰好 1 个**转红 ⇒ 纵深防御独立承重；
+   - 把扫描器退回「只认括号式」→ **恰好 2 个**转红，含 `collects dot-form host keys…`
+     **与真实产物端到端例 `builds, signs, and writes .dzx for sql-editor-pro`**
+     ⇒ 点号式对真实产物承重，不只对合成字符串。
+   - 未变异基线：52 passed / 3 skipped（55）。
+
+§五.8 的约束被遵守：Pro 侧 `/^@codemirror\//` 宽放行与宿主窄白名单之差**原样保留**，两侧均未被「整理掉」。
+
+### 「两个新键当前无消费者」的复测更正（两处，避免再被误抄）
+
+1. **声明层面已就位**：Pro 仓 `package.json` 的 `peerDependencies` 在 `productivity/editor-productivity`
+   分支上已含 `@codemirror/commands` 与 `@codemirror/language`（Track B 自己的
+   `productivity/ep-hooks-settings` 分支**尚未**包含）。所有 `@codemirror/*` 都在 `peerDependencies`、
+   不在 `dependencies` ⇒ CM 类模块**不随 Pro 打包、由宿主提供**。
+   故准确表述是「**已声明、待消费**」（Track E 才会真正导入 `@codemirror/language`），
+   而非「无消费者」。
+2. **`dependencies` 并非空**：`lucide-react`、`zustand` 两个真实依赖在**所有** Pro 分支上都存在。
+   正确的不变式是「`@codemirror/*` 不在 `dependencies`」，而不是「`dependencies` 为空」。
+
+### 复测未覆盖 / 遗留边界
+
+- **CLI `exit 1` 未由本轮复测独立验证**（复测在模块 API 层验证的是「抛错 + 不出签 + 不出 `.dzx`」，
+  这才是安全属性本身；`exit 1` 由修复方实测）。
+- **对称盲区（未关闭）**：产物闸门只校验「产物里出现的每个 `__DATAZEN_HOST__` 键都被允许」，
+  **不**校验「某个共享模块是否被一致地外部化」。若产物同时存在 `__DATAZEN_HOST__['@codemirror/language']`
+  与一份**自带副本**，闸门是绿的，但 CM6 的 `StateField` / `ViewPlugin` class 会跨 realm 双身份 ⇒
+  `instanceof` 失败、行为静默异常。
+  **当前无实际风险**（Pro 侧 `@codemirror/language` 导入尚未发生，宽正则外部化一致），故不立 bug 文件；
+  但 Track E 一旦开始真正导入 `@codemirror/language`，此风险立即成为活风险。关闭它需要一条
+  「对真实产物断言每个 `@codemirror/*` 都解析到 `__DATAZEN_HOST__`、产物中不含其自带副本」的测试 ——
+  现有的 `sql-editor-pro peerDependencies stay inside the host shared set` 校验的是**声明**（package.json），
+  不是**产物**。
+
