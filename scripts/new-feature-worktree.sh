@@ -148,6 +148,13 @@ if git -C "$MAIN" worktree list --porcelain | grep -Fqx "worktree ${WT}"; then
   #   实测：模式 'worktree /a/b.c/d' 命中已登记的 'worktree /a/bXc/d'（假阳性）
   #   实测：${WT} 含 '*' ⇒ 正则不命中该字面路径（假阴性）
   #   实测：${WT} 含 '[' ⇒ grep 报错 exit 2 且 stderr 漏出 'brackets not balanced'
+  # 可达性**两侧不同，别把「不可达」读成整类**：
+  #   假阳性（第 1 条，需构造一个只在 '.' 位置不同的诱饵 worktree）在本仓库路径形态下
+  #     不可达 —— 路径里只有 1 个点。
+  #   假阴性（第 2 条）**完全可达，且是这四处里后果最重的**：TRACK 无字符白名单，
+  #     而 '$' 是合法 git 分支名与合法目录名 ⇒ track 取名 'zz$' 就会让 L197 漏判，
+  #     落到 `elif [ -d ]` 的 `rm -rf`，**整个脏检查被绕过、未提交改动真丢**。
+  #     已由构造实验证实：只需 track 改名，无需诱饵、无需并发、无需机器上既有状态。
   # 本处误判后果：对**不存在**的工作区报「已登记」并让用户去清理，脚本拒绝启动。
   die "worktree 已登记: ${WT}
 若是上次失败的半成品，先清理：git -C ${MAIN} worktree remove --force ${WT}"
