@@ -10,7 +10,14 @@
  * Harness: `scripts/mutation-check-pane-focus.mjs` (`node scripts/mutation-check-pane-focus.mjs`).
  * It reverts each action to its pre-BUG-001 shape — a plain `activePanelId`
  * write, a plain global `focusedPaneId` write, or no focus patch at all — and
- * requires this file to go red.
+ * requires the **pane suite** to go red: the 10 files in that script's `TESTS`
+ * list, run together. That is the criterion and the only one — the script never
+ * inspects this file on its own, so a mutation only some *other* file in that
+ * list can see still counts as caught. Today every one of those mutations happens
+ * to turn red here too, but that is a fact about this file's current contents, not
+ * the harness's rule (see note 2): the moment one of these guards moves to another
+ * file in `TESTS`, "this file goes red" stops being true while the harness keeps
+ * passing — which is exactly why the comment may not claim it.
  *
  * Two things this file has to get right, both learned the hard way:
  *
