@@ -1,5 +1,5 @@
 /**
- * Active right-panel sub-tab, keyed by panel scope (see `panelScope.ts`).
+ * Active right-panel sub-tab, keyed by the host-issued `panelId`.
  *
  * ## Why this is not `useState`
  *
@@ -13,12 +13,13 @@
  * Same trade-off as `consoleTranscript.ts`, and for the same reason: module
  * scope outlives the unmount.
  *
- * ## Why keyed by scope and not `dbSessionId`
+ * ## Why keyed by `panelId` and not `dbSessionId`
  *
  * `dbSessionId` is shared by every db tab of one connection, so keying by it
  * leaked one tab's sub-tab into a sibling: db0 on the console also opened a
- * fresh db1 tab on the console. The key is the panel scope instead, so state
- * survives a remount of *the same* tab and never crosses to another one.
+ * fresh db1 tab on the console. `panelId` is unique per tab, so state survives
+ * a remount of *the same* tab and never crosses to another one. Cleared by
+ * `panelLifecycle` when the host closes the tab.
  */
 import { useSyncExternalStore } from 'react';
 
@@ -30,59 +31,59 @@ const tabs = new Map<string, RightTab>();
 const listeners = new Map<string, Set<() => void>>();
 
 /**
- * Bound subscribe, cached per scope.
+ * Bound subscribe, cached per panel.
  *
  * `useSyncExternalStore` compares `subscribe` by identity and re-subscribes
  * whenever it changes. A freshly built closure on every render would therefore
  * unsubscribe/resubscribe on each commit - churn during render, and lost
  * notifications if a write lands in the gap. One stable function is kept for as
- * long as the scope exists.
+ * long as the panel exists.
  */
 const subscribes = new Map<string, (listener: () => void) => () => void>();
 
-function stableSubscribe(scope: string): (listener: () => void) => () => void {
-  let sub = subscribes.get(scope);
+function stableSubscribe(panelId: string): (listener: () => void) => () => void {
+  let sub = subscribes.get(panelId);
   if (!sub) {
     sub = (listener) => {
-      let set = listeners.get(scope);
+      let set = listeners.get(panelId);
       if (!set) {
         set = new Set();
-        listeners.set(scope, set);
+        listeners.set(panelId, set);
       }
       set.add(listener);
       return () => {
         set.delete(listener);
-        if (set.size === 0) listeners.delete(scope);
+        if (set.size === 0) listeners.delete(panelId);
       };
     };
-    subscribes.set(scope, sub);
+    subscribes.set(panelId, sub);
   }
   return sub;
 }
 
-/** Read a scope's tab without subscribing. */
-export function readRightTab(scope: string): RightTab {
-  return tabs.get(scope) ?? DEFAULT_TAB;
+/** Read a panel's tab without subscribing. */
+export function readRightTab(panelId: string): RightTab {
+  return tabs.get(panelId) ?? DEFAULT_TAB;
 }
 
 /** Persist a tab choice. A no-op write is skipped so `useSyncExternalStore` stays quiet. */
-export function writeRightTab(scope: string, tab: RightTab): void {
-  if (readRightTab(scope) === tab) return;
-  tabs.set(scope, tab);
-  for (const listener of listeners.get(scope) ?? []) listener();
+export function writeRightTab(panelId: string, tab: RightTab): void {
+  if (readRightTab(panelId) === tab) return;
+  tabs.set(panelId, tab);
+  for (const listener of listeners.get(panelId) ?? []) listener();
 }
 
-export function useRightTab(scope: string): RightTab {
+export function useRightTab(panelId: string): RightTab {
   return useSyncExternalStore(
-    stableSubscribe(scope),
-    () => readRightTab(scope),
+    stableSubscribe(panelId),
+    () => readRightTab(panelId),
     () => DEFAULT_TAB,
   );
 }
 
-/** Test-only: forget a scope so a case starts from the default tab. */
-export function resetRightTab(scope: string): void {
-  tabs.delete(scope);
-  subscribes.delete(scope);
-  listeners.delete(scope);
+/** Forget a panel so its tab state is released (also used on tab close). */
+export function resetRightTab(panelId: string): void {
+  tabs.delete(panelId);
+  subscribes.delete(panelId);
+  listeners.delete(panelId);
 }

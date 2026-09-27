@@ -93,8 +93,9 @@ vi.mock('../value-editors/keyEditorsInvokes', async (importOriginal) => ({
 import type { KeyDetail } from '../shared/types';
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
 import { resetRightTab } from '../shared/rightTabState';
-import { panelScopeKey } from '../shared/panelScope';
 import { RedisConnectionView } from '../connection/RedisConnectionView';
+import { panelCloseStub } from '../__testing__/panelClose';
+import { resetPanelBindings } from '../shared/panelLifecycle';
 import {
   __resetDraftGuard,
   isDraftDirty,
@@ -137,6 +138,8 @@ function renderWorkbench() {
 function renderView() {
   return render(
     <RedisConnectionView
+      panelId="panel-i1"
+      onPanelClosed={panelClose.onPanelClosed}
       dbSessionId="sess-i1"
       connectionId="cfg-i1"
       connectionName="local"
@@ -162,7 +165,13 @@ async function selectAndDraft() {
   await waitFor(() => expect(editor().getAttribute('data-string-dirty')).toBe('true'));
 }
 
+// The view registers a close handler on mount; cases fire it explicitly.
+const panelClose = panelCloseStub();
+
 beforeEach(() => {
+  panelClose.clear();
+  // `panelLifecycle` binds per panelId at module scope, so it outlives cleanup().
+  resetPanelBindings();
   getKey.mockImplementation((...args: unknown[]) => {
     const key = args[2] as string;
     return Promise.resolve(stringDetail(key, key === 'user:1' ? 'hello' : 'other'));
@@ -190,7 +199,7 @@ beforeEach(() => {
   // The active sub-tab is a module-level store so it survives the remount a
   // top-level tab switch causes. Every case here shares `sess-i1`, so without
   // this the tab chosen by one case leaks into the next.
-  resetRightTab(panelScopeKey('cfg-i1', 'db0'));
+  resetRightTab('panel-i1');
 });
 
 afterEach(() => {

@@ -9,14 +9,14 @@
  * browser is always visible on the left, giving the user constant access to the
  * key tree regardless of which right-panel tab is active.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { ConnectionViewProps } from '@datazen/driver-sdk';
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
 import type { RedisWorkbenchHandle } from '../key-browser/RedisWorkbench';
 import { RedisRightPanel } from '../key-browser/RedisRightPanel';
 import { useRightTab, writeRightTab, type RightTab } from '../shared/rightTabState';
-import { panelScopeKey } from '../shared/panelScope';
+import { bindPanelClose } from '../shared/panelLifecycle';
 import { readPinnedNodeAddr } from './ClusterNodePicker';
 import type { RedisPendingAction } from '../overview/overviewNavigation';
 
@@ -56,8 +56,9 @@ interface RedisConnectionViewExtraProps {
 }
 
 export function RedisConnectionView({
+  panelId,
+  onPanelClosed,
   dbSessionId,
-  connectionId,
   connectionName,
   initialDatabase,
   hideSidebar,
@@ -75,14 +76,14 @@ export function RedisConnectionView({
   // Right-panel tab state — the pending action may switch the active tab.
   // Module-level store, not useState: the host unmounts this whole subtree on a
   // top-level tab switch, and component state would reset the user to 'detail'.
-  // Keyed by panel scope, NOT `dbSessionId`: every db tab of one connection
-  // shares that session id, so it would leak this tab's sub-tab to a sibling db.
-  const panelScope = useMemo(
-    () => panelScopeKey(connectionId, initialDatabase ?? ''),
-    [connectionId, initialDatabase],
-  );
-  const rightTab = useRightTab(panelScope);
-  const setRightTab = useCallback((tab: RightTab) => writeRightTab(panelScope, tab), [panelScope]);
+  // Keyed by `panelId`, NOT `dbSessionId`: every db tab of one connection shares
+  // that session id, so it would leak this tab's sub-tab to a sibling db.
+  const rightTab = useRightTab(panelId);
+  const setRightTab = useCallback((tab: RightTab) => writeRightTab(panelId, tab), [panelId]);
+
+  // Release this tab's state when the host closes it. Survives unmount on
+  // purpose — see `shared/panelLifecycle`.
+  useEffect(() => bindPanelClose(panelId, onPanelClosed), [panelId, onPanelClosed]);
 
   // Sync the prop into the ref so that when the host calls `updatePanel` with a
   // new pendingAction on an EXISTING panel, the consumption effect picks it up.
@@ -172,7 +173,7 @@ export function RedisConnectionView({
                 onPinnedNodeAddrChange={setPinnedNodeAddr}
                 connectionName={connectionName}
                 selectedDb={selectedDb}
-                panelScope={panelScope}
+                panelId={panelId}
                 activeTab={rightTab}
                 onTabChange={handleRightTabChange}
               />

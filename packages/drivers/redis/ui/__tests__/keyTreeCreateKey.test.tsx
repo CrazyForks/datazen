@@ -71,6 +71,11 @@ vi.mock('../observe/PubSubPanel', () => ({
 }));
 
 import { RedisConnectionView } from '../connection/RedisConnectionView';
+import { panelCloseStub } from '../__testing__/panelClose';
+import { resetPanelBindings } from '../shared/panelLifecycle';
+
+// The view registers a close handler on mount; cases fire it explicitly.
+const panelClose = panelCloseStub();
 
 // The workbench reads the same host bridges a real panel would; jsdom has no
 // host, so the minimal stand-ins are bound here. Safe Mode off keeps the guard
@@ -98,6 +103,8 @@ afterEach(() => {
 function renderView() {
   return render(
     <RedisConnectionView
+      panelId="panel-test"
+      onPanelClosed={panelClose.onPanelClosed}
       dbSessionId="sess-create"
       connectionId="cfg-create"
       connectionName="local"

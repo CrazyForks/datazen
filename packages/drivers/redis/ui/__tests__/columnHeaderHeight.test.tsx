@@ -51,6 +51,11 @@ vi.mock('../observe/SlowlogPanel', () => ({ SlowlogPanel: () => <div /> }));
 vi.mock('../observe/PubSubPanel', () => ({ PubSubPanel: () => <div /> }));
 
 import { RedisConnectionView } from '../connection/RedisConnectionView';
+import { panelCloseStub } from '../__testing__/panelClose';
+import { resetPanelBindings } from '../shared/panelLifecycle';
+
+// The view registers a close handler on mount; cases fire it explicitly.
+const panelClose = panelCloseStub();
 
 bindSettingsStore(
   create<SettingsBridgeState>(() => ({
@@ -78,6 +83,8 @@ describe('column header rows', () => {
   it('the key tree toolbar row and the right panel tab bar declare the same height', async () => {
     render(
       <RedisConnectionView
+        panelId="panel-test"
+        onPanelClosed={panelClose.onPanelClosed}
         dbSessionId="sess-height"
         connectionId="cfg-height"
         connectionName="local"
@@ -101,6 +108,8 @@ describe('column header rows', () => {
   it('neither row adds vertical padding on top of its own height', async () => {
     render(
       <RedisConnectionView
+        panelId="panel-test"
+        onPanelClosed={panelClose.onPanelClosed}
         dbSessionId="sess-height"
         connectionId="cfg-height"
         connectionName="local"

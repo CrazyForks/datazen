@@ -37,12 +37,12 @@ import { RedisConsole } from '../console/RedisConsole';
 import { RedisRightPanel } from '../key-browser/RedisRightPanel';
 import { resetTranscript } from '../console/consoleTranscript';
 import { resetRightTab } from '../shared/rightTabState';
-import { panelScopeKey } from '../shared/panelScope';
 
 // One connection session, shared by every db tab — the wire id, NOT the state key.
+// State is keyed by the host-issued panel id, unique per tab.
 const WIRE = 'sess-1';
-const DB0 = panelScopeKey('cfg-1', 'db0');
-const DB1 = panelScopeKey('cfg-1', 'db1');
+const PANEL_0 = 'panel-1';
+const PANEL_1 = 'panel-2';
 
 const detailProps = {
   selectedKey: null,
@@ -86,10 +86,10 @@ beforeEach(() => {
   commandInvoke.mockReset();
   scanKeys.mockResolvedValue({ keys: [], cursor: 0, done: true });
   stubConfirm();
-  resetTranscript(DB0);
-  resetTranscript(DB1);
-  resetRightTab(DB0);
-  resetRightTab(DB1);
+  resetTranscript(PANEL_0);
+  resetTranscript(PANEL_1);
+  resetRightTab(PANEL_0);
+  resetRightTab(PANEL_1);
 });
 
 afterEach(() => {
@@ -99,7 +99,7 @@ afterEach(() => {
 describe('transcript accumulates instead of replacing', () => {
   it('keeps every earlier command and result on screen after a second execution', async () => {
     ok('first');
-    render(<RedisConsole dbSessionId={WIRE} panelScope={DB0} dbIndex={0} />);
+    render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a');
@@ -118,7 +118,7 @@ describe('transcript accumulates instead of replacing', () => {
 
   it('echoes each command with its dbN prompt', async () => {
     ok('v');
-    render(<RedisConsole dbSessionId={WIRE} panelScope={DB0} dbIndex={3} />);
+    render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_0} dbIndex={3} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a');
@@ -133,7 +133,7 @@ describe('transcript accumulates instead of replacing', () => {
     commandInvoke.mockResolvedValueOnce({
       results: [{ command: 'SET t v', ok: false, error: 'syntax error', resultType: 'error' }],
     });
-    render(<RedisConsole dbSessionId={WIRE} panelScope={DB0} dbIndex={0} />);
+    render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'SET t v');
@@ -151,7 +151,7 @@ describe('transcript accumulates instead of replacing', () => {
 
   it('shows the welcome banner only while nothing has run', async () => {
     ok('v');
-    render(<RedisConsole dbSessionId={WIRE} panelScope={DB0} dbIndex={0} />);
+    render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} />);
     expect(screen.getByText('redis.console.welcome')).toBeTruthy();
 
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
@@ -165,7 +165,7 @@ describe('transcript accumulates instead of replacing', () => {
 describe('scrollback survives the unmount a tab switch causes', () => {
   it('restores entries and the in-progress draft after a full remount', async () => {
     ok('kept');
-    const first = render(<RedisConsole dbSessionId={WIRE} panelScope={DB0} dbIndex={0} />);
+    const first = render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
     typeInto(input, 'GET a');
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -175,7 +175,7 @@ describe('scrollback survives the unmount a tab switch causes', () => {
     first.unmount();
 
     // The host does exactly this: drop the subtree, mount it again later.
-    render(<RedisConsole dbSessionId={WIRE} panelScope={DB0} dbIndex={0} />);
+    render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} />);
     expect(screen.getByText('kept')).toBeTruthy();
     expect((screen.getByTestId('redis-console-input') as HTMLTextAreaElement).value).toBe(
       'half-typed command',
@@ -187,14 +187,14 @@ describe('scrollback survives the unmount a tab switch causes', () => {
     // panel scope can keep the scrollback apart. Keying by `dbSessionId` leaked
     // db0's output into db1.
     ok('from-db0');
-    const db0 = render(<RedisConsole dbSessionId={WIRE} panelScope={DB0} dbIndex={0} />);
+    const db0 = render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} />);
     const input0 = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
     typeInto(input0, 'GET a');
     fireEvent.keyDown(input0, { key: 'Enter' });
     await waitFor(() => expect(screen.getByText('from-db0')).toBeTruthy());
     db0.unmount();
 
-    render(<RedisConsole dbSessionId={WIRE} panelScope={DB1} dbIndex={1} />);
+    render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_1} dbIndex={1} />);
     // A different db is a different tab: no leaked scrollback, no leaked draft.
     expect(screen.getByText('redis.console.welcome')).toBeTruthy();
     expect((screen.getByTestId('redis-console-input') as HTMLTextAreaElement).value).toBe('');
@@ -203,7 +203,7 @@ describe('scrollback survives the unmount a tab switch causes', () => {
 
 describe('input bar', () => {
   it('is one line tall at rest, matching the db prompt row', () => {
-    render(<RedisConsole dbSessionId={WIRE} panelScope={DB0} dbIndex={0} />);
+    render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
     expect(input.getAttribute('rows')).toBe('1');
     expect(input.className).toContain('py-2');
@@ -213,7 +213,7 @@ describe('input bar', () => {
   });
 
   it('cannot grow to multiple lines or scroll vertically', () => {
-    render(<RedisConsole dbSessionId={WIRE} panelScope={DB0} dbIndex={0} />);
+    render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     // `wrap="off"` is the load-bearing part: a textarea soft-wraps by default,
@@ -235,7 +235,7 @@ describe('input bar', () => {
         { command: 'PING', ok: true, value: 'PONG', resultType: 'ok' },
       ],
     });
-    render(<RedisConsole dbSessionId={WIRE} panelScope={DB0} dbIndex={0} />);
+    render(<RedisConsole dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     // One line tall must not mean one line per command: the batch semantics that
@@ -258,7 +258,7 @@ describe('active sub-tab survives a top-level tab switch', () => {
   it('comes back on the console, not the item tab', async () => {
     ok('v');
     const first = render(
-      <RedisRightPanel dbSessionId={WIRE} panelScope={DB0} dbIndex={0} {...detailProps} />,
+      <RedisRightPanel dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} {...detailProps} />,
     );
 
     // Land on the console sub-tab, like a user typing a command would.
@@ -272,7 +272,7 @@ describe('active sub-tab survives a top-level tab switch', () => {
 
     // The host drops the subtree and mounts it again on a top-level tab switch.
     first.unmount();
-    render(<RedisRightPanel dbSessionId={WIRE} panelScope={DB0} dbIndex={0} {...detailProps} />);
+    render(<RedisRightPanel dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} {...detailProps} />);
 
     // Bug: this came back on 'detail' (the item sub-tab) with an empty console.
     expect(screen.getByTestId('redis-right-tab-console').getAttribute('data-active')).toBe('true');
@@ -285,7 +285,7 @@ describe('active sub-tab survives a top-level tab switch', () => {
     // the SAME `dbSessionId` (one connection), so keying state by it leaks the
     // console choice into the sibling — the bug this scopes by panel identity.
     const db0 = render(
-      <RedisRightPanel dbSessionId={WIRE} panelScope={DB0} dbIndex={0} {...detailProps} />,
+      <RedisRightPanel dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} {...detailProps} />,
     );
     await waitFor(() => expect(screen.getByTestId('redis-right-tab-console')).toBeTruthy());
     fireEvent.click(screen.getByTestId('redis-right-tab-console'));
@@ -295,7 +295,7 @@ describe('active sub-tab survives a top-level tab switch', () => {
     // Open the sibling db tab: the host unmounts db0 and mounts db1.
     db0.unmount();
     const db1 = render(
-      <RedisRightPanel dbSessionId={WIRE} panelScope={DB1} dbIndex={1} {...detailProps} />,
+      <RedisRightPanel dbSessionId={WIRE} panelId={PANEL_1} dbIndex={1} {...detailProps} />,
     );
     await waitFor(() => expect(screen.getByTestId('redis-right-tab-detail')).toBeTruthy());
     expect(screen.getByTestId('redis-right-tab-detail').getAttribute('data-active')).toBe('true');
@@ -303,7 +303,7 @@ describe('active sub-tab survives a top-level tab switch', () => {
 
     // Back to db0: its console is still the one that was left.
     db1.unmount();
-    render(<RedisRightPanel dbSessionId={WIRE} panelScope={DB0} dbIndex={0} {...detailProps} />);
+    render(<RedisRightPanel dbSessionId={WIRE} panelId={PANEL_0} dbIndex={0} {...detailProps} />);
     await waitFor(() => expect(screen.getByTestId('redis-right-tab-console')).toBeTruthy());
     expect(screen.getByTestId('redis-right-tab-console').getAttribute('data-active')).toBe('true');
   });
