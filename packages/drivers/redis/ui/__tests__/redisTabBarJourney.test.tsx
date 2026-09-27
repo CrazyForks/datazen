@@ -10,20 +10,23 @@
  * 只断言 `data-*`（PRD §7-6：禁英文字面量）。四个重型面板被 stub 掉，页签条的
  * 路由行为与 IPC 无关。
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 vi.mock('../key-browser/RedisWorkbench', async () => {
   const { forwardRef } = await import('react');
   const Stub = forwardRef<unknown, Record<string, unknown>>(function WorkbenchStub(props, _ref) {
-    // Simulate the renderRightPanel call so the right panel mounts
+    // Simulate the renderRightPanel call so the right panel mounts. The session
+    // id must be the one the view was rendered with: the right panel keys its
+    // module-level sub-tab store by it, and a stub that hardcodes a different id
+    // silently detaches the panel from the state under test.
     const renderRightPanel = props.renderRightPanel as
       | ((p: Record<string, unknown>) => React.ReactNode)
       | undefined;
     return (
       <div data-testid="stub-workbench">
         {renderRightPanel?.({
-          dbSessionId: 'sess',
+          dbSessionId: props.dbSessionId as string,
           dbIndex: 0,
           selectedKey: null,
           detail: null,
@@ -49,8 +52,24 @@ vi.mock('../observe/PubSubPanel', () => ({
 }));
 
 import { RedisConnectionView } from '../connection/RedisConnectionView';
+import { panelCloseStub } from '../__testing__/panelClose';
+import { resetPanelBindings } from '../shared/panelLifecycle';
+import { readRightTab, resetRightTab } from '../shared/rightTabState';
 
 afterEach(() => cleanup());
+
+// The view registers a close handler on mount; cases fire it explicitly.
+const panelClose = panelCloseStub();
+
+beforeEach(() => {
+  panelClose.clear();
+  // `panelLifecycle` binds per panelId at module scope, so it outlives cleanup().
+  resetPanelBindings();
+  // The active sub-tab lives in a module-level store so it survives the remount
+  // a top-level tab switch causes. Both cases render `sess-tabs`, so without this
+  // the tab chosen by one case leaks into the next.
+  resetRightTab('panel-tabs');
+});
 
 function rightTabActive(tab: string): string | null {
   return screen.getByTestId(`redis-right-tab-${tab}`).getAttribute('data-active');
@@ -64,6 +83,8 @@ describe('Journey: 右面板四枚页签（左右分栏后）', () => {
   it('renders the four right-panel tabs in order', async () => {
     render(
       <RedisConnectionView
+        panelId="panel-tabs"
+        onPanelClosed={panelClose.onPanelClosed}
         dbSessionId="sess-tabs"
         connectionId="cfg-tabs"
         connectionName="local"
@@ -85,6 +106,8 @@ describe('Journey: 右面板四枚页签（左右分栏后）', () => {
   it('activates the clicked tab, unmounts previous panel on switch, and exits cleanly', async () => {
     render(
       <RedisConnectionView
+        panelId="panel-tabs"
+        onPanelClosed={panelClose.onPanelClosed}
         dbSessionId="sess-tabs"
         connectionId="cfg-tabs"
         connectionName="local"
@@ -126,5 +149,39 @@ describe('Journey: 右面板四枚页签（左右分栏后）', () => {
       fireEvent.click(screen.getByTestId('redis-right-tab-detail'));
     });
     expect(onlyActiveRight()).toEqual(['detail']);
+  });
+
+  // The host fires `onPanelClosed` when a tab is closed, and that is the only
+  // moment this tab's state may be dropped: a tab switch unmounts the view too,
+  // and the state must survive that. Without this the module store grows for
+  // every db tab the user ever opened and closed.
+  it("releases this tab's state only when the host closes it", async () => {
+    render(
+      <RedisConnectionView
+        panelId="panel-tabs"
+        onPanelClosed={panelClose.onPanelClosed}
+        dbSessionId="sess-tabs"
+        connectionId="cfg-tabs"
+        connectionName="local"
+        databaseType="redis"
+        initialDatabase="db2"
+        hideSidebar
+        isActive
+      />,
+    );
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('redis-right-tab-console'));
+    });
+    expect(onlyActiveRight()).toEqual(['console']);
+    expect(readRightTab('panel-tabs')).toBe('console');
+
+    // Switching tabs unmounts the view; the state must NOT be released.
+    cleanup();
+    expect(readRightTab('panel-tabs')).toBe('console');
+
+    // Closing the tab is the disposal signal.
+    panelClose.close();
+    expect(readRightTab('panel-tabs')).toBe('detail');
   });
 });

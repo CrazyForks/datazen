@@ -76,16 +76,22 @@ class MockResizeObserver {
 }
 globalThis.ResizeObserver ??= MockResizeObserver as unknown as typeof ResizeObserver;
 
-const commands = vi.fn(async (_pluginId: string, command: string): Promise<unknown> => {
-  switch (command) {
-    case 'delete_keys':
-      return 1;
-    case 'batch_set_ttl':
-      return { updated: 1, errors: [] };
-    default:
-      return undefined;
-  }
-});
+const commands = vi.fn(
+  async (
+    _pluginId: string,
+    command: string,
+    _args: Record<string, unknown> = {},
+  ): Promise<unknown> => {
+    switch (command) {
+      case 'delete_keys':
+        return 1;
+      case 'batch_set_ttl':
+        return { updated: 1, errors: [] };
+      default:
+        return undefined;
+    }
+  },
+);
 
 const getKey = vi.fn();
 const getKeyRaw = vi.fn();
@@ -131,9 +137,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -177,9 +188,7 @@ async function dialogByTitle(titleKey: string): Promise<HTMLElement> {
 }
 
 function buttonWithKey(container: HTMLElement, key: string): HTMLButtonElement {
-  const found = Array.from(container.querySelectorAll('button')).find(
-    (b) => b.textContent === key,
-  );
+  const found = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === key);
   if (!found) throw new Error(`no button ${key} in dialog`);
   return found as HTMLButtonElement;
 }
@@ -227,8 +236,7 @@ beforeEach(() => {
   serverRenamed = false;
   getKey.mockImplementation((...args: unknown[]) => {
     const key = args[2] as string;
-    const value =
-      key === 'user:1' ? 'hello' : key === 'user:renamed' ? 'renamed-value' : 'other';
+    const value = key === 'user:1' ? 'hello' : key === 'user:renamed' ? 'renamed-value' : 'other';
     return Promise.resolve(stringDetail(key, value));
   });
   getKeyRaw.mockResolvedValue(null);
@@ -248,12 +256,33 @@ beforeEach(() => {
   listChildren.mockImplementation(async () => ({
     children: serverRenamed
       ? [
-          { kind: 'key', key: 'user:renamed', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null },
-          { kind: 'key', key: 'other:2', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null },
+          {
+            kind: 'key',
+            key: 'user:renamed',
+            keyType: 'string',
+            ttl: -1,
+            logicalLen: 1,
+            memBytes: null,
+          },
+          {
+            kind: 'key',
+            key: 'other:2',
+            keyType: 'string',
+            ttl: -1,
+            logicalLen: 1,
+            memBytes: null,
+          },
         ]
       : [
           { kind: 'key', key: 'user:1', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null },
-          { kind: 'key', key: 'other:2', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null },
+          {
+            kind: 'key',
+            key: 'other:2',
+            keyType: 'string',
+            ttl: -1,
+            logicalLen: 1,
+            memBytes: null,
+          },
         ],
     cursor: 0,
   }));

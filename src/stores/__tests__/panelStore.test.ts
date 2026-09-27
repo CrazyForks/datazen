@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
+import type { DatabaseType } from '../../types';
 
 vi.mock('../../locales/t', () => ({
   t: (key: string) => key,
@@ -61,6 +62,17 @@ describe('panelStore', () => {
   type Panel = import('../panelStore').Panel;
   type TablePanel = import('../panelStore').TablePanel;
 
+  /**
+   * `DatabaseType` is generated from the *selected* driver set
+   * (`scripts/resolve-drivers.mjs`), so an optional driver id such as
+   * `superset` is only in the union when that driver was compiled in. The
+   * path-hierarchy cases below self-skip when `DB_REGISTRY` has no such entry,
+   * so the id is widened deliberately rather than pretending the union is wider.
+   */
+  function optionalDriverType(id: string): DatabaseType {
+    return id as DatabaseType;
+  }
+
   const base = {
     connectionId: 'cfg-1',
     dbSessionId: 'sess-1',
@@ -68,12 +80,20 @@ describe('panelStore', () => {
     databaseType: 'postgresql' as const,
   };
 
+  /**
+   * `database: ''` / `tableSchema: null` mean "this panel is not bound to a
+   * specific namespace": `panelTargetDatabase` / `panelTargetSchema` fall back
+   * to the session-wide schemaStore values on a blank panel value, which is
+   * exactly the behaviour the cases below assert.
+   */
   function makeTable(name: string): TablePanel {
     return {
       ...base,
       type: 'table',
       id: nextPanelId('tbl'),
       tableName: name,
+      database: '',
+      tableSchema: null,
       subTab: 'data',
     };
   }
@@ -112,7 +132,14 @@ describe('panelStore', () => {
 
   it('executeQuery forwards schemaStore currentDatabase of the panel session', async () => {
     seedCurrentDatabase('sess-1', 'db_b');
-    const panel: Panel = { ...base, type: 'query', id: nextPanelId('qry'), title: 'Q1' };
+    const panel: Panel = {
+      ...base,
+      type: 'query',
+      id: nextPanelId('qry'),
+      title: 'Q1',
+      database: '',
+      schema: null,
+    };
     usePanelStore.getState().addPanel(panel);
     usePanelStore.getState().updateSql(panel.id, 'SELECT DATABASE()');
 
@@ -137,6 +164,7 @@ describe('panelStore', () => {
       id: nextPanelId('qry'),
       title: 'Q1',
       database: 'tradingdb',
+      schema: null,
     };
     usePanelStore.getState().addPanel(panel);
     usePanelStore.getState().updateSql(panel.id, 'SELECT * FROM t_afi_installment_payment');
@@ -153,7 +181,14 @@ describe('panelStore', () => {
 
   it('executeQuery falls back to null when no schema entry exists', async () => {
     seedCurrentDatabase(null, null);
-    const panel: Panel = { ...base, type: 'query', id: nextPanelId('qry'), title: 'Q1' };
+    const panel: Panel = {
+      ...base,
+      type: 'query',
+      id: nextPanelId('qry'),
+      title: 'Q1',
+      database: '',
+      schema: null,
+    };
     usePanelStore.getState().addPanel(panel);
     usePanelStore.getState().updateSql(panel.id, 'SELECT 1');
 
@@ -169,7 +204,14 @@ describe('panelStore', () => {
 
   it('executeQuery forwards the F7 currentSchema of the panel session (PG)', async () => {
     seedCurrentDatabase('sess-1', 'db_b', 'sales');
-    const panel: Panel = { ...base, type: 'query', id: nextPanelId('qry'), title: 'Q1' };
+    const panel: Panel = {
+      ...base,
+      type: 'query',
+      id: nextPanelId('qry'),
+      title: 'Q1',
+      database: '',
+      schema: null,
+    };
     usePanelStore.getState().addPanel(panel);
     usePanelStore.getState().updateSql(panel.id, 'SELECT * FROM users');
 
@@ -194,7 +236,7 @@ describe('panelStore', () => {
       if (!entry) return state;
       schemas.set('sess-1', {
         ...entry,
-        namespaceTree: { hive: { snap: { orders: 'table' } } },
+        namespaceTree: { hive: { snap: { orders: [] } } },
         pathAliases: { hive: '558' },
         databases: ['558:presto_afi_data'],
       });
@@ -202,10 +244,12 @@ describe('panelStore', () => {
     });
     const panel: Panel = {
       ...base,
-      databaseType: 'superset',
+      databaseType: optionalDriverType('superset'),
       type: 'query',
       id: nextPanelId('qry'),
       title: 'Q1',
+      database: '',
+      schema: null,
       namespacePath: ['hive', 'snap'],
     };
     usePanelStore.getState().addPanel(panel);
@@ -242,10 +286,12 @@ describe('panelStore', () => {
     });
     const panel: Panel = {
       ...base,
-      databaseType: 'superset',
+      databaseType: optionalDriverType('superset'),
       type: 'query',
       id: nextPanelId('qry'),
       title: 'Q1',
+      database: '',
+      schema: null,
       namespacePath: ['hive'],
     };
     usePanelStore.getState().addPanel(panel);
@@ -274,7 +320,7 @@ describe('panelStore', () => {
       if (!entry) return state;
       schemas.set('sess-1', {
         ...entry,
-        namespaceTree: { hive: { snap: { orders: 'table' } } },
+        namespaceTree: { hive: { snap: { orders: [] } } },
         pathAliases: { hive: '558' },
         databases: ['558:presto_afi_data'],
       });
@@ -282,10 +328,12 @@ describe('panelStore', () => {
     });
     const panel: Panel = {
       ...base,
-      databaseType: 'superset',
+      databaseType: optionalDriverType('superset'),
       type: 'query',
       id: nextPanelId('qry'),
       title: 'Q1',
+      database: '',
+      schema: null,
       namespacePath: ['hive', 'snap'],
     };
     usePanelStore.getState().addPanel(panel);
@@ -314,7 +362,7 @@ describe('panelStore', () => {
       if (!entry) return state;
       schemas.set('sess-1', {
         ...entry,
-        namespaceTree: { hive: { hive: { snap: { orders: 'table' } } } },
+        namespaceTree: { hive: { hive: { snap: { orders: [] } } } },
         pathAliases: { hive: '558' },
         databases: ['hive'],
       });
@@ -322,10 +370,12 @@ describe('panelStore', () => {
     });
     const panel: Panel = {
       ...base,
-      databaseType: 'superset',
+      databaseType: optionalDriverType('superset'),
       type: 'query',
       id: nextPanelId('qry'),
       title: 'Q1',
+      database: '',
+      schema: null,
       namespacePath: ['hive', 'hive', 'snap'],
     };
     usePanelStore.getState().addPanel(panel);
@@ -355,7 +405,7 @@ describe('panelStore', () => {
       schemas.set('sess-1', {
         ...entry,
         namespaceTree: {
-          presto_afi_data: { hive: { snap: { orders: 'table' } } },
+          presto_afi_data: { hive: { snap: { orders: [] } } },
         },
         pathAliases: { presto_afi_data: '558' },
         databases: ['presto_afi_data'],
@@ -364,10 +414,12 @@ describe('panelStore', () => {
     });
     const panel: Panel = {
       ...base,
-      databaseType: 'superset',
+      databaseType: optionalDriverType('superset'),
       type: 'query',
       id: nextPanelId('qry'),
       title: 'Q1',
+      database: '',
+      schema: null,
       namespacePath: ['presto_afi_data', 'hive', 'snap'],
     };
     usePanelStore.getState().addPanel(panel);
@@ -509,6 +561,8 @@ describe('panelStore', () => {
       type: 'table',
       id: nextPanelId('tbl'),
       tableName: 'other',
+      database: '',
+      tableSchema: null,
       subTab: 'data',
     };
     usePanelStore.getState().addPanel(p1);
@@ -544,6 +598,8 @@ describe('panelStore', () => {
       type: 'view',
       id: nextPanelId('view'),
       viewName: 'users',
+      database: '',
+      viewSchema: null,
       subTab: 'data',
     };
     const otherPanel = makeTable('orders');
@@ -594,7 +650,14 @@ describe('panelStore', () => {
       id: nextPanelId('tbl'),
       database: 'db_a',
     };
-    const queryPanel: Panel = { ...base, type: 'query', id: nextPanelId('qry'), title: 'Q1' };
+    const queryPanel: Panel = {
+      ...base,
+      type: 'query',
+      id: nextPanelId('qry'),
+      title: 'Q1',
+      database: '',
+      schema: null,
+    };
     const otherDbPanel: TablePanel = {
       ...makeTable('orders'),
       id: nextPanelId('tbl'),
@@ -618,8 +681,16 @@ describe('panelStore', () => {
       id: nextPanelId('qry'),
       title: 'Q1',
       database: 'db_a',
+      schema: null,
     };
-    const floatingQuery: Panel = { ...base, type: 'query', id: nextPanelId('qry'), title: 'Q2' };
+    const floatingQuery: Panel = {
+      ...base,
+      type: 'query',
+      id: nextPanelId('qry'),
+      title: 'Q2',
+      database: '',
+      schema: null,
+    };
     usePanelStore.getState().addPanel(pinnedQuery);
     usePanelStore.getState().addPanel(floatingQuery, false);
 
@@ -774,10 +845,12 @@ describe('panelStore', () => {
       connectionId: 'cfg-2',
       dbSessionId: 'sess-2',
       connectionName: 'OtherDB',
-      databaseType: 'mysql' as any,
+      databaseType: 'mysql',
       type: 'table',
       id: nextPanelId('tbl'),
       tableName: 'other',
+      database: '',
+      tableSchema: null,
       subTab: 'data',
     };
     usePanelStore.getState().addPanel(p1);
@@ -796,10 +869,12 @@ describe('panelStore', () => {
       connectionId: 'cfg-2',
       dbSessionId: 'sess-2',
       connectionName: 'OtherDB',
-      databaseType: 'mysql' as any,
+      databaseType: 'mysql',
       type: 'table',
       id: nextPanelId('tbl'),
       tableName: 'other',
+      database: '',
+      tableSchema: null,
       subTab: 'data',
     };
     usePanelStore.getState().addPanel(p1);
@@ -820,6 +895,8 @@ describe('panelStore', () => {
       type: 'query',
       id: nextPanelId('qry'),
       title: 'Query 1',
+      database: '',
+      schema: null,
     };
     usePanelStore.getState().addPanel(panel);
     const exec = usePanelStore.getState().queryExec.get(panel.id);
@@ -840,6 +917,8 @@ describe('panelStore', () => {
       type: 'query',
       id: nextPanelId('qry'),
       title: 'Query 1',
+      database: '',
+      schema: null,
     };
     usePanelStore.getState().addPanel(panel);
     expect(usePanelStore.getState().queryExec.has(panel.id)).toBe(true);
@@ -849,8 +928,22 @@ describe('panelStore', () => {
   });
 
   it('closeAllPanels cleans up all queryExec entries', () => {
-    const q1: Panel = { ...base, type: 'query', id: nextPanelId('qry'), title: 'Q1' };
-    const q2: Panel = { ...base, type: 'query', id: nextPanelId('qry'), title: 'Q2' };
+    const q1: Panel = {
+      ...base,
+      type: 'query',
+      id: nextPanelId('qry'),
+      title: 'Q1',
+      database: '',
+      schema: null,
+    };
+    const q2: Panel = {
+      ...base,
+      type: 'query',
+      id: nextPanelId('qry'),
+      title: 'Q2',
+      database: '',
+      schema: null,
+    };
     usePanelStore.getState().addPanel(q1);
     usePanelStore.getState().addPanel(q2, false);
 
@@ -859,7 +952,14 @@ describe('panelStore', () => {
   });
 
   it('updateSql updates queryExec sql field', () => {
-    const panel: Panel = { ...base, type: 'query', id: nextPanelId('qry'), title: 'Q1' };
+    const panel: Panel = {
+      ...base,
+      type: 'query',
+      id: nextPanelId('qry'),
+      title: 'Q1',
+      database: '',
+      schema: null,
+    };
     usePanelStore.getState().addPanel(panel);
 
     usePanelStore.getState().updateSql(panel.id, 'SELECT 1');
@@ -867,7 +967,14 @@ describe('panelStore', () => {
   });
 
   it('removeAllForConnection cleans up queryExec for that connection', () => {
-    const q1: Panel = { ...base, type: 'query', id: nextPanelId('qry'), title: 'Q1' };
+    const q1: Panel = {
+      ...base,
+      type: 'query',
+      id: nextPanelId('qry'),
+      title: 'Q1',
+      database: '',
+      schema: null,
+    };
     const q2: Panel = {
       ...base,
       connectionId: 'cfg-2',
@@ -875,6 +982,8 @@ describe('panelStore', () => {
       type: 'query',
       id: nextPanelId('qry'),
       title: 'Q2',
+      database: '',
+      schema: null,
     };
     usePanelStore.getState().addPanel(q1);
     usePanelStore.getState().addPanel(q2, false);
@@ -891,7 +1000,7 @@ describe('panelStore', () => {
       connectionId: 'cfg-redis',
       dbSessionId: 'sess-redis',
       connectionName: 'Redis',
-      databaseType: 'redis' as any,
+      databaseType: 'redis',
       type: 'redis-db',
       id: nextPanelId('redis'),
       dbName: 'db0',
@@ -912,6 +1021,8 @@ describe('panelStore', () => {
       type: 'query',
       id: nextPanelId('qry'),
       title,
+      database: '',
+      schema: null,
     };
   }
 
@@ -1024,7 +1135,8 @@ describe('panelStore', () => {
   });
 
   it('does not call cancel for a driver that does not support it', async () => {
-    activeConnectionState.connections['cfg-1'].capabilities.supportsCancelQuery = false;
+    const capabilities = activeConnectionState.connections['cfg-1']!.capabilities!;
+    capabilities.supportsCancelQuery = false;
     const panel = makeQueryPanel('Q1');
     usePanelStore.getState().addPanel(panel);
     usePanelStore.setState((s) => ({

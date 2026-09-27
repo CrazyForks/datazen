@@ -62,6 +62,7 @@ describe('GlobalQueryHistoryDialog', () => {
           databaseType: 'postgresql',
           host: 'localhost',
           port: 5432,
+          sslMode: 'prefer',
         },
         {
           id: 'conn-2',
@@ -69,6 +70,7 @@ describe('GlobalQueryHistoryDialog', () => {
           databaseType: 'mysql',
           host: 'localhost',
           port: 3306,
+          sslMode: 'prefer',
         },
       ],
     });

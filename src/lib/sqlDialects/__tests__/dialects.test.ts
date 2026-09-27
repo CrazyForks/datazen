@@ -1,11 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { DB_REGISTRY } from '../../databaseTypes';
 import { getSqlDialect } from '../index';
+import type { DatabaseType } from '../../../types';
 
 describe('getSqlDialect', () => {
   it('maps kiwi to mysql family', () => {
-    if (!DB_REGISTRY.kiwi) return; // plugins not injected in this workspace
-    expect(getSqlDialect('kiwi')?.family).toBe('mysql');
+    // `kiwi` ships with a driver build: it is listed in DB_TYPE_POPULARITY_ORDER
+    // but is not part of the compiled `DatabaseType` union in this workspace, so
+    // the driver-provided id is named through a widened constant.
+    const kiwi = 'kiwi' as unknown as DatabaseType;
+    if (!DB_REGISTRY[kiwi]) return; // plugins not injected in this workspace
+    expect(getSqlDialect(kiwi)?.family).toBe('mysql');
   });
 
   it('sqlite DDL query uses sqlite_master', () => {

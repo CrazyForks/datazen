@@ -14,7 +14,7 @@ globalThis.ResizeObserver ??= MockResizeObserver as unknown as typeof ResizeObse
 const { getConnectionViewMock, schemaState, tableDataState, MockRedisView } = vi.hoisted(() => {
   const MockRedisView = () => <div data-testid="mock-redis-view">redis</div>;
   return {
-    getConnectionViewMock: vi.fn(() => MockRedisView),
+    getConnectionViewMock: vi.fn((..._args: unknown[]) => MockRedisView),
     MockRedisView,
     schemaState: {
       activeDbSessionId: null as string | null,
@@ -48,7 +48,8 @@ vi.mock('../../../hooks/useI18n', () => ({
 
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(false));
 const showNativeContextMenuMock = vi.hoisted(() =>
-  vi.fn((items: Array<{ id?: string; action?: () => void }>) => {
+  vi.fn((...args: unknown[]) => {
+    const items = args[0] as Array<{ id?: string; action?: () => void }>;
     (
       items.find((item) => item.id === 'drop') ?? items.find((item) => item.id === 'drop-view')
     )?.action?.();
@@ -274,6 +275,8 @@ describe('ContentView', () => {
       type: 'table' as const,
       id: 'panel-tbl-1',
       tableName: 'users',
+      database: 'appdb',
+      tableSchema: 'public',
       subTab: 'data' as const,
     };
     panelStore.usePanelStore.setState({
@@ -302,6 +305,8 @@ describe('ContentView', () => {
       type: 'table' as const,
       id: 'panel-tbl-1',
       tableName: 'users',
+      database: 'appdb',
+      tableSchema: 'public',
       subTab: 'data' as const,
     };
     panelStore.usePanelStore.setState({
@@ -329,7 +334,9 @@ describe('ContentView', () => {
       databaseType: 'postgresql' as const,
       type: 'query' as const,
       id: 'panel-q-1',
+      title: 'Query 1',
       database: 'tradingdb',
+      schema: 'public',
     };
     panelStore.usePanelStore.setState({ panels: [panel], activePanelId: panel.id });
 
@@ -390,6 +397,8 @@ describe('ContentView', () => {
       type: 'table' as const,
       id: 'panel-tbl-1',
       tableName: 'users',
+      database: 'appdb',
+      tableSchema: 'public',
       subTab: 'data' as const,
     };
     panelStore.usePanelStore.setState({
@@ -436,6 +445,8 @@ describe('ContentView', () => {
       type: 'view' as const,
       id: 'panel-view-1',
       viewName: 'v_users',
+      database: 'appdb',
+      viewSchema: 'public',
       subTab: 'data' as const,
     };
     panelStore.usePanelStore.setState({

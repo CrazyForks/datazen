@@ -109,7 +109,7 @@ describe('ObjectBrowser', () => {
   });
 
   it('opens a web context menu on a routine item', async () => {
-    render(<ObjectBrowser dbSessionId="c1" databaseType="postgresql" />);
+    render(<ObjectBrowser dbSessionId="c1" databaseType="postgresql" database="db_a" />);
     const row = await screen.findByText('fn_ok');
     fireEvent.contextMenu(row);
     await waitFor(() => expect(showNativeContextMenu).toHaveBeenCalled());
@@ -119,7 +119,7 @@ describe('ObjectBrowser', () => {
 
   it('switches kind and shows load errors', async () => {
     getDatabaseObjects.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('boom'));
-    render(<ObjectBrowser dbSessionId="c1" />);
+    render(<ObjectBrowser dbSessionId="c1" database="db_a" />);
     await screen.findByText('objects.empty');
 
     fireEvent.click(screen.getByText('objects.procedure'));
@@ -128,7 +128,7 @@ describe('ObjectBrowser', () => {
 
   it('shows DDL fetch errors in the editor', async () => {
     getObjectDdl.mockRejectedValueOnce(new Error('no ddl'));
-    render(<ObjectBrowser dbSessionId="c1" />);
+    render(<ObjectBrowser dbSessionId="c1" database="db_a" />);
     await screen.findByText('fn_ok');
     fireEvent.click(screen.getByText('fn_ok'));
     await waitFor(() => {

@@ -88,9 +88,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -193,6 +198,11 @@ function tree(): HTMLElement {
 
 function attr(testId: string, name: string): string | null {
   return screen.getByTestId(testId).getAttribute(name);
+}
+
+/** The select-all checkbox is a real `<button>`, so `disabled` lives on it. */
+function selectAllButton(): HTMLButtonElement {
+  return screen.getByTestId('redis-tree-select-all') as HTMLButtonElement;
 }
 
 /**
@@ -472,8 +482,8 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     // A pattern that keeps the two app keys: select-all takes exactly those,
     // never the `root-plain` key the same tree had before the filter.
     await applyPattern('app:*');
-    await waitFor(() => expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(false));
-    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
+    await waitFor(() => expect(selectAllButton().disabled).toBe(false));
+    fireEvent.click(selectAllButton());
     await waitFor(() => expect(tickedKeys().sort()).toEqual(['app:1', 'app:2']));
     expect(screen.getByTestId('redis-tree-key-check-app:1').getAttribute('data-checked')).toBe(
       'true',
@@ -520,7 +530,7 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     await applyPattern('*nope');
     await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('0'));
     await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('0'));
-    expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(true);
+    expect(selectAllButton().disabled).toBe(true);
     const empty = await screen.findByTestId('redis-tree-empty');
     expect(empty.getAttribute('data-empty-state')).toBe('no-match');
   });

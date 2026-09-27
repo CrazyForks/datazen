@@ -6,11 +6,11 @@ import type { WappSummary } from '../../../types/wapp';
 
 const { listenMock, wappState, getManifestMock } = vi.hoisted(() => {
   const pState = {
-    _list: [] as Array<Record<string, unknown>>,
-    get wapps() {
+    _list: [] as WappSummary[],
+    get wapps(): WappSummary[] {
       return this._list;
     },
-    set wapps(v: Array<Record<string, unknown>>) {
+    set wapps(v: WappSummary[]) {
       this._list = v;
     },
     loaded: true,

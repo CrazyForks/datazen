@@ -8,13 +8,13 @@ import type {
   WorkflowListItem,
 } from '../../../types';
 
+// Only the handles this suite asserts on are destructured; the rest stay inside
+// the mocked store state.
 const {
   loadWorkflowsMock,
-  loadConfigMock,
   loadSettingsMock,
   executeWorkflowMock,
   clearWorkflowResultMock,
-  setupAiListenersMock,
   workflowGetDirMock,
   workflowHistoryListMock,
   workflowHistoryGetMock,

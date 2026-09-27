@@ -100,7 +100,7 @@ describe('FilterEditor', () => {
 
   it('Apply is disabled until draft differs from applied', () => {
     const filter: FilterCondition = { column: 'name', operator: 'eq', value: 'a' };
-    const props = renderEditor({
+    renderEditor({
       appliedFilters: [filter],
       draftFilters: [filter],
     });

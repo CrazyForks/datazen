@@ -16,8 +16,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
-import { EditorState, EditorSelection } from '@codemirror/state';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { EditorState } from '@codemirror/state';
 import {
   CompletionContext,
   snippet,
@@ -31,8 +31,10 @@ import { SqlSnippetsCard } from '../SqlSnippetsCard';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { BUILTIN_SQL_SNIPPETS } from '../../../components/sql-editor/snippets/builtinSnippets';
 import { createSnippetCompletionSource } from '../../../components/sql-editor/snippets/snippetCompletionSource';
-import { exportEditorSettings, importEditorSettings } from '../../../lib/settingsExport';
-import type { AppSettings, SqlSnippetItem } from '../../../types';
+import type { AppSettings } from '../../../types';
+
+/** The snippet element of `AppSettings['sqlSnippets']` — it has no exported name of its own. */
+type SqlSnippetItem = NonNullable<AppSettings['sqlSnippets']>[number];
 
 vi.mock('../../../hooks/useI18n', () => {
   const t = (key: string, params?: Record<string, string | number>) => {

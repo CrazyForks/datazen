@@ -147,7 +147,7 @@ describe('ExportTablesRequest IPC contract guard (BUG-006)', () => {
       dataFormat: 'csv',
       outputMode: 'zip',
       dbSessionId: 'live-session-1',
-      databaseType: null,
+      databaseType: undefined,
       loadTableExportData,
       exportTables,
     });
@@ -164,7 +164,14 @@ describe('ExportTablesRequest IPC contract guard (BUG-006)', () => {
     const sample: ExpectedShape = { dbSessionId: 'x' };
     // If ExportTablesRequest gains/loses the dbSessionId field, this
     // assignment stops compiling.
-    const typed: ExportTablesRequest = { ...sample, databaseType: null };
+    const typed: ExportTablesRequest = {
+      ...sample,
+      databaseType: null,
+      mode: 'data_only',
+      dataFormat: 'csv',
+      outputMode: 'zip',
+      tables: [],
+    };
     expect(typed.dbSessionId).toBeDefined();
     expect(Object.keys(typed)).toContain('dbSessionId');
   });

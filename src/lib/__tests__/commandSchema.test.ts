@@ -22,6 +22,13 @@ const pgCreateDatabase: DriverCommandDefinition = {
     required: ['name'],
   },
   permissions: [],
+  metadata: {
+    category: 'admin',
+    workflow: true,
+    ui: true,
+    deprecated: false,
+    requiresConnection: true,
+  },
 };
 
 const pgGrant: DriverCommandDefinition = {
@@ -43,6 +50,14 @@ const pgGrant: DriverCommandDefinition = {
     },
   },
   permissions: [],
+  metadata: {
+    category: 'admin',
+    risk: 'highRisk',
+    workflow: true,
+    ui: true,
+    deprecated: false,
+    requiresConnection: true,
+  },
 };
 
 describe('commandSchema', () => {

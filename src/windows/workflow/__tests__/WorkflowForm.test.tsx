@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { useState } from 'react';
 import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { WorkflowForm, emptyDraft } from '../WorkflowForm';
@@ -70,14 +70,14 @@ function StatefulForm({
   initialDraft,
   editingId = null,
   conns = connections,
-  onSave = vi.fn(),
-  onCancel = vi.fn(),
+  onSave = vi.fn<() => void>(),
+  onCancel = vi.fn<() => void>(),
 }: {
   initialDraft: WorkflowDraft;
   editingId?: string | null;
   conns?: typeof connections;
-  onSave?: ReturnType<typeof vi.fn>;
-  onCancel?: ReturnType<typeof vi.fn>;
+  onSave?: Mock<() => void>;
+  onCancel?: Mock<() => void>;
 }) {
   const [draft, setDraft] = useState(initialDraft);
   return (
@@ -96,16 +96,16 @@ function renderForm(
   draft: WorkflowDraft,
   opts: {
     editingId?: string | null;
-    onDraftChange?: ReturnType<typeof vi.fn>;
-    onSave?: ReturnType<typeof vi.fn>;
-    onCancel?: ReturnType<typeof vi.fn>;
+    onDraftChange?: Mock<(d: WorkflowDraft) => void>;
+    onSave?: Mock<() => void>;
+    onCancel?: Mock<() => void>;
     conns?: typeof connections;
     stateful?: boolean;
   } = {},
 ) {
-  const onDraftChange = opts.onDraftChange ?? vi.fn();
-  const onSave = opts.onSave ?? vi.fn();
-  const onCancel = opts.onCancel ?? vi.fn();
+  const onDraftChange = opts.onDraftChange ?? vi.fn<(d: WorkflowDraft) => void>();
+  const onSave = opts.onSave ?? vi.fn<() => void>();
+  const onCancel = opts.onCancel ?? vi.fn<() => void>();
   if (opts.stateful) {
     render(
       <StatefulForm
@@ -270,8 +270,8 @@ describe('WorkflowForm', () => {
   });
 
   it('save and cancel buttons fire handlers', () => {
-    const onSave = vi.fn();
-    const onCancel = vi.fn();
+    const onSave = vi.fn<() => void>();
+    const onCancel = vi.fn<() => void>();
     renderForm(emptyDraft(), { onSave, onCancel });
     fireEvent.click(screen.getByText('common.save'));
     fireEvent.click(screen.getByText('common.cancel'));
@@ -369,7 +369,7 @@ describe('WorkflowForm', () => {
   });
 
   it('keeps domain-type connections multi-db even with a configured database', async () => {
-    if (!DB_REGISTRY.kiwi) return;
+    if (!Object.prototype.hasOwnProperty.call(DB_REGISTRY, 'kiwi')) return;
     vi.mocked(listDatabasesDedicated).mockResolvedValue({
       databases: ['biz_a', 'biz_b'],
       dbSessionId: null,

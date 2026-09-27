@@ -79,7 +79,7 @@ describe('Windows release packaging', () => {
     // Every Pro variant consumes that artifact rather than re-cloning the repo.
     expect(releaseWorkflow).toContain('actions/download-artifact@v4');
     expect(releaseWorkflow).toContain('name: pro-extension');
-    expect(releaseWorkflow).toContain('needs: prepare-pro-extension');
+    expect(releaseWorkflow).toContain('needs: [prepare-pro-extension, warm-driver-deps]');
     // The .dzx is packed from the Pro source checkout, so it is produced once in
     // the prepare job too and downloaded by the one variant that ships it.
     expect(releaseWorkflow).toContain('Pack the signed Pro .dzx');
@@ -95,5 +95,93 @@ describe('Windows release packaging', () => {
     expect(releaseWorkflow).not.toContain('Download prebuilt Pro extension (fast path)');
     // Verify step emits notices so the next failure is diagnosable from annotations
     expect(releaseWorkflow).toContain('::notice::[pro-verify]');
+  });
+});
+
+describe('Release build time optimisation', () => {
+  const warmupJob = releaseWorkflow.slice(
+    releaseWorkflow.indexOf('  warm-driver-deps:'),
+    releaseWorkflow.indexOf('  build:'),
+  );
+
+  it('compiles the driver union once per target before the variant matrix', () => {
+    // all,kiwi,superset is the superset of basic / all / akulaku.
+    expect(warmupJob).toContain('--drivers=all,kiwi,superset');
+    expect(warmupJob).toContain('node scripts/ci-driver-warmup.mjs --target=${{ matrix.target }}');
+    // The union build is the lib only: no per-variant link, no Vite bundle.
+    const warmupScript = readFileSync(resolve(root, 'scripts/ci-driver-warmup.mjs'), 'utf-8');
+    expect(warmupScript).toContain("'-p', 'datazen', '--lib'");
+  });
+
+  it('warms the cache for exactly the targets the matrix builds', () => {
+    const warmTargets = [...warmupJob.matchAll(/target: (\S+)/g)].map((m) => m[1]);
+    expect(warmTargets).toEqual([
+      'x86_64-pc-windows-msvc',
+      'aarch64-apple-darwin',
+      'x86_64-apple-darwin',
+      'x86_64-unknown-linux-gnu',
+    ]);
+    // Every target the matrix builds must have a warmup leg, or it compiles
+    // the driver union cold.
+    const buildTargets = new Set(
+      [...releaseWorkflow.matchAll(/^\s+target: (\S+)$/gm)].map((m) => m[1]),
+    );
+    for (const target of buildTargets) {
+      expect(warmTargets).toContain(target);
+    }
+  });
+
+  it('makes the warmup job the only writer of the shared cargo cache', () => {
+    // Previously every variant on a target shared one key, so the cache stayed
+    // pinned to whichever job saved first (always the cheapest variant).
+    expect(warmupJob).toContain('shared-key: ${{ matrix.target }}');
+    expect(warmupJob).toContain('cache-workspace-crates: true');
+    // The build jobs restore read-only.
+    const buildJob = releaseWorkflow.slice(releaseWorkflow.indexOf('  build:'));
+    expect(buildJob).toContain('save-if: false');
+  });
+
+  it('runs the driver injection inside a clean tree in both jobs', () => {
+    // rust-cache hashes every workspace Cargo.toml, so the cache step must run
+    // before with-driver-inject rewrites them — otherwise the two jobs compute
+    // different keys and never share a cache.
+    const cacheIndex = warmupJob.indexOf('Cache Rust compilation');
+    const injectIndex = warmupJob.indexOf('with-driver-inject.mjs');
+    expect(cacheIndex).toBeGreaterThan(-1);
+    expect(injectIndex).toBeGreaterThan(cacheIndex);
+
+    const buildJob = releaseWorkflow.slice(releaseWorkflow.indexOf('  build:'));
+    const buildCacheIndex = buildJob.indexOf('Cache Rust compilation');
+    const buildInjectIndex = buildJob.indexOf('with-driver-inject.mjs');
+    expect(buildCacheIndex).toBeGreaterThan(-1);
+    expect(buildInjectIndex).toBeGreaterThan(buildCacheIndex);
+  });
+
+  it('typechecks the union once instead of once per variant', () => {
+    expect(releaseWorkflow).toContain('DATAZEN_CI_TYPECHECK_ONCE:');
+    expect(warmupJob).toContain('--typecheck');
+    // Local `pnpm build` must keep the typecheck.
+    const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+    expect(pkg.scripts.build).toContain('tsc --noEmit');
+    expect(pkg.scripts['build:bundle']).not.toContain('tsc --noEmit');
+  });
+
+  it('uses one cargo profile everywhere and never hardcodes the release dir', () => {
+    expect(releaseWorkflow).toContain('DATAZEN_BUILD_PROFILE: ci-release');
+    // Cargo.toml must define the profile the workflow selects.
+    const cargoToml = readFileSync(resolve(root, 'Cargo.toml'), 'utf8');
+    expect(cargoToml).toMatch(/\[profile\.ci-release\]/);
+
+    // No bundle discovery, portable copy or UPX scan may look in a path the
+    // build does not write to.
+    expect(releaseWorkflow).not.toMatch(/matrix\.target \}\}\/release/);
+    expect(releaseWorkflow).toContain(
+      'target/${{ matrix.target }}/${{ env.DATAZEN_BUILD_PROFILE }}/bundle',
+    );
+  });
+
+  it('serialises releases so a re-pushed tag does not double the compile', () => {
+    expect(releaseWorkflow).toMatch(/^concurrency:/m);
+    expect(releaseWorkflow).toContain('group: release-${{ github.ref }}');
   });
 });

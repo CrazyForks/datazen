@@ -307,21 +307,29 @@ describe('treeRowSpec: multi-level sticky header chain', () => {
     keyRow('root', 0),
   ];
 
+  /**
+   * `stickyFolderChain` only ever yields `kind: 'folder'` rows, which are the
+   * only variant carrying `path`; the read stays a plain property access so a
+   * leaked key row would still surface as `undefined` rather than being masked.
+   */
+  const chainPaths = (all: KeyTreeRow[], topIndex: number): (string | undefined)[] =>
+    stickyFolderChain(all, topIndex).map((r) => (r as { path: string }).path);
+
   it('is empty while the top row is still inside the viewport', () => {
     expect(stickyFolderChain(rows, 0)).toEqual([]);
   });
 
   it('pins the strict ancestors of the top row, outermost first', () => {
     // `app:` has scrolled above the edge the moment `app:cache:` reaches it.
-    expect(stickyFolderChain(rows, 1).map((r) => r.path)).toEqual(['app:']);
-    expect(stickyFolderChain(rows, 2).map((r) => r.path)).toEqual(['app:', 'app:cache:']);
-    expect(stickyFolderChain(rows, 4).map((r) => r.path)).toEqual(['app:', 'app:cache:']);
+    expect(chainPaths(rows, 1)).toEqual(['app:']);
+    expect(chainPaths(rows, 2)).toEqual(['app:', 'app:cache:']);
+    expect(chainPaths(rows, 4)).toEqual(['app:', 'app:cache:']);
     // Entering the sibling folder swaps exactly one pinned row (enter transition).
-    expect(stickyFolderChain(rows, 5).map((r) => r.path)).toEqual(['app:', 'app:db:']);
+    expect(chainPaths(rows, 5)).toEqual(['app:', 'app:db:']);
     // Leaving the whole subtree clears the stack (exit transition).
-    expect(stickyFolderChain(rows, 7).map((r) => r.path)).toEqual([]);
+    expect(chainPaths(rows, 7)).toEqual([]);
     // A scrolled-past-the-end index clamps instead of inventing a chain.
-    expect(stickyFolderChain(rows, 99).map((r) => r.path)).toEqual([]);
+    expect(chainPaths(rows, 99)).toEqual([]);
   });
 });
 

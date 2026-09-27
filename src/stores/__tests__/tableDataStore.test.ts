@@ -331,7 +331,7 @@ describe('tableDataStore (panel-scoped)', () => {
   it('setSort triggers reload', async () => {
     await loadTable();
     mockDatabaseCommands.getTableData.mockClear();
-    const sort: SortCondition = { column: 'name', direction: 'asc' };
+    const sort: SortCondition = { column: 'name', descending: false };
     useTableDataStore.getState().setSort(PANEL, sort);
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
     expect(loaded().sorts).toEqual([sort]);

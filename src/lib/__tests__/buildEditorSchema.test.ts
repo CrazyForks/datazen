@@ -21,7 +21,7 @@ describe('buildEditorSchema', () => {
     expect(
       buildEditorSchema({
         namespaceTree: {},
-        tables: [{ name: 'users', tableType: 'table', schema: null, rowCount: null }],
+        tables: [{ name: 'users', tableType: 'table', schema: undefined, rowCount: undefined }],
         views: [],
         columnMap: { users: ['id'] },
       }),
@@ -68,8 +68,8 @@ describe('buildEditorSchema', () => {
       buildEditorSchema({
         namespaceTree: { public: { users: [], orders: [] }, audit: { logs: [] } },
         tables: [
-          { name: 'users', tableType: 'table', schema: 'public', rowCount: null },
-          { name: 'orders', tableType: 'table', schema: 'public', rowCount: null },
+          { name: 'users', tableType: 'table', schema: 'public', rowCount: undefined },
+          { name: 'orders', tableType: 'table', schema: 'public', rowCount: undefined },
         ],
         views: [],
         columnMap: { users: ['id', 'email'] },

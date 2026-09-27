@@ -1,14 +1,14 @@
 const STORAGE_PREFIX = 'datazen:redis-console-history:';
 const MAX_ENTRIES = 200;
 
-function storageKey(dbSessionId: string): string {
-  return `${STORAGE_PREFIX}${dbSessionId}`;
+function storageKey(scope: string): string {
+  return `${STORAGE_PREFIX}${scope}`;
 }
 
-/** Load persisted command history for a connection (newest first). */
-export function loadConsoleHistory(dbSessionId: string): string[] {
+/** Load persisted command history for one tab scope (newest first). */
+export function loadConsoleHistory(scope: string): string[] {
   try {
-    const raw = localStorage.getItem(storageKey(dbSessionId));
+    const raw = localStorage.getItem(storageKey(scope));
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -18,23 +18,23 @@ export function loadConsoleHistory(dbSessionId: string): string[] {
   }
 }
 
-/** Persist command history for a connection. */
-export function saveConsoleHistory(dbSessionId: string, entries: string[]): void {
+/** Persist command history for one tab scope. */
+export function saveConsoleHistory(scope: string, entries: string[]): void {
   try {
-    localStorage.setItem(storageKey(dbSessionId), JSON.stringify(entries.slice(0, MAX_ENTRIES)));
+    localStorage.setItem(storageKey(scope), JSON.stringify(entries.slice(0, MAX_ENTRIES)));
   } catch {
     // localStorage may be unavailable in tests or private mode
   }
 }
 
 /** Append a command to history (dedupe, newest first). Returns updated list. */
-export function pushConsoleHistory(dbSessionId: string, command: string): string[] {
+export function pushConsoleHistory(scope: string, command: string): string[] {
   const trimmed = command.trim();
-  if (!trimmed) return loadConsoleHistory(dbSessionId);
+  if (!trimmed) return loadConsoleHistory(scope);
 
-  const existing = loadConsoleHistory(dbSessionId).filter((entry) => entry !== trimmed);
+  const existing = loadConsoleHistory(scope).filter((entry) => entry !== trimmed);
   const next = [trimmed, ...existing].slice(0, MAX_ENTRIES);
-  saveConsoleHistory(dbSessionId, next);
+  saveConsoleHistory(scope, next);
   return next;
 }
 

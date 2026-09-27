@@ -15,8 +15,8 @@ import { emptyTableState } from '../connectionState';
 import type { PendingRowChange } from '../../../lib/tableChanges';
 
 const pkColumns = [
-  { name: 'id', dataType: 'int', isPrimaryKey: true, isNullable: false },
-  { name: 'name', dataType: 'text', isPrimaryKey: false, isNullable: true },
+  { name: 'id', dataType: 'int', isPrimaryKey: true, nullable: false },
+  { name: 'name', dataType: 'text', isPrimaryKey: false, nullable: true },
 ];
 
 describe('[tester] tableData/pendingChanges', () => {

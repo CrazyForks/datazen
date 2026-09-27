@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { EditorState } from '@codemirror/state';
+import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import {
   createBaseEditorExtensions,
@@ -7,12 +7,7 @@ import {
   createUpdateListener,
 } from '../sql-editor/editorExtensions';
 
-function mountView(
-  extensions:
-    | ReturnType<typeof createBaseEditorExtensions>[number][]
-    | Parameters<typeof EditorState.create>[0]['extensions'],
-  opts?: { doc?: string },
-) {
+function mountView(extensions: Extension[], opts?: { doc?: string }) {
   const parent = document.createElement('div');
   document.body.appendChild(parent);
   const view = new EditorView({
