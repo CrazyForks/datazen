@@ -275,6 +275,7 @@ export const config: WebdriverIO.Config = {
       './specs/window-operations.ts',
       './specs/unified-tab-bar.ts',
       './specs/wapps.spec.ts',
+      './specs/ui-extract-dialogs.ts',
     ],
     // Real-DB Host specs incl. the host contract matrix (was `pnpm e2e:db`)
     db: [
