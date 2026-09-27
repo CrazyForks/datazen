@@ -40,6 +40,16 @@
     "cause as the hole pack-ep.mjs had. A new script under scripts/ MUST be",
     "added here in the same commit that creates it.",
     "",
+    "mutation-check-pane-focus.mjs is listed for that same reason, and it is the",
+    "only file here that no CI step EXECUTES: this program type-checks it, but",
+    "grep -rn mutation-check-pane-focus .github/ package.json returns nothing, so",
+    "it is run by hand. Its own header says so, gives the measured cost (16",
+    "sequential vitest runs, 78 s on an idle machine) and says why it stays out of",
+    "CI. Listing it here claims only that its lines are not unchecked, which is",
+    "what this program is for — it does not claim the harness gates anything at",
+    "runtime. Adding a CI step is a separate decision, to be made on a measurement",
+    "taken on the runner it would run on.",
+    "",
     "No compiler option is relaxed here. checkJs is on; strict,",
     "noImplicitAny, noUnusedLocals, noUnusedParameters and skipLibCheck all",
     "inherit from tsconfig.json unchanged."
@@ -54,7 +64,8 @@
     "scripts/pack-ep.mjs",
     "scripts/sign-ep.mjs",
     "scripts/pro-seam-gate.mjs",
-    "scripts/run-pro-guards.mjs"
+    "scripts/run-pro-guards.mjs",
+    "scripts/mutation-check-pane-focus.mjs"
   ],
   "include": [],
   "references": []

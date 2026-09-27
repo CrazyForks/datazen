@@ -15,6 +15,31 @@
  *   `--keep-going` is accepted and is also the default: the loop never stops at
  *   the first uncovered mutation, it reports every one of them.
  *
+ * ## Is this a gate? Half of one, on purpose — read this before adding a CI step.
+ *
+ * TYPECHECKED: yes. This file is listed in `files` of `tsconfig.pack-ep.json`,
+ *   so `pnpm typecheck` (and CI's "TypeScript typecheck" step) type-checks it. It
+ *   is a program member, not a `// @ts-check` pragma, so deleting or renaming the
+ *   file turns the gate red with TS6053 instead of quietly going unchecked.
+ *
+ * EXECUTED BY CI: **no, and deliberately not.** `grep -rn mutation-check-pane-focus
+ *   .github/ package.json` returns nothing: no workflow, no npm script, no wrapper
+ *   names or runs it. It is a manual tool you run when you touch the pane focus
+ *   rule. The reason is measured, not guessed: a full run is 16 sequential vitest
+ *   invocations (1 baseline + 15 cells), **78 s wall clock** on an otherwise idle
+ *   machine. Each cell is a *separate* `vitest run` of the whole 10-file list
+ *   rather than a rerun of a subset, because a mutation is only meaningful
+ *   against the full pane suite. That does not parallelise, it does not share a
+ *   transform cache across cells, and it lands on top of an already-slow CI job;
+ *   on a shared runner, or on a machine with the rest of the suite running, the
+ *   same run measured 13-15 min in practice. Spending that on every commit to
+ *   re-derive "15/15" — a result that only changes when panelStore.ts or a pane
+ *   test changes — is a bad trade. Run it by hand when you change either side.
+ *
+ * Do not add a CI step for it without re-measuring on the runner you intend to
+ * use, and do not "fix" the 78 s by narrowing `TESTS`: the suite-level criterion
+ * is the whole point of this harness.
+ *
  * The restore is **anchored to git, not to a disk re-read**. `PRISTINE` is always
  * `git show HEAD:src/stores/panelStore.ts`, and every mutated file is built from
  * it — never from whatever happens to be on disk. Two guards follow from that,
@@ -47,14 +72,23 @@
  *
  * Exit codes — 0 is the only value that means "this measurement is trustworthy":
  *   0 clean · 1 uncovered · 2 baseline not green · 3 write-back verification
- *   failed · 4 pre-injection interference with HEAD · 5 a mutation was VOID.
+ *   failed · 4 pre-injection interference with HEAD · 5 a mutation was VOID ·
+ *   6 lost control of the store file (the loop threw, or the restore failed).
  * If several apply, the highest wins, and **every** condition found is printed.
+ * 6 sits above the rest on purpose: a tree left holding an injected mutation
+ * voids every number in the run, so it must not be summarised as "1 uncovered".
  *
  * `PANE_MUTATION_FAULT` is a debug-only fault injector (off by default), the
- * counterpart of `NEW_WT_FORCE_FAIL` in scripts/new-feature-worktree.sh:
+ * counterpart of `NEW_WT_FORCE_FAIL` in scripts/new-feature-worktree.sh. Each
+ * value fires once and produces exactly one reportable condition:
  *   write-back — corrupt the file right after the harness writes it back, so the
- *               VOID guard is exercised by a real external write rather than only
- *               by reasoning that one would break it.
+ *               VOID guard is exercised by a real external write.
+ *   mid-run    — make the file read-only with a mutation on disk, so the restore
+ *               fails. This is the LOST_CONTROL path that used to leave the
+ *               injection in the tree behind a bare stack.
+ *   restore    — make the file read-only only for the final restore, leaving the
+ *               15 cells to complete, so the two LOST_CONTROL causes are
+ *               separately observable.
  *
  * `--testTimeout=30000` is passed deliberately: several tests here drive a
  * never-settling query stream, and a busy machine must not turn CPU contention
@@ -63,7 +97,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, existsSync, chmodSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -252,15 +287,39 @@ const EXIT = {
   WRITE_BACK: 3,
   INTERFERENCE: 4,
   VOID: 5,
+  // The harness lost control of the store file: the mutation loop threw, or the
+  // restore could not be written. 6 is above everything on purpose — a tree left
+  // holding an injected mutation invalidates every number this run printed, which
+  // is strictly worse than VOID (5, one unreadable cell) and worse than any
+  // "the suite is not good enough" finding (1). It has to win the max(), or a
+  // caller would read a trustworthy-looking "1 uncovered" for a run whose
+  // working tree it must now go and check by hand.
+  LOST_CONTROL: 6,
 };
+/**
+ * A thrown value. Node's `catch` binding is `unknown` under this config, and the
+ * only member read off it anywhere below is the ones a system error is defined
+ * to have; anything else is stringified by `reason()`.
+ * @typedef {{ code?: string, message?: string, stderr?: string | Buffer }} ThrownError
+ */
+
+/** @type {number[]} Every non-clean condition seen, folded by max() at the end. */
 const exitReasons = [];
-/** Record a non-clean condition: printed on stderr, folded into the exit code. */
+/**
+ * Record a non-clean condition: printed on stderr, folded into the exit code.
+ * @param {number} code
+ * @param {string} why
+ */
 const fail = (code, why) => {
   exitReasons.push(code);
   console.error(`✖ ${why}`);
 };
 
-/** The committed bytes of `rel` — the only source of truth for the base file. */
+/**
+ * The committed bytes of `rel` — the only source of truth for the base file.
+ * @param {string} rel
+ * @returns {Buffer}
+ */
 function headBlob(rel) {
   try {
     return execFileSync('git', ['show', `HEAD:${rel}`], {
@@ -269,11 +328,48 @@ function headBlob(rel) {
     });
   } catch (err) {
     console.error(`✖ cannot read the committed blob: git show HEAD:${rel}`);
-    console.error(String(err.stderr ?? err.message ?? err));
+    console.error(String(/** @type {ThrownError} */ (err).stderr ?? reason(err)));
     process.exit(EXIT.INTERFERENCE);
   }
 }
 
+/**
+ * `err` as one quotable line. Keeps the code (EACCES) and drops the stack.
+ * @param {unknown} err
+ */
+function reason(err) {
+  return String(/** @type {ThrownError} */ (err)?.message ?? err);
+}
+
+/**
+ * A short fingerprint of `buf` — enough to name a file's bytes in a bug report.
+ * @param {Buffer | null} buf
+ */
+function fingerprint(buf) {
+  if (buf === null) return '(unreadable)';
+  const sum = createHash('sha256').update(buf).digest('hex').slice(0, 16);
+  return `${buf.length} bytes, sha256:${sum}`;
+}
+
+/** Make `STORE` read-only. Returns true only if it actually did. */
+function chmodReadOnly() {
+  try {
+    chmodSync(STORE, 0o444);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One vitest run over the whole TESTS list. Never throws: a failing suite comes
+ * back as a non-zero `code`, because "the tests went red" is a result here, not
+ * an error. `status` is the child's own exit code, and the 1 is Node's own
+ * convention for a child that died without one — which is also why an *unrelated*
+ * crash would be indistinguishable from a genuine red; the exit-code table is
+ * what keeps that honest.
+ * @returns {{ code: number, out: string }}
+ */
 function runTests() {
   try {
     return {
@@ -286,18 +382,24 @@ function runTests() {
       }),
     };
   } catch (err) {
+    const e = /** @type {{ status?: number, stdout?: string, stderr?: string }} */ (err);
     return {
-      code: err.status ?? 1,
-      out: `${err.stdout ?? ''}${err.stderr ?? ''}`,
+      code: e.status ?? 1,
+      out: `${e.stdout ?? ''}${e.stderr ?? ''}`,
     };
   }
 }
 
+/**
+ * The failing test names in one vitest run's output.
+ * @param {string} out
+ * @returns {string[]}
+ */
 const redTests = (out) =>
   out
     .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.startsWith('×') || l.startsWith('✗'));
+    .map((/** @type {string} */ l) => l.trim())
+    .filter((/** @type {string} */ l) => l.startsWith('×') || l.startsWith('✗'));
 
 // PRISTINE is the committed file; PRE_DISK is what the working tree actually
 // held. They are equal in a clean tree, and *comparing* them is the whole point:
@@ -341,9 +443,11 @@ if (driftedBeforeRun) {
 const restoreTarget = driftedBeforeRun ? preDisk : head;
 
 const summary = [];
-// The debug-only fault injector fires once, so a single VOID row is demonstrable
-// without turning a whole run into an unreadable wall of VOID.
+// The debug-only fault injectors fire once, so a single VOID or LOST_CONTROL
+// report stays readable instead of turning a whole run into noise.
 let faultFired = false;
+let injectedMidRunFault = false;
+let abortError = null;
 try {
   if (driftedBeforeRun) {
     // Reported above. Running the baseline here would spend minutes measuring a
@@ -367,6 +471,14 @@ try {
           continue;
         }
         writeFileSync(STORE, pristine.replace(old, next));
+        if (!faultFired && process.env.PANE_MUTATION_FAULT === 'mid-run') {
+          // Debug-only: make the file read-only *with a mutation on disk*, so the
+          // restore at the end of this cell throws. That is the case that used to
+          // end in a bare stack with the injection still in the tree; it fires
+          // once, like the write-back fault, so the report stays readable.
+          faultFired = true;
+          injectedMidRunFault = chmodReadOnly();
+        }
         const { code, out } = runTests();
         const failed = redTests(out);
         const status = code !== 0 ? 'RED' : 'GREEN(!)';
@@ -423,25 +535,106 @@ try {
       }
     }
   }
+} catch (err) {
+  // The mutation loop threw — a failed write is the realistic case. Whatever was
+  // on disk at this instant is still on disk, and the block below is the only
+  // thing that can put it back. Swallowing here is deliberate: an exception
+  // escaping the module would print a bare stack and force exit 1, which is
+  // EXIT.UNCOVERED — a caller would read "1 mutation uncovered" when the truth
+  // is "this run stopped early and may have left a mutation in the tree".
+  abortError = err;
+  console.log('\n!! the mutation loop threw — this run is INCOMPLETE and its numbers are void.');
+  console.log(`   ${reason(err)}`);
+  console.log('   The store file is put back by the block below, if that is still possible.');
 } finally {
-  writeFileSync(STORE, restoreTarget);
-  const now = readFileSync(STORE);
-  const wroteBack = now.equals(restoreTarget);
-  const atHead = now.equals(head);
+  // Last thing this process does to the working tree, and the one step whose
+  // failure is worst, because everything above it assumes the file ends up as
+  // `restoreTarget`. This block must never throw: it did, and Node turns a throw
+  // here into a bare stack plus a forced exit 1, i.e. EXIT.UNCOVERED. Measured,
+  // with an injection on disk and the file made read-only: no RESTORE CHECK, no
+  // clean ✖ line, exit 1, and the mutation still sitting in the tree afterwards.
+  let injectedRestoreFault = false;
+  if (process.env.PANE_MUTATION_FAULT === 'restore') {
+    // Debug-only, and deliberately a *real* permission change: the writeFileSync
+    // below then throws a real EACCES, so the guard is exercised by the same
+    // failure it exists for rather than by a stubbed fs.
+    injectedRestoreFault = chmodReadOnly();
+  }
+
+  let restoreError = null;
+  try {
+    writeFileSync(STORE, restoreTarget);
+  } catch (err) {
+    restoreError = err;
+  }
+  if (injectedMidRunFault || injectedRestoreFault) {
+    // A fault injector may not leave a read-only file behind: the recovery
+    // command printed below writes to this file, and a later run of the harness
+    // would fail for an unrelated reason. (Measured, before this line existed:
+    // the report said `cp <backup> <file>` and that `cp` died with EACCES.)
+    // A file the *user* made read-only is left alone — that is not ours to undo.
+    try {
+      chmodSync(STORE, 0o644);
+    } catch {
+      /* the byte state below is the report */
+    }
+  }
+
+  // Read back defensively: "cannot even read it" is one of the states this
+  // report exists to describe, so it gets described instead of thrown.
+  let now = null;
+  try {
+    now = readFileSync(STORE);
+  } catch (err) {
+    restoreError = restoreError ?? err;
+  }
+  const wroteBack = now !== null && now.equals(restoreTarget);
+  const atHead = now !== null && now.equals(head);
+
   console.log('\n===== RESTORE CHECK (anchored to git, not to a disk re-read) =====');
-  console.log(`  on disk == the bytes this run wrote back     : ${wroteBack}`);
+  // When the final restore throws, `true` here means only that the last cell had
+  // already put the file back — so the line must not read as "the restore worked".
+  const wroteBackNote = restoreError
+    ? " (true only because the last cell already wrote it — the final restore never landed)"
+    : '';
+  console.log(`  on disk == the bytes this run wrote back     : ${wroteBack}${wroteBackNote}`);
   console.log(`  on disk == git HEAD (${STORE_REL}) : ${atHead}`);
+  console.log(`  on disk right now                           : ${fingerprint(now)}`);
+  if (restoreError) {
+    console.log(`  ✖ THE RESTORE ITSELF FAILED: ${reason(restoreError)}`);
+    console.log(
+      `    ${STORE_REL} was left exactly as it was when the write failed. It may be a MUTATED\n` +
+        `    file rather than the committed one — check it before trusting this worktree.`,
+    );
+  }
+  if (abortError) {
+    console.log(`  ✖ the loop stopped early, so the counts above do not cover all ${MUTATIONS.length} cells.`);
+  }
   if (!wroteBack) {
+    // A failed restore must never delete the only copy of the good bytes.
     console.log(`  the file is NOT what this run wrote — its byte backup was kept: ${backup}`);
+    console.log(`  recover with: cp ${backup} ${STORE}`);
   } else if (existsSync(backup)) {
     unlinkSync(backup);
   }
   if (!atHead) {
-    console.log(
-      `  INTERFERENCE: ${STORE_REL} differs from HEAD` +
-        `${driftedBeforeRun ? ' — it was already drifted before the run; this run changed nothing' : ''}.`,
-    );
+    if (restoreError || abortError) {
+      // Already described above, and calling it INTERFERENCE would be a lie: this
+      // run is what put the difference there.
+    } else if (driftedBeforeRun) {
+      console.log(
+        `  INTERFERENCE: ${STORE_REL} differs from HEAD — it was already drifted before the run; this run changed nothing.`,
+      );
+    } else {
+      console.log(`  INTERFERENCE: ${STORE_REL} differs from HEAD.`);
+    }
   }
-  if (!wroteBack) fail(EXIT.WRITE_BACK, `${STORE_REL} is not the content this run wrote back`);
+  if (restoreError) {
+    fail(EXIT.LOST_CONTROL, `${STORE_REL} could not be restored: ${reason(restoreError)}`);
+  } else if (abortError) {
+    fail(EXIT.LOST_CONTROL, `the mutation loop threw: ${reason(abortError)}`);
+  } else if (!wroteBack) {
+    fail(EXIT.WRITE_BACK, `${STORE_REL} is not the content this run wrote back`);
+  }
   process.exitCode = exitReasons.length ? Math.max(...exitReasons) : EXIT.CLEAN;
 }
