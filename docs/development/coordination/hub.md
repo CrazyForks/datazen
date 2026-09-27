@@ -44,6 +44,7 @@
 | e2e-schema-tree | — | PASSED（READY_TO_MERGE，Tester 第 1 轮 TEST_DONE；E2E 实跑见下方登记表【留待 R 回归】） | — | — | — |
 | e2e-spec-rest | — | READY_TO_MERGE**（Tester round-1 独立复验通过：tsc 门零新增 / 7 目标 spec 0 错误 / 全部 8 处根因自报独立复核成立；全量 E2E 复跑因本 worktree 无 webdriver binary 留待 R 回归 —— 见 §6 E2E 登记表。测试 commit 见 §7。） | — | — | — |
 | qb-editor-pro | — | 未开始 | — | — | — |
+| multi-cursor | — | TEST_DONE | — | — | — |
 
 ## 写锁台账
 
@@ -85,6 +86,7 @@
 | e2e-schema-tree | — | — | feature/e2e-schema-tree | PASSED（READY_TO_MERGE，Tester 第 1 轮 TEST_DONE；E2E 实跑见下方登记表【留待 R 回归】） | — |
 | e2e-spec-rest | — | — | feature/e2e-spec-rest | READY_TO_MERGE**（Tester round-1 独立复验通过：tsc 门零新增 / 7 目标 spec 0 错误 / 全部 8 处根因自报独立复核成立；全量 E2E 复跑因本 worktree 无 webdriver binary 留待 R 回归 —— 见 §6 E2E 登记表。测试 commit 见 §7。） | — |
 | qb-editor-pro | — | — | feature/qb-editor-pro | 未开始 | — |
+| multi-cursor | — | `.worktrees/datazen-multi-cursor` | `feature/multi-cursor` | TEST_DONE | — |
 
 ## 波次记录
 
@@ -147,6 +149,24 @@
   一处 `Partial<PanelState>` 转换）——**恰是 AGENTS.md 新门禁要防的「mock 与真实类型长期漂移」**。
   生产代码 0 错、1199 运行期用例全绿，纯夹具问题，已回退 Coder 修正。
   Track B 在真门禁下 **0 新增错误**（其 Coder 用临时 tsconfig 自验「本轨 0 错」属实）。
+- **BUG-002 已修复并合流**（`ff103741b`）：根因是**闸门位置**而非白名单内容——Pro `renderChunk`
+  （`enforce:'post'`，宽正则 `/^@codemirror\//`）先把具名/默认/命名空间导入改写成
+  `__DATAZEN_HOST__['…']` 且**不查白名单**，窄闸门运行时输入已空。修法是在 `pack-ep.mjs` 增加
+  **产物级**不变量：扫描**将要签名的字节**而非输入，挂在 `stagePackageTree`（**在
+  `signEpPackage` 之前**）与 `createDzxArchive`（纵深防御），违规即 throw → exit 1，
+  **无静默降级**。测试 35→55（+20）。合流后实测 `tsc` 整仓 0 错。
+  **协调者端到端复验**（清暂存目录强制真正构建后）：
+  干净基线 exit 0 / 7 键；注入 `@codemirror/search` **exit 1、无签名**；还原 exit 0。
+  **复验方法本身踩了两个坑，须写进判据**：① 注入若只写 `import` 不引用会被 tree-shaking 吃掉，
+  产物里根本没这个键，闸门自然放行——**必须注入即引用**；
+  ② `resolve-pro` 在 EP **已暂存**时会跳过构建，此时测的是旧产物——**复验前必须清暂存目录**。
+- **【中】`multipleSelections.ts` 的 `eventFilter` 含静态死臂（既有代码，Track D Tester 8 组合穷举证死）**：
+  三个析取项**恒等于 `e.altKey`**——第 2、3 项都要求 `altKey` 为真，却只在 `altKey` 为假时才被求值，
+  故**恒假**。这既解释了该文件 branch 覆盖率长期停在 26.31%，也会让人误以为
+  「Cmd+Option 拖拽有额外支持」。建议单开清理项。
+- **【中】`new-feature-worktree.sh` 应内置「补齐 gitignored codegen」（Track D Tester 建议）**：
+  本轮先后踩了 `src/extensions/generated*.ts`、**`src/locales/builtinLocales.ts`**、
+  `src-tauri/capabilities/default.json` 三层缺件，最后一个 worktree 需手工补齐才能跑出真实基线。
 - **Track D 交付**（`c37bc0848`，3 文件 +612/−17，未合流）：红→绿证据扎实——源码回退 HEAD 后
   `9 failed | 11 passed`，Down 那条 `from: 13` 正是 `copyLineDown` 吃掉按键的指纹。
   copy-line 未被放弃：Win/Linux 走 `Mod-Shift-Arrow*`（不提权），macOS **主动让位**给原生
@@ -235,15 +255,19 @@
   **直接后果：Track E（代码折叠）开工前必须先落 BUG-002** —— 它要写的
   `import { foldService } from '@codemirror/language'` 正是具名导入，恰好落进旁路区。
   Tester 给出的三个方向里，**方向 2（在 pack-ep 加产物级「键集合 ⊆ 白名单」不变量）最省**。
-- **【高】白名单与宿主表不等：走白名单自身的第二个绕过（BUG-004，协调者回合 3 实测）**：
-  `HOST_SHARED_MODULES` 11 条，`src/main.tsx` 宿主表 10 条，**差集恰为 `react`** ——
-  `react` 在白名单里、宿主表里没有。于是任何 EP 写 `import React from 'react'` 都会被
-  宿主窄闸门**放行**并改写成 `__DATAZEN_HOST__['react']`，而宿主表无此键 ⇒ 运行期解构得
-  `undefined` ⇒ **EP 加载即 TypeError，且签名照签**。与 BUG-002 同类，但**与 Pro 宽正则无关**，
-  走的是白名单自身。⇒ **产物级不变量的比对基准必须是宿主表（运行期真相）而非
-  `HOST_SHARED_MODULES`（意图声明）**，二者今天就不相等。该缺口在 BUG-002 轨中以
-  「`HOST_SHARED_MODULES ⊆ 宿主表` 不变式」钉住；**本 initiative 不改 `src/main.tsx`**，
-  给宿主 global 加 `react` 属架构决策（要把 React 本体塞进宿主），留作独立议题。
+- ~~**【高】白名单与宿主表不等（曾登记为 BUG-004）—— 已撤销，不成立**~~：协调者一度测得
+  `HOST_SHARED_MODULES` 11 键、`src/main.tsx` 宿主表 10 键，差集恰为 `react`，据此登记为
+  「走白名单自身的第二处活旁路」。**该测量有缺陷，结论撤销**：所用正则
+  `'([^']+)'\s*:` **只匹配带引号的键**，而 `src/main.tsx:58` 的 `react: reactAll` 是全表
+  **唯一不带引号的键**，正好被漏掉。改用同时接受两种形态的解析后实测：宿主表 **11 键**，
+  与 `HOST_SHARED_MODULES` **完全恒等**，两侧差集均为空。Coder 独立测得同一结论，
+  并拒绝「为了把不变式凑红而修改任一侧清单」——处置正确。
+  **同一正则缺陷也污染了另一项测量**：协调者报「产物 6 键」，真实为 **7 键**，漏掉的
+  恰是 `react`，因为它在已发布产物里是**点号式** `__DATAZEN_HOST__.react`。
+  ⇒ **教训：统计 JS 对象键或产物键时，必须同时接受带引号与不带引号的两种形态**，
+  且计数不符时应先怀疑自己的解析器，而不是急着下高危结论。
+  保留价值：BUG-002 轨的产物级闸门**同时读取两份列表**并对「声明了却从未发布」单列报错，
+  该架构意图成立，未来若两份列表真的分叉会被立即抓住。
 - **【中】测试文件事实上不在类型门禁内（BUG-003）**：`tsconfig.json:27-34` 的 `exclude`
   仍在排除 `src/**/__tests__/**` 与 `*.test.ts(x)`，但 `AGENTS.md` 明写「测试文件参与类型检查」
   —— **文档声称的改动从未落到配置**。协调者实测：放开 exclude 后全仓 **2281 条**错误，

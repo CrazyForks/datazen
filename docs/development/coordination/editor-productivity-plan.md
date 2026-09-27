@@ -14,7 +14,7 @@ title: 多目标协调计划（hub 静态段落来源）
 | ep-runtime-globals | 已合流 `46be145af`（Tester FAILED，见 BUG-002/003） | G1 补齐 EP 运行时共享模块（`@codemirror/language`、`@codemirror/commands`）并加防漂移测试守住宽/窄探针不对称 |
 | ep-hooks-settings | 已合流 `1837096f0`；Tester 复测中（6bef2cf8） | G2 通用契约钩子 + G3 打通设置生效 + G4 契约版本 bump |
 | pane-layout | 已合流 `0042d8ef7`；7 处真门禁类型错修复中（Coder 8bbf64a0） | G5 pane 维度布局模型与焦点路由（不含 UI） |
-| multi-cursor | +343 行在盘，尚未提交；收尾简报已发（Coder a952a1ad） | 解 `Shift-Alt-ArrowUp/Down` 多光标死键（macOS 被 `defaultKeymap` 抢占） |
+| multi-cursor | **已合流 `2f4a07a52`；TEST_DONE，0 Bug**（覆盖率 70%→100% 行 / 26.31%→94.73% 分支） | 解 `Shift-Alt-ArrowUp/Down` 多光标死键（macOS 被 `defaultKeymap` 抢占） |
 | code-folding | （待 `ep-hooks-settings` 交回后建轨） | Code Folding：Pro 侧实现，宿主提供 compartment 槽位 |
 
 ## 波次记录
@@ -78,6 +78,24 @@ title: 多目标协调计划（hub 静态段落来源）
   一处 `Partial<PanelState>` 转换）——**恰是 AGENTS.md 新门禁要防的「mock 与真实类型长期漂移」**。
   生产代码 0 错、1199 运行期用例全绿，纯夹具问题，已回退 Coder 修正。
   Track B 在真门禁下 **0 新增错误**（其 Coder 用临时 tsconfig 自验「本轨 0 错」属实）。
+- **BUG-002 已修复并合流**（`ff103741b`）：根因是**闸门位置**而非白名单内容——Pro `renderChunk`
+  （`enforce:'post'`，宽正则 `/^@codemirror\//`）先把具名/默认/命名空间导入改写成
+  `__DATAZEN_HOST__['…']` 且**不查白名单**，窄闸门运行时输入已空。修法是在 `pack-ep.mjs` 增加
+  **产物级**不变量：扫描**将要签名的字节**而非输入，挂在 `stagePackageTree`（**在
+  `signEpPackage` 之前**）与 `createDzxArchive`（纵深防御），违规即 throw → exit 1，
+  **无静默降级**。测试 35→55（+20）。合流后实测 `tsc` 整仓 0 错。
+  **协调者端到端复验**（清暂存目录强制真正构建后）：
+  干净基线 exit 0 / 7 键；注入 `@codemirror/search` **exit 1、无签名**；还原 exit 0。
+  **复验方法本身踩了两个坑，须写进判据**：① 注入若只写 `import` 不引用会被 tree-shaking 吃掉，
+  产物里根本没这个键，闸门自然放行——**必须注入即引用**；
+  ② `resolve-pro` 在 EP **已暂存**时会跳过构建，此时测的是旧产物——**复验前必须清暂存目录**。
+- **【中】`multipleSelections.ts` 的 `eventFilter` 含静态死臂（既有代码，Track D Tester 8 组合穷举证死）**：
+  三个析取项**恒等于 `e.altKey`**——第 2、3 项都要求 `altKey` 为真，却只在 `altKey` 为假时才被求值，
+  故**恒假**。这既解释了该文件 branch 覆盖率长期停在 26.31%，也会让人误以为
+  「Cmd+Option 拖拽有额外支持」。建议单开清理项。
+- **【中】`new-feature-worktree.sh` 应内置「补齐 gitignored codegen」（Track D Tester 建议）**：
+  本轮先后踩了 `src/extensions/generated*.ts`、**`src/locales/builtinLocales.ts`**、
+  `src-tauri/capabilities/default.json` 三层缺件，最后一个 worktree 需手工补齐才能跑出真实基线。
 - **Track D 交付**（`c37bc0848`，3 文件 +612/−17，未合流）：红→绿证据扎实——源码回退 HEAD 后
   `9 failed | 11 passed`，Down 那条 `from: 13` 正是 `copyLineDown` 吃掉按键的指纹。
   copy-line 未被放弃：Win/Linux 走 `Mod-Shift-Arrow*`（不提权），macOS **主动让位**给原生
