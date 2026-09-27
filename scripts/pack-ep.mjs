@@ -59,6 +59,63 @@ export const REQUIRED_PACKAGE_PATHS = [
 export const LOCALE_SOURCE_DIR = 'src/locales';
 
 /**
+ * Sink for progress output. Every caller passes `console.log`; tests pass a
+ * no-op, so the signature stays `(...args: unknown[])` rather than
+ * `(...args: any[])`.
+ *
+ * @typedef {(...args: unknown[]) => void} LogFn
+ */
+
+/**
+ * Options for the two scanner entry points
+ * (`collectHostGlobalKeys` / `countUnverifiableHostRefs`).
+ *
+ * @typedef {{ modules?: string[], globalName?: string }} HostRefScanOptions
+ */
+
+/**
+ * Options for `assertHostGlobalKeysAllowed` and the tree/archive wrappers that
+ * forward to it. `hostTable` defaults to the keys parsed out of
+ * `src/main.tsx`; `label` only decorates the failure message.
+ *
+ * @typedef {{
+ *   modules?: string[],
+ *   hostTable?: string[],
+ *   globalName?: string,
+ *   label?: string,
+ * }} HostKeyAssertOptions
+ */
+
+/** @typedef {{ log?: LogFn }} LogOptions */
+
+/** @typedef {{ log?: LogFn, rewriteImports?: boolean }} StageTreeOptions */
+
+/**
+ * Shape returned by `packEp` / `packEpInner`.
+ *
+ * `dzxPath` is null for a stage-only run: the field exists so callers can
+ * report "no archive written" without re-deriving it from `mode`.
+ *
+ * @typedef {{
+ *   extension: string,
+ *   extensionDir: string,
+ *   stageDir: string,
+ *   workDir: string,
+ *   manifestVersion: string,
+ *   dzxPath: string | null,
+ *   staged: boolean,
+ * }} PackEpResult
+ */
+
+/**
+ * Named capture groups of `scanHostGlobalRefs`' regex, as handed to a
+ * `String.prototype.replace` replacer. A group that did not participate in the
+ * match reads as `undefined` — never as a positional sibling.
+ *
+ * @typedef {{ q?: string, raw?: string, dot?: string }} HostRefGroups
+ */
+
+/**
  * Sibling marker recording that a staging run did NOT finish.
  *
  * A staged tree is only trustworthy as a whole: `manifest.json` +
@@ -81,12 +138,20 @@ export const LOCALE_SOURCE_DIR = 'src/locales';
  * because CI ships the tree alone as an artifact: a variant job that downloads
  * `pro-extension` into `builtin-ep/` sees no marker, and the "build once, share
  * with every variant" short-circuit is preserved exactly.
+ *
+ * @param {string} stageDir absolute path of the staged tree
+ * @returns {string} absolute path of its sibling `<tree>.incomplete` marker
  */
 export function stagingMarkerPath(stageDir) {
   const target = resolve(stageDir);
   return join(dirname(target), `${basename(target)}.incomplete`);
 }
 
+/**
+ * @param {string} stageDir absolute path of the staged tree
+ * @param {string} reason free-form text stored in the marker
+ * @returns {string} the marker path just written
+ */
 export function markStagingIncomplete(stageDir, reason) {
   const marker = stagingMarkerPath(stageDir);
   mkdirSync(dirname(marker), { recursive: true });
@@ -94,11 +159,20 @@ export function markStagingIncomplete(stageDir, reason) {
   return marker;
 }
 
+/**
+ * @param {string} stageDir absolute path of the staged tree
+ * @returns {void}
+ */
 export function clearStagingIncomplete(stageDir) {
   rmSync(stagingMarkerPath(stageDir), { force: true });
 }
 
-/** Whether the last staging run over `stageDir` finished. */
+/**
+ * Whether the last staging run over `stageDir` finished.
+ *
+ * @param {string} stageDir absolute path of the staged tree
+ * @returns {boolean}
+ */
 export function stagedTreeComplete(stageDir) {
   return !existsSync(stagingMarkerPath(stageDir));
 }
@@ -141,14 +215,27 @@ export const HOST_SHARED_MODULES = [
   '@codemirror/commands',
 ];
 
+/**
+ * @param {string} spec bare module specifier
+ * @param {string} [globalName] host singleton table name
+ * @returns {string} the source text that reads the singleton off the host table
+ */
 function hostGlobalRef(spec, globalName = HOST_GLOBAL_NAME) {
   return `globalThis.${globalName}[${JSON.stringify(spec)}]`;
 }
 
+/**
+ * @param {string} spec bare module specifier
+ * @returns {string} an identifier-safe local name for the import
+ */
 function tmpVarFor(spec) {
   return `__host_${spec.replace(/[^A-Za-z0-9_$]/g, '_')}`;
 }
 
+/**
+ * @param {string} spec module specifier
+ * @returns {boolean} true for a bare specifier (needs a host singleton)
+ */
 function isBareSpecifier(spec) {
   return !(
     spec.startsWith('.') ||
@@ -159,6 +246,11 @@ function isBareSpecifier(spec) {
   );
 }
 
+/**
+ * @param {string} kind the import form that carried `spec` (for the message)
+ * @param {string} spec the unmapped bare specifier
+ * @returns {Error}
+ */
 function unmappedError(kind, spec) {
   return new Error(
     `[pack-ep] unmapped bare ${kind} "${spec}" — add it to HOST_SHARED_MODULES ` +
@@ -166,7 +258,13 @@ function unmappedError(kind, spec) {
   );
 }
 
-/** Split `D, {...}` / `D, * as ns` / `{...}` / `* as ns` / `D`. */
+/**
+ * Split `D, {...}` / `D, * as ns` / `{...}` / `* as ns` / `D`.
+ *
+ * @param {string} clause the import clause text, braces and/or `* as ns` included
+ * @returns {{ def: string | null, rest: string | null }} `rest` is null when the
+ *   clause carried nothing after the default binding
+ */
 function splitDefault(clause) {
   const text = clause.trim();
   if (text.startsWith('*') || text.startsWith('{')) return { def: null, rest: text };
@@ -175,7 +273,12 @@ function splitDefault(clause) {
   return { def: text.slice(0, comma).trim(), rest: text.slice(comma + 1).trim() };
 }
 
-/** Parse `{ a, b as c }` (braces included) into [{ orig, alias }]. */
+/**
+ * Parse `{ a, b as c }` (braces included) into [{ orig, alias }].
+ *
+ * @param {string} braced the named-import clause, braces included
+ * @returns {{ orig: string, alias: string }[]}
+ */
 function parseNamedItems(braced) {
   const inner = braced.trim().replace(/^\{/, '').replace(/\}$/, '');
   return inner
@@ -188,6 +291,10 @@ function parseNamedItems(braced) {
     });
 }
 
+/**
+ * @param {{ orig: string, alias: string }[]} named
+ * @returns {string} a destructuring pattern body
+ */
 function destructureNamed(named) {
   return named
     .map((n) => (n.alias === n.orig ? n.orig : `${n.orig}: ${n.alias}`))
@@ -198,6 +305,11 @@ function destructureNamed(named) {
  * Rewrite one static `import <clause> from "<spec>"` into const bindings off
  * the host singleton table. Default imports get `??` interop because the
  * host namespace object is the source of truth for `.default`.
+ *
+ * @param {string} clauseRaw the raw import clause text
+ * @param {string} spec the bare specifier being imported
+ * @param {string} globalName host singleton table name
+ * @returns {string} replacement source text
  */
 function rewriteStaticImport(clauseRaw, spec, globalName) {
   const clause = clauseRaw.trim();
@@ -238,6 +350,12 @@ function rewriteStaticImport(clauseRaw, spec, globalName) {
 /**
  * Rewrite `export { a, b as c } from "<spec>"` — destructure behind temp
  * locals, then re-export with the original exported names preserved.
+ *
+ * @param {string} namesRaw the comma-separated exported names
+ * @param {string} spec the bare specifier being re-exported from
+ * @param {string} globalName host singleton table name
+ * @param {number} counter per-call counter keeping the temp locals unique
+ * @returns {string} replacement source text
  */
 function rewriteExportFrom(namesRaw, spec, globalName, counter) {
   const G = hostGlobalRef(spec, globalName);
@@ -245,7 +363,9 @@ function rewriteExportFrom(namesRaw, spec, globalName, counter) {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  /** @type {string[]} destructuring pattern fragments, one per exported item */
   const destructured = [];
+  /** @type {string[]} `local as exported` fragments, one per exported item */
   const exported = [];
   items.forEach((item, i) => {
     const local = `__e${counter}_${i}`;
@@ -270,6 +390,11 @@ function rewriteExportFrom(namesRaw, spec, globalName, counter) {
  * Handles: static imports (default/named/namespace), side-effect imports,
  * `export ... from`, and dynamic `import("...")`. Relative/absolute/URL
  * specifiers pass through untouched.
+ *
+ * @param {string} code the bundle source
+ * @param {HostRefScanOptions} [options]
+ * @returns {{ code: string, rewritten: string[] }} the rewritten source and the
+ *   bare specifiers that were mapped onto the host table
  */
 export function rewriteEpImportsToHostGlobals(
   code,
@@ -345,7 +470,13 @@ export function rewriteEpImportsToHostGlobals(
   return { code, rewritten: [...rewritten] };
 }
 
-/** Read → rewrite → write an EP bundle file in place. Returns rewritten specs. */
+/**
+ * Read → rewrite → write an EP bundle file in place. Returns rewritten specs.
+ *
+ * @param {string} bundlePath path of the bundle to rewrite in place
+ * @param {HostRefScanOptions} [opts] forwarded to `rewriteEpImportsToHostGlobals`
+ * @returns {{ bundlePath: string, rewritten: string[] }}
+ */
 export function rewriteEpBundleFile(bundlePath, opts = {}) {
   const code = readFileSync(bundlePath, 'utf8');
   const { code: rewrittenCode, rewritten } = rewriteEpImportsToHostGlobals(code, opts);
@@ -355,6 +486,10 @@ export function rewriteEpBundleFile(bundlePath, opts = {}) {
 
 export const HOST_TABLE_SOURCE = resolve(ROOT, 'src/main.tsx');
 
+/**
+ * @param {string} text literal text to embed in a RegExp source
+ * @returns {string}
+ */
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -369,6 +504,9 @@ function escapeRegExp(text) {
  * matching neither shape throws: a parser that shrugs off what it cannot read
  * is not a guard. A missing table is likewise fatal, never a soft "assume
  * everything is allowed".
+ *
+ * @param {string} [sourcePath] host entry module to read the table from
+ * @returns {string[]} the published key set, quoted and bare-identifier entries alike
  */
 export function readHostGlobalTableKeys(sourcePath = HOST_TABLE_SOURCE) {
   const source = readFileSync(sourcePath, 'utf8');
@@ -397,6 +535,11 @@ export function readHostGlobalTableKeys(sourcePath = HOST_TABLE_SOURCE) {
   return keys;
 }
 
+/**
+ * @param {string} raw the captured key text, quotes stripped but escapes intact
+ * @returns {string} the unescaped key, or `raw` unchanged when the escape is
+ *   exotic enough that JSON cannot round-trip it
+ */
 function unquoteHostKey(raw) {
   try {
     return JSON.parse(`"${raw.replace(/"/g, '\\"')}"`);
@@ -420,6 +563,12 @@ function unquoteHostKey(raw) {
  *     `react`: a bracket-only scanner would not even see the React binding the
  *     bundle actually loads, and a future `__DATAZEN_HOST__.search` would ship
  *     signed and crash on load exactly like the bracket-form bypass.
+ *
+ * @param {string} code the shipped bytes
+ * @param {string} [globalName] host singleton table name
+ * @returns {{ keys: string[], unverifiable: number }} `keys` is sorted and
+ *   de-duplicated; `unverifiable` counts references left after masking that name
+ *   the table without a statically known key
  */
 function scanHostGlobalRefs(code, globalName = HOST_GLOBAL_NAME) {
   const name = escapeRegExp(globalName);
@@ -432,15 +581,35 @@ function scanHostGlobalRefs(code, globalName = HOST_GLOBAL_NAME) {
     'g',
   );
   const keys = new Set();
-  const masked = code.replace(reference, (full, ...rest) => {
-    const groups = rest[rest.length - 1] ?? {};
-    keys.add(groups.dot ?? unquoteHostKey(groups.raw ?? ''));
-    return ' '.repeat(full.length);
-  });
+  const masked = code.replace(
+    reference,
+    /**
+     * Replacer for a RegExp that declares **only** named groups, so its trailing
+     * argument is the groups object. It is read by position-from-the-end rather
+     * than by a fixed parameter index, because the offset/whole-string arguments
+     * would silently slide into the wrong slot if a numbered capture were ever
+     * added. Anything that is not an object is treated as "no groups", which is
+     * what reading `.dot`/`.raw` off a number or string already produced.
+     *
+     * @param {string} full the whole match, replaced by spaces of equal length
+     * @param {...(number | string | HostRefGroups | undefined)} rest
+     */
+    (full, ...rest) => {
+      const tail = rest[rest.length - 1];
+      const groups = tail !== null && typeof tail === 'object' ? tail : {};
+      keys.add(groups.dot ?? unquoteHostKey(groups.raw ?? ''));
+      return ' '.repeat(full.length);
+    },
+  );
   const unverifiable = (masked.match(new RegExp(`\\b${name}\\b`, 'g')) ?? []).length;
   return { keys: [...keys].sort(), unverifiable };
 }
 
+/**
+ * @param {string} code the shipped bytes
+ * @param {HostRefScanOptions} [options]
+ * @returns {string[]} sorted, de-duplicated host table keys the bytes claim
+ */
 export function collectHostGlobalKeys(code, { globalName = HOST_GLOBAL_NAME } = {}) {
   return scanHostGlobalRefs(code, globalName).keys;
 }
@@ -450,11 +619,24 @@ export function collectHostGlobalKeys(code, { globalName = HOST_GLOBAL_NAME } = 
  * computed subscript or a whole-table read). Such a reference cannot be checked
  * against the host table by construction — the gate fails closed on it rather
  * than waving it through.
+ *
+ * @param {string} code the shipped bytes
+ * @param {HostRefScanOptions} [options]
+ * @returns {number}
  */
 export function countUnverifiableHostRefs(code, { globalName = HOST_GLOBAL_NAME } = {}) {
   return scanHostGlobalRefs(code, globalName).unverifiable;
 }
 
+/**
+ * Compose the build-failing Error for a violated host-key invariant. This is
+ * the enforcement point of the BUG-002 artifact contract, so every branch it
+ * reports is named explicitly in the message.
+ *
+ * @param {{ unmapped: string[], allowListedOnly: string[], unverifiable: number }} violations
+ * @param {{ globalName: string, label: string }} context
+ * @returns {Error}
+ */
 function hostKeyError(violations, { globalName, label }) {
   const lines = [
     `[pack-ep] artifact host-key invariant violated in ${label}:`,
@@ -504,6 +686,11 @@ function hostKeyError(violations, { globalName, label }) {
  * rule, which would let `react-anything` through and turn the allow-list into
  * decoration while the enumerated `react/jsx-runtime` sub-path keeps working.
  * No silent degradation: a violation is a build failure.
+ *
+ * @param {string} code the shipped bytes
+ * @param {HostKeyAssertOptions} [options]
+ * @returns {string[]} the host table keys the bytes claim (empty on success)
+ * @throws {Error} `hostKeyError` on any violation
  */
 export function assertHostGlobalKeysAllowed(
   code,
@@ -533,7 +720,14 @@ export function assertHostGlobalKeysAllowed(
   return keys;
 }
 
-/** Assert the invariant on the staged/packed bundle of a package tree. */
+/**
+ * Assert the invariant on the staged/packed bundle of a package tree.
+ *
+ * @param {string} packageDir root of the package tree
+ * @param {HostKeyAssertOptions} [opts] forwarded to `assertHostGlobalKeysAllowed`;
+ *   `label` defaults to the bundle path so the message names the actual artifact
+ * @returns {string[]} the host table keys the bundle claims
+ */
 export function assertHostGlobalKeysInTree(packageDir, opts = {}) {
   const bundle = join(packageDir, 'dist/index.esm.js');
   if (!existsSync(bundle)) {
@@ -545,6 +739,24 @@ export function assertHostGlobalKeysInTree(packageDir, opts = {}) {
   });
 }
 
+/**
+ * Parse `--flag=value` / `--flag` command line into packEp options.
+ *
+ * `mode` is deliberately typed `string` rather than the three-value union
+ * `packEp` accepts: this parser happily returns an unrecognised `--mode=…`, and
+ * narrowing the type here would make that unrepresentable while `packEp` still
+ * has to reject it at runtime.
+ *
+ * @param {string[]} [argv] arguments after the script name
+ * @returns {{
+ *   extension: string,
+ *   extensionDir: string,
+ *   mode: string,
+ *   outDir: string,
+ *   stageDir: string,
+ *   skipBuild: boolean,
+ * }} all paths resolved to absolute
+ */
 export function parsePackArgs(argv = process.argv.slice(2)) {
   let extension = 'sql-editor-pro';
   let extensionDir = null;
@@ -584,6 +796,11 @@ export function parsePackArgs(argv = process.argv.slice(2)) {
   };
 }
 
+/**
+ * @param {string} manifestPath path of the package's manifest.json
+ * @returns {string} the declared version
+ * @throws {Error} when `version` is missing or is not a string
+ */
 export function readManifestVersion(manifestPath) {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   if (!manifest.version || typeof manifest.version !== 'string') {
@@ -592,6 +809,14 @@ export function readManifestVersion(manifestPath) {
   return manifest.version;
 }
 
+/**
+ * Build the extension's distributable library with its own vite config.
+ *
+ * @param {string} extensionDir extension package root
+ * @param {LogOptions} [options]
+ * @returns {void}
+ * @throws {Error} when package.json or the built bundle is missing
+ */
 export function buildExtensionLibrary(extensionDir, { log = console.log } = {}) {
   if (!existsSync(join(extensionDir, 'package.json'))) {
     throw new Error(`[pack-ep] extension package.json not found under ${extensionDir}`);
@@ -608,6 +833,18 @@ export function buildExtensionLibrary(extensionDir, { log = console.log } = {}) 
   }
 }
 
+/**
+ * Copy locale sources into the staged tree's `locales/`.
+ *
+ * An explicit `locales/` directory in the extension wins outright; otherwise
+ * the TypeScript/JSON sources under `src/locales` are copied one by one so
+ * build scratch files never reach the staged tree.
+ *
+ * @param {string} extensionDir extension package root
+ * @param {string} targetRoot staged tree root
+ * @param {LogOptions} [options]
+ * @returns {void}
+ */
 export function syncLocales(extensionDir, targetRoot, { log = console.log } = {}) {
   const localesOut = join(targetRoot, 'locales');
   mkdirSync(localesOut, { recursive: true });
@@ -631,6 +868,17 @@ export function syncLocales(extensionDir, targetRoot, { log = console.log } = {}
   log(`[pack-ep] copied locale sources from ${srcLocales}`);
 }
 
+/**
+ * Copy manifest + bundle into `targetDir`, rewrite bare imports, enforce the
+ * artifact host-key invariant, then sign. The invariant runs *before* signing on
+ * purpose: an unsatisfiable bundle must never acquire a signature.
+ *
+ * @param {string} sourceDir built extension package root
+ * @param {string} targetDir staged tree root (replaced wholesale)
+ * @param {StageTreeOptions} [options] `rewriteImports: false` keeps the bundle bytes as built
+ * @returns {void}
+ * @throws {Error} from the host-key gate, `signEpPackage`, or a missing source file
+ */
 export function stagePackageTree(sourceDir, targetDir, { log = console.log, rewriteImports = true } = {}) {
   if (existsSync(targetDir)) {
     rmSync(targetDir, { recursive: true, force: true });
@@ -665,6 +913,11 @@ export function stagePackageTree(sourceDir, targetDir, { log = console.log, rewr
   signEpPackage({ packageDir: targetDir });
 }
 
+/**
+ * @param {string} packageDir root of the package tree
+ * @returns {void}
+ * @throws {Error} listing every missing required path
+ */
 export function assertPackageLayout(packageDir) {
   const missing = REQUIRED_PACKAGE_PATHS.filter((rel) => !existsSync(join(packageDir, rel)));
   if (missing.length > 0) {
@@ -672,6 +925,14 @@ export function assertPackageLayout(packageDir) {
   }
 }
 
+/**
+ * Walk a directory tree into a path → bytes map for the archiver.
+ *
+ * @param {string} rootDir tree root that relative keys are computed against
+ * @param {string} [currentDir] recursion cursor, always a descendant of `rootDir`
+ * @param {Record<string, Buffer>} [acc] accumulator, threaded through the recursion
+ * @returns {Record<string, Buffer>} keys are POSIX-separated, relative to `rootDir`
+ */
 export function listZipEntries(rootDir, currentDir = rootDir, acc = {}) {
   for (const name of readdirSync(currentDir, { withFileTypes: true })) {
     const abs = join(currentDir, name.name);
@@ -685,6 +946,14 @@ export function listZipEntries(rootDir, currentDir = rootDir, acc = {}) {
   return acc;
 }
 
+/**
+ * Re-check the host-key invariant, zip the whole tree, and write the `.dzx`.
+ *
+ * @param {string} packageDir root of the package tree
+ * @param {string} outFile absolute path of the archive to write
+ * @param {HostKeyAssertOptions} [opts] forwarded to `assertHostGlobalKeysInTree`
+ * @returns {string} `outFile`
+ */
 export function createDzxArchive(packageDir, outFile, opts = {}) {
   assertPackageLayout(packageDir);
   // Defence in depth for the CI/prebuilt handoff: a tree that reached the
@@ -700,6 +969,11 @@ export function createDzxArchive(packageDir, outFile, opts = {}) {
   return outFile;
 }
 
+/**
+ * @param {string} extensionId extension id, e.g. `sql-editor-pro`
+ * @param {string} version manifest version
+ * @returns {string}
+ */
 export function dzxFileName(extensionId, version) {
   return `${extensionId}-${version}.dzx`;
 }
@@ -712,8 +986,10 @@ export function dzxFileName(extensionId, version) {
  *   outDir?: string,
  *   stageDir?: string,
  *   skipBuild?: boolean,
- *   log?: (...args: unknown[]) => void,
+ *   log?: LogFn,
  * }} [opts]
+ * @returns {PackEpResult}
+ * @throws {Error} from the build, the host-key gate, or an unknown `mode`
  */
 export function packEp(opts = {}) {
   const parsed = parsePackArgs();
@@ -735,7 +1011,6 @@ export function packEp(opts = {}) {
 
   try {
     return packEpInner({
-      opts,
       extension,
       extensionDir,
       mode,
@@ -751,9 +1026,16 @@ export function packEp(opts = {}) {
       // PREVIOUS build's bytes and signature, and must not be reusable as if it
       // were this build's. (The work dir under `artifacts/` is deliberately
       // kept too — it is the on-disk evidence of what this run produced.)
+      //
+      // The thrown value is narrowed instead of assumed: JS lets a non-Error be
+      // thrown, and reading `.message` off one is either a TypeError (marker
+      // never written — exactly the silent-stale-tree hole this marker exists to
+      // close) or a marker whose reason reads "undefined".
       markStagingIncomplete(
         stageDir,
-        `pack-ep FAILED for ${extension} at ${new Date().toISOString()}: ${err.message}`,
+        `pack-ep FAILED for ${extension} at ${new Date().toISOString()}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
       );
       log(
         `[pack-ep] staging at ${stageDir} marked incomplete after a failed run; ` +
@@ -766,18 +1048,18 @@ export function packEp(opts = {}) {
 
 /**
  * @param {{
- *   opts: Record<string, unknown>,
  *   extension: string,
  *   extensionDir: string,
  *   mode: string,
  *   outDir: string,
  *   stageDir: string,
  *   skipBuild: boolean,
- *   log: (...args: unknown[]) => void,
+ *   log: LogFn,
  *   stagesTree: boolean,
- * }} ctx
+ * }} ctx every field already resolved and defaulted by `packEp`
+ * @returns {PackEpResult}
  */
-function packEpInner({ opts, extension, extensionDir, mode, outDir, stageDir, skipBuild, log, stagesTree }) {
+function packEpInner({ extension, extensionDir, mode, outDir, stageDir, skipBuild, log, stagesTree }) {
   let effectiveExtensionDir = extensionDir;
   if (!existsSync(effectiveExtensionDir)) {
     if (extension === 'sql-editor-pro' && existsSync(DEFAULT_PRO_DEST)) {
@@ -804,6 +1086,7 @@ function packEpInner({ opts, extension, extensionDir, mode, outDir, stageDir, sk
   const dzxName = dzxFileName(extension, manifestVersion);
   const dzxPath = join(outDir, dzxName);
 
+  /** @type {PackEpResult} */
   const result = {
     extension,
     extensionDir,

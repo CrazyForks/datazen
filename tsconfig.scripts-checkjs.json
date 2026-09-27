@@ -14,7 +14,10 @@
     "",
     "What IS enforced is tsconfig.scripts.json: the 23 .ts test files that guard",
     "this pipeline, checked against the real inferred signatures of the .mjs they",
-    "import."
+    "import — plus tsconfig.pack-ep.json, which checks the BODIES of",
+    "scripts/pack-ep.mjs and scripts/sign-ep.mjs. Those two files no longer appear",
+    "in this config's error count, so it is a backlog of what is still unchecked",
+    "HERE, not a list of what is unchecked everywhere."
   ],
   "extends": "./tsconfig.scripts.json",
   "compilerOptions": {
