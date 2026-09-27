@@ -160,6 +160,35 @@
   **复验方法本身踩了两个坑，须写进判据**：① 注入若只写 `import` 不引用会被 tree-shaking 吃掉，
   产物里根本没这个键，闸门自然放行——**必须注入即引用**；
   ② `resolve-pro` 在 EP **已暂存**时会跳过构建，此时测的是旧产物——**复验前必须清暂存目录**。
+- **🔴【高·潜伏】`focusedPaneId` 是全局单值而非按 tab 作用域，焦点跨 tab 泄漏**（Track C Tester 裁定
+  TEST_FAILED，`pane-layout-BUG-001`）。`panelStore.ts:83` 的 `focusedPaneId: string | null` 是**单一
+  全局字段**，而 pane 属于 panel；`ContentView.tsx:88` 把这一个值下发给当前 active 的**任意** panel；
+  `panelStore.ts:378` 的 `closePane` **只比较 `paneId`、从不比较所属 `panelId`**。三条后果已用生产代码
+  路径自动化复现（`paneFocusScope.tester.test.ts`，3 例全红）：①切 tab 路由到 `addPanel` 从未播种的
+  幻影 key `panel-q-2::p2`，B 的 SQL 与结果无人读取，界面空白；②`updateSql` 走到该 key，而 `patchExec`
+  对未知 key 会 `emptyQueryExecState()` **播种**（`queryExecActions.ts:86-90`），凭空生成**任何 pane 列表
+  都未声明**的孤儿 entry，Execute 结果流进用户永远看不到的地方；③关一个 tab 的 pane 会抢走另一个 tab
+  的焦点。**本波无分屏 UI，`focusedPaneId` 恒为 `null`，单 pane 行为确为零变化，故不判验收项 2 不通过；
+  但 P2 一接 UI，①②立即变成用户可见的静默数据丢失。** 修复方向（per-panel 焦点 map vs `ContentView`
+  按 active panel 过滤）已交回原 Coder 决定。
+- **【中】`proCompartments.ts` 只存在于集成分支**（已逐分支核实：集成分支 291 行有；`main`、
+  `feature/pane-layout`、`feature/multi-cursor` **均无**，该文件是 Track B 拆分时才创建）。
+  ⇒ **跨轨协同时必须先确认对方分支是否含 Track B 拆分**。Track C Tester 曾据其分支如实报告
+  「`proCompartments.ts` 不存在、`reconfigureProCompartments` 在 `editorExtensions.ts:121/827`」，
+  那**不是事实错误，是分支差异**；协调者给 Track E 的指示则对其基座正确。两者都不矛盾。
+- **【已决】Track E 不 bump `EXTENSION_POINTS_VERSION`（保持 1.1.0）**。Coder 报请裁决：为把折叠扩展
+  定向送进宿主 `fold` 槽位需在 `SqlEditorEnhancedFeatures` 加**可选**方法 `createFoldExtensions`，
+  是否需 1.1.0→1.2.0？**裁决：不 bump**。因 `security.ts:136-151` 是**精确字符串相等**（无 semver 区间、
+  无协商窗口），bump 会让所有 manifest 仍写 1.1.0 的 EP 被**整体拒签**，属跨轨兼容性变更。
+  「可选方法 + 不 bump」双向安全：旧 EP 缺方法 ⇒ 宿主 `?? []`；旧宿主不认该槽位 ⇒
+  `proCompartments.ts:172-178` 并入 `EXTRA_COMPARTMENT_ID` **溢出槽**——该槽本就是为「EP 声明了
+  view 构建后才出现的槽位」设计的（见 `:147-152` 注释），故最坏情况是退化到 `extra` 继续工作，
+  **不会静默消失**。⇒ **Track A 无需为本轨改 `src/main.tsx`，Pro 侧 manifest 也不用动**。
+  另核实：折叠所需 API（`foldGutter`/`foldService`/`codeFolding`/`foldState`/`foldEffect`/
+  `unfoldEffect`/`foldable`/`foldNodeProp`/`foldKeymap`/`unfoldAll`）**全在 `@codemirror/language`**，
+  该包已在双侧白名单；`@codemirror/search` **一个 fold 相关的都没有**。⇒ 本轨不触发 BUG-002 隐患。
+  （附带更正：BUG-002 复现用的注入 `import { foldGutter } from '@codemirror/search'` 在**语义上是
+  虚构的**——该导出不存在；但产物级不变量卡的是**键**（模块说明符）不是导出，故闸门有效性不受影响。）
 - **【中】`multipleSelections.ts` 的 `eventFilter` 含静态死臂（既有代码，Track D Tester 8 组合穷举证死）**：
   三个析取项**恒等于 `e.altKey`**——第 2、3 项都要求 `altKey` 为真，却只在 `altKey` 为假时才被求值，
   故**恒假**。这既解释了该文件 branch 覆盖率长期停在 26.31%，也会让人误以为
