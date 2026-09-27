@@ -1,8 +1,12 @@
+/**
+ * ConfirmDialog: open/close rendering, confirm/cancel wiring, optional
+ * badge/description, and the truncated SQL code preview with its copy action.
+ */
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, screen } from '@testing-library/react';
 import { ConfirmDialog } from '../ConfirmDialog';
 
-vi.mock('../../../hooks/useI18n', () => ({
+vi.mock('../i18n', () => ({
   useI18n: () => ({
     t: (key: string) => {
       const map: Record<string, string> = {

@@ -1,8 +1,12 @@
+/**
+ * CopyableError: selectable message rendering (plain vs monospace) and the
+ * clipboard copy action with its "copied" confirmation state.
+ */
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, screen } from '@testing-library/react';
 import { CopyableError } from '../CopyableError';
 
-vi.mock('../../../hooks/useI18n', () => ({
+vi.mock('../i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }));
 
