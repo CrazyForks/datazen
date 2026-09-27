@@ -62,6 +62,16 @@ function isDatabaseOpen(
  */
 export const CONNECTION_CHILD_DEPTH = 2;
 
+/**
+ * The depth a database's children are painted at — its schema row, and the
+ * placeholders shown while it loads.
+ *
+ * Derived rather than declared, so the ladder has a single root: move
+ * `CONNECTION_CHILD_DEPTH` and every level below it follows. A database with
+ * no schemas puts its categories here instead of one level deeper.
+ */
+export const DATABASE_CHILD_DEPTH = CONNECTION_CHILD_DEPTH + 1;
+
 export interface BuildNavigatorFlatRowsParams {
   grouped: { group: string; connections: ConnectionConfig[] }[];
   expandedGroups: Set<string>;
@@ -277,7 +287,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
         isSelected: activeConnectionId === conn.id,
         status,
         expanded: (isExpanded && (isConnected || isConnecting)) || !!query,
-        depth: query ? 0 : 1,
+        depth: query ? 0 : CONNECTION_CHILD_DEPTH - 1,
         match: matchesById.get(conn.id)?.match ?? undefined,
       });
 
@@ -375,7 +385,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
 
           if (!isDbExpanded) continue;
           if (isLoading) {
-            rows.push({ type: 'db-loading', depth: 3 });
+            rows.push({ type: 'db-loading', depth: DATABASE_CHILD_DEPTH });
             continue;
           }
 
@@ -414,7 +424,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
                 dbName,
                 schemaName,
                 expanded: schemaExpanded,
-                depth: 3,
+                depth: DATABASE_CHILD_DEPTH,
               });
 
               if (schemaExpanded) {
@@ -424,7 +434,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
                   dbSessionId,
                   dbName,
                   schemaName,
-                  4,
+                  DATABASE_CHILD_DEPTH + 1,
                   conn.databaseType,
                   objectFilter,
                 );
@@ -437,7 +447,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
               dbSessionId,
               dbName,
               undefined,
-              3,
+              DATABASE_CHILD_DEPTH,
               conn.databaseType,
               objectFilter,
             );
@@ -464,7 +474,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
         if (!isDbExpanded) continue;
 
         if (schemaData.loading && schemaData.tables.length === 0) {
-          rows.push({ type: 'db-loading', depth: 3 });
+          rows.push({ type: 'db-loading', depth: DATABASE_CHILD_DEPTH });
           continue;
         }
 
@@ -493,7 +503,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
               dbName,
               schemaName,
               expanded: schemaExpanded,
-              depth: 3,
+              depth: DATABASE_CHILD_DEPTH,
             });
 
             if (schemaExpanded) {
@@ -503,7 +513,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
                 dbSessionId,
                 dbName,
                 schemaName,
-                4,
+                DATABASE_CHILD_DEPTH + 1,
                 conn.databaseType,
                 objectFilter,
               );
@@ -516,7 +526,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
             dbSessionId,
             dbName,
             undefined,
-            3,
+            DATABASE_CHILD_DEPTH,
             conn.databaseType,
             objectFilter,
           );

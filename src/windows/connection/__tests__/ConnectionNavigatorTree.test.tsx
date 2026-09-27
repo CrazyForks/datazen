@@ -3868,7 +3868,8 @@ describe('ConnectionNavigatorTree ARIA tree shape audit', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-item-name="users"]')).not.toBeNull();
     });
-    // Still connected after the click, but now a leaf — hence the re-resolve.
+    // `branch` is still in the document after the click, but it now renders a
+    // different row than the one that was clicked — hence the re-resolve.
     const expanded = (await findByText('public')).closest('[data-tree-node="namespace"]')!;
     expect(expanded.getAttribute('aria-expanded')).toBe('true');
   });
