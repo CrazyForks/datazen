@@ -28,7 +28,6 @@ const HEIGHT = 1080;
 const FPS = 30;
 const SLIDE_SECONDS = 1.4; // per slide before transition overlap
 const FADE_SECONDS = 0.45; // cross-dissolve between consecutive slides
-const ZOOM_END = 1.06; // subtle Ken Burns; more than this makes UI text swim
 
 const MP4 = join(OUT_DIR, 'demo-recording.mp4');
 const WEBM = join(OUT_DIR, 'demo-recording.webm');
@@ -83,26 +82,24 @@ if (wrong.length) {
 
 const work = mkdtempSync(join(tmpdir(), 'datazen-video-'));
 const slideFrames = Math.round(SLIDE_SECONDS * FPS);
-const zoomStep = (ZOOM_END - 1) / slideFrames;
 
 try {
-  // ── Stage 1: one Ken Burns segment per frame ────────────────────────────
+  // ── Stage 1: one static segment per frame ───────────────────────────────
+  // No Ken Burns on purpose: a slow push on a UI screenshot makes the text
+  // swim and softens the very thing the shot is meant to show. Static frames,
+  // cross-dissolve only.
   const segments = sources.map((name, i) => {
     const out = join(work, `seg-${String(i).padStart(3, '0')}.mp4`);
-    // Upscale hard before zoompan: sampling straight from a 1920-wide source
-    // makes the pan visibly step, and the crop is taken from the large buffer.
+    // Sources are already exactly 1920x1080 (checked above), so this only has
+    // to pin the pixel format and rate that xfade requires of every input.
+    // `-loop 1 -framerate 30 -t` is what HOLDS the still for the slide: with
+    // no zoompan to expand one input frame into `d` frames, a bare PNG input
+    // yields a single frame and the whole chain collapses to 0.1s.
     run(
       [
-        '-y', '-i', join(SRC_DIR, name),
-        '-vf',
-        // One input frame only: zoompan's `d` counts output frames *per input
-        // frame*, so `-loop`/`-t` here would multiply the slide length.
-        `scale=${WIDTH * 4}:-1,zoompan=z='min(1+${zoomStep.toFixed(7)}*on,${ZOOM_END})':d=${slideFrames}` +
-          `:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=${WIDTH}x${HEIGHT}:fps=${FPS},` +
-          // zoompan reconciles its non-integer crop with a sample-aspect-ratio
-          // (3297:3296), which lands in the file as a 1099:618 display ratio
-          // instead of 16:9. Square pixels are what a screen recording has.
-          `setsar=1,format=yuv420p`,
+        '-y', '-loop', '1', '-framerate', String(FPS), '-t', String(SLIDE_SECONDS),
+        '-i', join(SRC_DIR, name),
+        '-vf', 'setsar=1,format=yuv420p',
         '-frames:v', String(slideFrames),
         '-c:v', 'libx264', '-preset', 'veryslow', '-crf', '18',
         '-r', String(FPS), out,
@@ -150,7 +147,8 @@ try {
   // ── Stage 3: WebM twin ──────────────────────────────────────────────────
   run(['-y', '-i', MP4, '-c:v', 'libvpx-vp9', '-crf', '32', '-b:v', '0', '-row-mt', '1', '-pix_fmt', 'yuv420p', WEBM], 'Encoding WebM/VP9');
 
-  // ── Stage 4: poster from a settled frame, not the zoom's first tick ────
+  // ── Stage 4: poster from a clean frame, clear of any cross-dissolve ─────
+  // 2.5s lands inside slide 1, not inside a transition.
   run(['-y', '-ss', '2.5', '-i', MP4, '-frames:v', '1', '-q:v', '2', POSTER], 'Writing poster');
 
   console.log(`\nWrote ${MP4}`);
