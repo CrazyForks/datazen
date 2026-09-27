@@ -73,7 +73,96 @@ jobs:
         continue-on-error: true
 
       - name: Frontend unit tests
+        # ── Explicit, acknowledged absence of the Pro package ───────────────
+        # `packages/pro-extensions/sql-editor-pro` is a SEPARATE git repository
+        # that the host gitignores (`.gitignore:68`). This job checks out the
+        # host repo only, so the Pro is structurally absent here — it is not
+        # fetched, not built, not tested.
+        #
+        # THREE host guards consult `DATAZEN_ALLOW_MISSING_PRO`, and they share
+        # one verdict implementation (`proVerdict()` in scripts/pro-seam-gate.mjs):
+        #   1. scripts/__tests__/pack-ep.test.ts        (Pro packaging checks)
+        #   2. src/components/sql-editor/__tests__/proSettingsSeam.test.ts
+        #   3. scripts/pro-seam-gate.mjs                 (the seam gate)
+        # They are fail-by-default precisely so that an unrunnable seam is a
+        # LOUD, named failure rather than a quiet green.
+        #
+        # ⚠️ A FOURTH Pro-dependent guard exists and does NOT consult this
+        # variable: `packages/extension-points/src/__tests__/security.test.ts`.
+        # It is NOT part of the opt-out family and must not be described as such.
+        #
+        # This step is therefore NOT green in this environment. Enumerating every
+        # known failure source, measured in this repo under exactly these
+        # conditions (Pro absent, DATAZEN_ALLOW_MISSING_PRO=1):
+        #
+        #   1. packages/extension-points/src/__tests__/security.test.ts
+        #      — 4 failures, each `ENOENT ... /sql-editor-pro/manifest.json`,
+        #      all inside its `EXTENSION_POINTS_VERSION 1.1.0 contract` block.
+        #      It never reads the opt-out, so this env block cannot affect it.
+        #      PRE-EXISTING: untouched by this change, and it is the sole reason
+        #      the step is red. Run: 4 failed | 4872 passed | 9 skipped (4885).
+        #   2. Load-sensitive suites are known flakes and can add unrelated
+        #      failures; a reported instance of `sqlSnippetsLifecycleJourney` did
+        #      NOT reproduce in the measurement above. Treat any failure not
+        #      listed in (1) as NEW until proven otherwise.
+        #   3. The new Pro guards themselves: 0 failures, 9 skips (2 in
+        #      pack-ep.test.ts, 7 in proSettingsSeam.test.ts). They are green here
+        #      only because the absence is acknowledged — `state=ABSENT` means
+        #      NOT TESTED, not passed.
+        #
+        # So: this step being red does not by itself tell you whether (1) or (3)
+        # is at fault. For the Pro guards' own verdict, read the dedicated step
+        # below — that one is attributable on its own.
+        #
+        # Setting this variable does NOT mean "the Pro checks passed". It means
+        # "this checkout knowingly has no Pro repo" — the guards short-circuit
+        # and the Pro-side coverage stays UNTESTED here. The Pro's own suite is
+        # not run by any CI job; run it locally with `pnpm test:pro-seam`.
+        #
+        # ⚠️ REMOVE this env block the moment CI can obtain the Pro checkout
+        # (a checkout step / submodule / artifact fetch). With the Pro present
+        # these guards must run and must be green — do not leave the opt-out
+        # behind, or CI will report coverage it does not have.
+        env:
+          DATAZEN_ALLOW_MISSING_PRO: '1'
         run: pnpm test:unit
+
+      - name: Pro-dependent host guards (dedicated, independently attributable)
+        # Runs ONLY the Pro-dependent guard files, in their own process, so their
+        # verdict is separable from every pre-existing red in `test:unit`.
+        # Without this step, "the Pro guards went red" and "something else went
+        # red" were the same signal (both exit 1), and a real Pro regression would
+        # have been indistinguishable from the 4 `security.test.ts` ENOENTs.
+        #
+        # READ THE SUMMARY LINE, NOT JUST THE EXIT CODE. It ends with:
+        #     PRO-GUARDS state=<ABSENT|PARTIAL|PRESENT> verdict=<...> exit=<n>
+        # A green step with `state=ABSENT` means the Pro guards were NOT RUN —
+        # that is "not tested", NOT "passed".
+        #
+        # ⚠️ REMOVE the env block below together with the ones above as soon as
+        # CI can obtain the Pro checkout. Then `state=PRESENT` and this step
+        # becomes a real gate that must go green.
+        env:
+          DATAZEN_ALLOW_MISSING_PRO: '1'
+        run: pnpm test:pro-guards
+
+      - name: Cross-repo seam gate (Pro) — reported, not run
+        # Runs `scripts/pro-seam-gate.mjs`, which would execute the Pro
+        # typecheck + suite. This job has no Pro checkout, so with the opt-out it
+        # prints a loud SKIPPED banner and exits 0.
+        #
+        # The step exists so CI does NOT stay silent about the gap: an engineer
+        # reading the log can see that the Pro seam was untested here, rather
+        # than inferring "all green" from an absence of failures. Without this
+        # step the coverage hole is invisible by construction — which is the
+        # failure mode that let BUG-003 and G1 through.
+        #
+        # ⚠️ REMOVE the env block below together with the one on the unit-test
+        # step as soon as CI can obtain the Pro checkout. Then this step becomes
+        # a real gate and must go green.
+        env:
+          DATAZEN_ALLOW_MISSING_PRO: '1'
+        run: pnpm test:pro-seam
 
       - name: Check site changes
         id: site-changes
