@@ -9,6 +9,16 @@
  * (`globalThis.__DATAZEN_HOST__`, populated by the host entry) BEFORE signing —
  * signatures always cover the exact bytes that ship.
  *
+ * Two gates guard the rewrite, and they are NOT equivalent:
+ *   1. `rewriteEpImportsToHostGlobals` is an INPUT gate — it only sees imports
+ *      still bare when it runs. An extension whose own build (the Pro
+ *      `renderChunk` plugin) rewrote them first leaves it nothing to reject, so
+ *      named/default/namespace imports of an unmapped package sail through with
+ *      an empty `rewrote bare imports:` log (BUG-002).
+ *   2. `assertHostGlobalKeysAllowed` is the ARTIFACT gate and the real one. It
+ *      reads the bytes about to be signed, so no earlier rewrite can hide a key
+ *      from it, and it fails the build before any signature is issued.
+ *
  * Usage:
  *   node scripts/pack-ep.mjs --extension=sql-editor-pro
  *   node scripts/pack-ep.mjs --extension=sql-editor-pro --mode=dzx --out=artifacts/
@@ -297,6 +307,198 @@ export function rewriteEpBundleFile(bundlePath, opts = {}) {
   return { bundlePath, rewritten };
 }
 
+export const HOST_TABLE_SOURCE = resolve(ROOT, 'src/main.tsx');
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Read the key set of the `__DATAZEN_HOST__` table from the host entry module.
+ *
+ * This is the **runtime truth** the invariant is measured against. The table has
+ * two entry shapes — quoted specifiers (`'@codemirror/view': cmView`) and bare
+ * identifiers (`react: reactAll`) — so a quoted-only parser would silently drop
+ * `react` and go blind in exactly the case it exists to catch. An entry line
+ * matching neither shape throws: a parser that shrugs off what it cannot read
+ * is not a guard. A missing table is likewise fatal, never a soft "assume
+ * everything is allowed".
+ */
+export function readHostGlobalTableKeys(sourcePath = HOST_TABLE_SOURCE) {
+  const source = readFileSync(sourcePath, 'utf8');
+  const table = source.match(/__DATAZEN_HOST__\s*=\s*\{([\s\S]*?)\n\};/);
+  if (!table) {
+    throw new Error(
+      `[pack-ep] ${HOST_GLOBAL_NAME} table literal not found in ${sourcePath} — ` +
+        `the artifact key invariant cannot be verified`,
+    );
+  }
+  const keys = [];
+  for (const rawLine of table[1].split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('//') || line.startsWith('/*') || line.startsWith('*')) {
+      continue;
+    }
+    const entry = line.match(/^(?:(['"])((?:[^'"\\]|\\.)*)\1|([A-Za-z_$][\w$]*))\s*:\s*.+?,?$/);
+    if (!entry) {
+      throw new Error(
+        `[pack-ep] unparsable ${HOST_GLOBAL_NAME} table entry "${line}" in ${sourcePath} — ` +
+          `the artifact key invariant cannot be verified`,
+      );
+    }
+    keys.push(entry[3] ?? entry[2]);
+  }
+  return keys;
+}
+
+function unquoteHostKey(raw) {
+  try {
+    return JSON.parse(`"${raw.replace(/"/g, '\\"')}"`);
+  } catch {
+    // An exotic escape the allow-list will not match, so the check below fails
+    // it loudly. Never guess a key and let it through.
+    return raw;
+  }
+}
+
+/**
+ * Every `__DATAZEN_HOST__` key the shipped bytes claim, in **any** form.
+ *
+ * Two forms occur in real artifacts and BOTH must be recognised, because a
+ * scanner blind to either reports "0 keys" on a bundle that uses it and passes
+ * vacuously:
+ *   - `__DATAZEN_HOST__["react"]` — bracket form, in both quote styles, because
+ *     the pack-time rewriter emits `JSON.stringify` output (double) while the
+ *     Pro `renderChunk` emits single.
+ *   - `__DATAZEN_HOST__.react` — dot form, present in the shipped Pro bundle for
+ *     `react`: a bracket-only scanner would not even see the React binding the
+ *     bundle actually loads, and a future `__DATAZEN_HOST__.search` would ship
+ *     signed and crash on load exactly like the bracket-form bypass.
+ */
+function scanHostGlobalRefs(code, globalName = HOST_GLOBAL_NAME) {
+  const name = escapeRegExp(globalName);
+  // Named groups, not positional ones: a replacer's 3rd positional argument is
+  // the match *offset* the moment a capture disappears, so reshaping this regex
+  // would silently feed indexes in as keys. An absent named group is undefined.
+  const reference = new RegExp(
+    `${name}\\s*\\[\\s*(?<q>["'])(?<raw>(?:[^"'\\\\]|\\\\.)*)\\k<q>\\s*\\]` +
+      `|${name}\\s*\\.\\s*(?<dot>[A-Za-z_$][\\w$]*)`,
+    'g',
+  );
+  const keys = new Set();
+  const masked = code.replace(reference, (full, ...rest) => {
+    const groups = rest[rest.length - 1] ?? {};
+    keys.add(groups.dot ?? unquoteHostKey(groups.raw ?? ''));
+    return ' '.repeat(full.length);
+  });
+  const unverifiable = (masked.match(new RegExp(`\\b${name}\\b`, 'g')) ?? []).length;
+  return { keys: [...keys].sort(), unverifiable };
+}
+
+export function collectHostGlobalKeys(code, { globalName = HOST_GLOBAL_NAME } = {}) {
+  return scanHostGlobalRefs(code, globalName).keys;
+}
+
+/**
+ * Count references to the host table that name no statically known key (a
+ * computed subscript or a whole-table read). Such a reference cannot be checked
+ * against the host table by construction — the gate fails closed on it rather
+ * than waving it through.
+ */
+export function countUnverifiableHostRefs(code, { globalName = HOST_GLOBAL_NAME } = {}) {
+  return scanHostGlobalRefs(code, globalName).unverifiable;
+}
+
+function hostKeyError(violations, { globalName, label }) {
+  const lines = [
+    `[pack-ep] artifact host-key invariant violated in ${label}:`,
+    `[pack-ep] the shipped bytes resolve shared modules through ${globalName}[...],`,
+    `[pack-ep] and at least one key is not a host singleton. Refusing to sign.`,
+  ];
+  for (const spec of violations.unmapped) {
+    lines.push(
+      `[pack-ep]   - unmapped host table key "${spec}" (absent from HOST_SHARED_MODULES ` +
+        `and from the ${globalName} table in src/main.tsx)`,
+    );
+  }
+  for (const spec of violations.allowListedOnly) {
+    lines.push(
+      `[pack-ep]   - host table key "${spec}" is in HOST_SHARED_MODULES but the ` +
+        `${globalName} table in src/main.tsx never publishes it`,
+    );
+  }
+  if (violations.unverifiable > 0) {
+    lines.push(
+      `[pack-ep]   - ${violations.unverifiable} non-literal ${globalName} access(es) ` +
+        `(computed key or whole-table read) cannot be verified against the host table`,
+    );
+  }
+  lines.push(
+    `[pack-ep] fix: add the specifier to HOST_SHARED_MODULES (scripts/pack-ep.mjs) AND to ` +
+      `the ${globalName} table in src/main.tsx, or drop the import.`,
+  );
+  return new Error(lines.join('\n'));
+}
+
+/**
+ * BUG-002 — the artifact-level host key invariant.
+ *
+ * The narrow allow-list gate above is an *input* gate: it only sees what is
+ * still a bare import when the pack-time rewrite runs. The Pro build's own
+ * `renderChunk` runs first and already rewrites every `/^@codemirror\//`
+ * import — named, default and namespace alike — into `__DATAZEN_HOST__['…']`
+ * without consulting the allow-list, so by the time the input gate runs there
+ * is nothing left to reject and its `rewrote bare imports:` log is permanently
+ * empty. This gate reads the shipped bytes instead, so no earlier rewrite can
+ * hide a key from it.
+ *
+ * Measured against two lists, because they answer different questions:
+ * `HOST_SHARED_MODULES` is the declared intent, and the `src/main.tsx` table is
+ * what actually exists at runtime. Membership is **exact** — never a prefix
+ * rule, which would let `react-anything` through and turn the allow-list into
+ * decoration while the enumerated `react/jsx-runtime` sub-path keeps working.
+ * No silent degradation: a violation is a build failure.
+ */
+export function assertHostGlobalKeysAllowed(
+  code,
+  {
+    modules = HOST_SHARED_MODULES,
+    hostTable = readHostGlobalTableKeys(),
+    globalName = HOST_GLOBAL_NAME,
+    label = 'bundle',
+  } = {},
+) {
+  const allowList = new Set(modules);
+  const host = new Set(hostTable);
+  const keys = collectHostGlobalKeys(code, { globalName });
+  const unmapped = [];
+  const allowListedOnly = [];
+  for (const key of keys) {
+    if (!allowList.has(key) && !host.has(key)) {
+      unmapped.push(key);
+    } else if (allowList.has(key) && !host.has(key)) {
+      allowListedOnly.push(key);
+    }
+  }
+  const unverifiable = countUnverifiableHostRefs(code, { globalName });
+  if (unmapped.length > 0 || allowListedOnly.length > 0 || unverifiable > 0) {
+    throw hostKeyError({ unmapped, allowListedOnly, unverifiable }, { globalName, label });
+  }
+  return keys;
+}
+
+/** Assert the invariant on the staged/packed bundle of a package tree. */
+export function assertHostGlobalKeysInTree(packageDir, opts = {}) {
+  const bundle = join(packageDir, 'dist/index.esm.js');
+  if (!existsSync(bundle)) {
+    throw new Error(`[pack-ep] cannot verify host keys: ${bundle} does not exist`);
+  }
+  return assertHostGlobalKeysAllowed(readFileSync(bundle, 'utf8'), {
+    ...opts,
+    label: opts.label ?? bundle,
+  });
+}
+
 export function parsePackArgs(argv = process.argv.slice(2)) {
   let extension = 'sql-editor-pro';
   let extensionDir = null;
@@ -399,6 +601,18 @@ export function stagePackageTree(sourceDir, targetDir, { log = console.log, rewr
     const { rewritten } = rewriteEpBundleFile(stagedBundle);
     log(`[pack-ep] rewrote bare imports to ${HOST_GLOBAL_NAME}: ${rewritten.sort().join(', ')}`);
   }
+  // BUG-002: the input gate above only sees imports still bare at rewrite time.
+  // The extension's own build may have rewritten them first, leaving nothing to
+  // reject — so verify the bytes we are about to sign, not the bytes we read.
+  // Runs BEFORE signEpPackage on purpose: an unsatisfiable bundle must never
+  // acquire a signature, or the crash becomes unauditable downstream.
+  const shippedKeys = assertHostGlobalKeysInTree(targetDir, {
+    label: `staged bundle ${targetDir}/dist/index.esm.js`,
+  });
+  log(
+    `[pack-ep] verified ${shippedKeys.length} ${HOST_GLOBAL_NAME} key(s) against the host ` +
+      `table + allow-list: ${shippedKeys.join(', ') || '(none)'}`,
+  );
   // NOTE: dist/index.esm.js.map is intentionally NOT staged — the import
   // rewrite invalidates its mappings. Debug against extension sources instead.
   syncLocales(sourceDir, targetDir, { log });
@@ -425,8 +639,14 @@ export function listZipEntries(rootDir, currentDir = rootDir, acc = {}) {
   return acc;
 }
 
-export function createDzxArchive(packageDir, outFile) {
+export function createDzxArchive(packageDir, outFile, opts = {}) {
   assertPackageLayout(packageDir);
+  // Defence in depth for the CI/prebuilt handoff: a tree that reached the
+  // archiver by any other route still must not ship a key the host lacks.
+  assertHostGlobalKeysInTree(packageDir, {
+    label: `archive source ${packageDir}/dist/index.esm.js`,
+    ...opts,
+  });
   const entries = listZipEntries(packageDir);
   const zipped = zipSync(entries, { level: 9 });
   mkdirSync(dirname(outFile), { recursive: true });

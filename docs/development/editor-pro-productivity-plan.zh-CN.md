@@ -387,17 +387,36 @@ SELECT ...
 
 ### G1. 补齐 Pro 共享运行时模块
 
-**2026-08-18 实证结论（已构建验证，非读码推断）** —— G1 的失败模式是**构建期硬报错**，不是静默降级：
+**2026-08-18 原始实证结论 —— ⚠️ 已被 2026-09-27 BUG-002 实证推翻（对具名/默认/命名空间导入不成立），保留原文以留痕：**
 
-Pro `vite.config.ts:11-12` 的 `isBareExternal = BARE_SPECIFIERS.has(s) || /^@codemirror\//.test(s)` 是**宽正则**，任意 `@codemirror/*` 都会被 externalize；
-而 `pack-ep.mjs:63-73` 的 `HOST_SHARED_MODULES` 是**窄白名单**，`rewriteEpImportsToHostGlobals` 遇到不在白名单的裸导入会 `throw unmappedError`。
+> G1 的失败模式是**构建期硬报错**，不是静默降级：
+> Pro `vite.config.ts:11-12` 的 `isBareExternal = BARE_SPECIFIERS.has(s) || /^@codemirror\//.test(s)` 是**宽正则**，任意 `@codemirror/*` 都会被 externalize；
+> 而 `pack-ep.mjs` 的 `HOST_SHARED_MODULES` 是**窄白名单**，`rewriteEpImportsToHostGlobals` 遇到不在白名单的裸导入会 `throw unmappedError`。
+> ⇒ Pro 侧一旦 `import { codeFolding } from '@codemirror/language'`，构建必然在 `pack-ep` 阶段失败。
 
-⇒ Pro 侧一旦 `import { codeFolding } from '@codemirror/language'`，构建必然在 `pack-ep` 阶段失败，并打印
-`[pack-ep] unmapped bare import "@codemirror/language" — add it to HOST_SHARED_MODULES and the host __DATAZEN_HOST__ table in src/main.tsx`。
+**2026-09-27 更正（BUG-002，Track A Tester 实证 + 本轨复核复现）** —— 上面的推理漏掉了一个**执行顺序**前提：`rewriteEpImportsToHostGlobals` 是**输入闸门**，只看「跑到 pack-ep 改写那一刻时还是不是裸导入」。而 Pro 侧 `vite.config.ts` 的 `renderChunk`（`enforce: 'post'`）**先**把任何匹配宽正则的裸导入改写成 `__DATAZEN_HOST__['…']`、**且完全不查白名单**。等窄闸门运行时输入已被清空 —— 日志行 `rewrote bare imports:` **恒为空字符串**，这就是旁路的指纹。
 
-**这个"宽 vs 窄"的不对称是刻意设计的探针，不要抹平**：宽正则保证任何新 CM 包都逃不掉检查，窄白名单强制你逐个显式确认。**禁止**为了省事把 `/^@codemirror\//` 直接塞进 `HOST_SHARED_MODULES` —— 那等于拆掉探针，探针拆掉后失败模式就退化成"第二份 `@codemirror/language` 被静默打包进 bundle"，正是最难查的身份分裂。
+| 导入形态 | Pro `renderChunk` 是否先改写 | 窄闸门是否还看得见 | 真实失败模式 |
+| --- | --- | --- | --- |
+| 副作用 `import '@codemirror/search'` | 否（不在四条改写规则内） | 看得见 | ✅ exit 1，硬失败 |
+| 具名 `import { foldGutter } from '@codemirror/search'` | 是 | **看不见** | ❌ **exit 0，签名照签** |
+| 默认 `import React from '…'` | 是 | **看不见** | ❌ 同上 |
+| 命名空间 `import * as ns from '…'` | 是 | **看不见** | ❌ 同上 |
 
-**当前基线实测**：两个白名单各 9 项且**完全一致**（`@datazen/extension-points` / `@datazen/ui` / `react` / `react-dom` / `react/jsx-runtime` / `@codemirror/{state,view,lint,autocomplete}`），同步不变量成立。产物实际引用 6 键，是宿主的真子集 ⇒ 现版本能跑。
+> 具名导入旁路后，产物里出现宿主表没有的键，运行期解构得 `undefined` → EP 加载即 TypeError，**且带着一份合法签名**。
+
+**真正的闸门是产物级不变量，不是那个输入闸门。** 本轨已在 `pack-ep.mjs` 落地（`assertHostGlobalKeysAllowed` / `assertHostGlobalKeysInTree`）：打包完成后扫描**将要签名的字节**里全部 `__DATAZEN_HOST__` 键，断言其集合 ⊆ 宿主表，否则**在签发签名之前**硬失败并 exit 非 0。无论 Pro 侧用什么正则、先后改写几次，产物里出现宿主表没有的键都会被抓住，且**不静默降级**（宁可构建失败）。
+
+扫描器必须同时认得**两种形态**，否则又是一道空转的闸门（实测两种都真实出现在已发布产物里）：
+
+- 括号式 `__DATAZEN_HOST__["@codemirror/view"]`（单双引号两种字面量都要匹配）
+- **点号式 `__DATAZEN_HOST__.react`** —— 已发布 Pro 产物用它取 React。只认括号的扫描器在该产物上会**少算 `react` 这一键**，未来的 `__DATAZEN_HOST__.search` 会带着签名出厂。
+
+比对基准取**宿主表 `src/main.tsx` 的实际键集合**（运行期真相）与 `HOST_SHARED_MODULES`（意图声明）**两份**：只认白名单会漏掉「声明了但宿主从不发布」的键（同样是运行期 `undefined`），只认宿主表则失去窄白名单的显式确认语义。成员判断必须是**精确匹配**，禁止前缀规则（否则 `react-anything` 一并放行，白名单退化成装饰，而 `react/jsx-runtime` 仍能通过、看起来一切正常）。
+
+**"宽 vs 窄"的不对称本身仍是刻意设计的探针，不要抹平**：宽正则保证任何新 CM 包都逃不掉检查，窄白名单强制你逐个显式确认。**禁止**为了省事把 `/^@codemirror\//` 直接塞进 `HOST_SHARED_MODULES` —— 那等于拆掉探针，探针拆掉后失败模式就退化成"第二份 `@codemirror/language` 被静默打包进 bundle"，正是最难查的身份分裂。
+
+**当前基线实测（2026-09-27 复核）**：两个白名单各 11 项且**完全一致**（`@datazen/extension-points` / `@datazen/ui` / `react` / `react-dom` / `react/jsx-runtime` / `@codemirror/{state,view,lint,autocomplete,language,commands}`），同步不变量成立，且 `HOST_SHARED_MODULES ⊆ 宿主表` 的子集不变式亦成立。已发布 Pro 产物实际引用 **7 键**（`@codemirror/{lint,state,view}`、`@datazen/extension-points`、`@datazen/ui`、`react`、`react/jsx-runtime`），是宿主的真子集 ⇒ 现版本能跑。
 
 **改动清单（两处必须同批）**：
 1. `src/main.tsx:45-55`：`__DATAZEN_HOST__` 增加 `@codemirror/language`、`@codemirror/commands`。

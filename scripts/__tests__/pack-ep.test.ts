@@ -6,7 +6,10 @@ import { join } from 'path';
 import { unzipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import {
+  assertHostGlobalKeysAllowed,
   assertPackageLayout,
+  collectHostGlobalKeys,
+  countUnverifiableHostRefs,
   createDzxArchive,
   dzxFileName,
   HOST_GLOBAL_NAME,
@@ -14,6 +17,7 @@ import {
   listZipEntries,
   packEp,
   parsePackArgs,
+  readHostGlobalTableKeys,
   readManifestVersion,
   REQUIRED_PACKAGE_PATHS,
   ROOT,
@@ -209,6 +213,18 @@ describe('pack-ep integration with sql-editor-pro (when present)', () => {
     expect(Object.keys(entries)).toEqual(
       expect.arrayContaining(['manifest.json', 'dist/index.esm.js', 'signature.sig']),
     );
+
+    // Per-key evidence that the shipped artifact satisfies the invariant,
+    // read back out of the archive rather than out of the staging directory.
+    const shippedBundle = Buffer.from(entries['dist/index.esm.js']).toString('utf8');
+    const shippedKeys = collectHostGlobalKeys(shippedBundle);
+    const published = new Set(readHostGlobalTableKeys());
+    expect(shippedKeys.filter((key) => !published.has(key))).toEqual([]);
+    expect(shippedKeys.filter((key) => !HOST_SHARED_MODULES.includes(key))).toEqual([]);
+    // A zero-key artifact would satisfy the filter vacuously — pin the shape so
+    // a scanner that quietly stopped matching shows up as a red, not a pass.
+    expect(shippedKeys.length).toBeGreaterThan(0);
+    expect(countUnverifiableHostRefs(shippedBundle)).toBe(0);
 
     rmSync(outDir, { recursive: true, force: true });
   }, 120_000);
@@ -463,6 +479,21 @@ describe('host shared module registry (G1 anti-drift guard)', () => {
     expect([...hostTableKeys].sort()).toEqual([...HOST_SHARED_MODULES].sort());
   });
 
+  it('every allow-listed specifier is actually published by the host table', () => {
+    // The subset direction is the one that costs a user a crash: an entry that
+    // exists only in the declaration rewrites to `__DATAZEN_HOST__['spec']`,
+    // the host never hands that key out, and the EP dies on load with a signed
+    // artifact. The reverse direction (a published key nothing imports) is dead
+    // weight, not a crash, so the subset assertion is the load-bearing half.
+    const published = new Set(hostTableKeys);
+    const declaredOnly = HOST_SHARED_MODULES.filter((spec) => !published.has(spec));
+    expect(
+      declaredOnly,
+      `HOST_SHARED_MODULES declares ${declaredOnly.join(', ')} but src/main.tsx never ` +
+        `publishes them — a Pro import of those would ship signed and crash on load`,
+    ).toEqual([]);
+  });
+
   it('rewrites a Pro import of the newly shared modules through the host table', () => {
     const { code, rewritten } = rewriteEpImportsToHostGlobals(
       [
@@ -602,4 +633,299 @@ describe('externalize / allow-list asymmetry probe (G1 red line)', () => {
       }
     },
   );
+});
+
+/**
+ * BUG-002 — artifact-level host key invariant.
+ *
+ * The narrow allow-list gate (`rewriteEpImportsToHostGlobals`) only ever sees
+ * the input *of the pack-time rewrite*. The Pro build's own `renderChunk` runs
+ * FIRST and already rewrites every `/^@codemirror\//` import — named, default
+ * and namespace alike — into `globalThis.__DATAZEN_HOST__['…']` without ever
+ * consulting the allow-list. By the time the host gate runs, there is no bare
+ * import left to reject: the log line `rewrote bare imports:` is permanently
+ * empty. An unmapped key therefore shipped signed and blew up at load time
+ * (`const { foldGutter } = undefined`).
+ *
+ * These cases exercise the artifact, not the rewrite input, because that is
+ * the only layer the bypass cannot reach. Side-effect imports already hard-failed
+ * (the host gate's regex does match them), which is exactly why the defect hid
+ * for so long: the control group works, the named-import group does not.
+ */
+describe('[bug-002] artifact host-key invariant', () => {
+  /**
+   * A bundle shaped like the Pro `renderChunk` output: bare specifiers are
+   * already `__DATAZEN_HOST__` member accesses by the time pack-ep sees them.
+   * `quote` mirrors the Pro plugin (single) vs the pack-ep rewriter (double).
+   */
+  function writeHostGlobalBundle(root: string, specs: string[], quote: "'" | '"' = "'") {
+    const q = quote;
+    const lines = specs.map(
+      (spec, i) => `const { fn${i} } = globalThis.${HOST_GLOBAL_NAME}[${q}${spec}${q}];`,
+    );
+    writeFixtureExtension(root);
+    writeFileSync(
+      join(root, 'dist/index.esm.js'),
+      `${lines.join('\n')}\nexport function activate() { return [${specs
+        .map((_, i) => `fn${i}`)
+        .join(', ')}]; }\n`,
+    );
+  }
+
+  const UNMAPPED = '@codemirror/search';
+
+  it('collects host keys from both quote styles the two rewriters emit', () => {
+    const code = [
+      `const a = globalThis.${HOST_GLOBAL_NAME}["@codemirror/state"];`,
+      `const b = globalThis.${HOST_GLOBAL_NAME}['@codemirror/view'];`,
+      `const c = globalThis.${HOST_GLOBAL_NAME}['@codemirror/state'];`,
+    ].join('\n');
+    expect(collectHostGlobalKeys(code)).toEqual(['@codemirror/state', '@codemirror/view']);
+  });
+
+  it('collects the keys the pack-ep rewriter itself produces', () => {
+    const { code } = rewriteEpImportsToHostGlobals(
+      'import { a } from "@codemirror/language";\nimport * as ns from "react";\n',
+    );
+    expect(collectHostGlobalKeys(code)).toEqual(['@codemirror/language', 'react']);
+  });
+
+  it('assertHostGlobalKeysAllowed accepts a key set inside the allow-list', () => {
+    const code = `const a = globalThis.${HOST_GLOBAL_NAME}["react"];`;
+    expect(assertHostGlobalKeysAllowed(code)).toEqual(['react']);
+  });
+
+  it('assertHostGlobalKeysAllowed rejects an unmapped key in either quote style', () => {
+    expect(() => assertHostGlobalKeysAllowed(`const a = globalThis.${HOST_GLOBAL_NAME}['${UNMAPPED}'];`)).toThrow(
+      /unmapped host table key "@codemirror\/search"/,
+    );
+    expect(() => assertHostGlobalKeysAllowed(`const a = globalThis.${HOST_GLOBAL_NAME}["${UNMAPPED}"];`)).toThrow(
+      /unmapped host table key "@codemirror\/search"/,
+    );
+  });
+
+  it('assertHostGlobalKeysAllowed fails closed on a non-literal key', () => {
+    expect(() =>
+      assertHostGlobalKeysAllowed(`const a = globalThis.${HOST_GLOBAL_NAME}[someVar];`),
+    ).toThrow(/non-literal/);
+    // Reading the whole table claims no specific key but cannot be verified
+    // either — same discipline, so a future refactor cannot widen the hole.
+    expect(() => assertHostGlobalKeysAllowed(`const t = globalThis.${HOST_GLOBAL_NAME};`)).toThrow(
+      /non-literal/,
+    );
+  });
+
+  it('assertHostGlobalKeysAllowed honours a renamed host global', () => {
+    const code = `const a = globalThis.__DZ_OTHER__['@codemirror/state'];`;
+    expect(() => assertHostGlobalKeysAllowed(code, { globalName: '__DZ_OTHER__' })).not.toThrow();
+    // A different global's keys must never be counted as ours — and code that
+    // never touches our table claims no keys, so it passes with an empty set.
+    expect(assertHostGlobalKeysAllowed(code)).toEqual([]);
+  });
+
+  it('collects dot-form host keys, not just bracket form', () => {
+    // The shipped Pro bundle resolves React through `__DATAZEN_HOST__.react`.
+    // A bracket-only scanner reports zero keys for it and lets any future
+    // `__DATAZEN_HOST__.search` through signed, so the dot form is a key claim
+    // like any other and must be checked.
+    expect(collectHostGlobalKeys(`const R = globalThis.${HOST_GLOBAL_NAME}.react.default;`)).toEqual([
+      'react',
+    ]);
+    expect(
+      assertHostGlobalKeysAllowed(`const R = globalThis.${HOST_GLOBAL_NAME}.react.default;`),
+    ).toEqual(['react']);
+    expect(() =>
+      assertHostGlobalKeysAllowed(`const S = globalThis.${HOST_GLOBAL_NAME}.search;`),
+    ).toThrow(/unmapped host table key "search"/);
+    // A dot chain resolves only its first segment; `.default` is a member of
+    // the React namespace, not a host table key.
+    expect(
+      collectHostGlobalKeys(`const D = globalThis.${HOST_GLOBAL_NAME}.react.default;`),
+    ).not.toContain('default');
+  });
+
+  it('rejects an allow-listed key the host entry table never publishes', () => {
+    // The second bypass class: the narrow list is a *declaration of intent*, the
+    // `src/main.tsx` table is what exists at runtime. An entry present only in
+    // the declaration is an `undefined` deref at load, exactly like an unmapped
+    // one — so it must be a hard failure too, not a silent pass.
+    const code = `const a = globalThis.${HOST_GLOBAL_NAME}["react-dom/server"];`;
+    expect(() =>
+      assertHostGlobalKeysAllowed(code, {
+        modules: [...HOST_SHARED_MODULES, 'react-dom/server'],
+      }),
+    ).toThrow(/is in HOST_SHARED_MODULES but the .* table in src\/main\.tsx never publishes it/);
+  });
+
+  it('matches keys exactly, never by prefix', () => {
+    // A prefix rule would admit `react-anything` and quietly make the
+    // enumerated allow-list decorative, while the real `react/jsx-runtime`
+    // sub-path keeps working and looks like the rule is fine.
+    const code = `const a = globalThis.${HOST_GLOBAL_NAME}["react-faux"];`;
+    expect(() => assertHostGlobalKeysAllowed(code)).toThrow(
+      /unmapped host table key "react-faux"/,
+    );
+    // The genuine sub-path is allow-listed as its own entry, and passes.
+    expect(
+      assertHostGlobalKeysAllowed(`const a = globalThis.${HOST_GLOBAL_NAME}["react/jsx-runtime"];`),
+    ).toEqual(['react/jsx-runtime']);
+  });
+
+  it('reads the real host entry table and finds 11 published keys', () => {
+    const keys = readHostGlobalTableKeys();
+    expect(keys).toHaveLength(11);
+    expect(keys).toContain('react');
+    expect(keys).toContain('@codemirror/commands');
+  });
+
+  it('fails closed when the host entry table cannot be read', () => {
+    expect(() => readHostGlobalTableKeys(join(ROOT, 'scripts/pack-ep.mjs'))).toThrow(
+      /artifact key invariant cannot be verified/,
+    );
+  });
+
+  // --- the mutation tests: the real gate, exercised through the real entry points ---
+
+  it('stagePackageTree refuses to sign a bundle holding an unmapped host key', () => {
+    const src = join(tmpdir(), `bug002-stage-src-${Date.now()}`);
+    const staged = join(tmpdir(), `bug002-stage-out-${Date.now()}`);
+    writeHostGlobalBundle(src, [UNMAPPED]);
+
+    expect(() => stagePackageTree(src, staged, { log: () => {} })).toThrow(
+      /unmapped host table key "@codemirror\/search"/,
+    );
+    // No signature may be issued for a bundle the host table cannot satisfy —
+    // a signed artifact is what makes the crash unauditable downstream.
+    expect(existsSync(join(staged, 'signature.sig'))).toBe(false);
+    rmSync(src, { recursive: true, force: true });
+    rmSync(staged, { recursive: true, force: true });
+  });
+
+  it.each([["'"] as const, ['"'] as const])(
+    'stagePackageTree catches an out-of-table key written with %s quotes',
+    (quote) => {
+      // A one-style scanner is a vacuous gate: it reports zero keys on an
+      // artifact written in the other style and passes. Both rewriters are in
+      // play (Pro `renderChunk` emits single quotes, pack-ep emits double), so
+      // both styles must independently trip the gate.
+      const src = join(tmpdir(), `bug002-quote-src-${Date.now()}`);
+      const staged = join(tmpdir(), `bug002-quote-out-${Date.now()}`);
+      writeHostGlobalBundle(src, [UNMAPPED], quote);
+      expect(() => stagePackageTree(src, staged, { log: () => {} })).toThrow(
+        /unmapped host table key "@codemirror\/search"/,
+      );
+      expect(existsSync(join(staged, 'signature.sig'))).toBe(false);
+      rmSync(src, { recursive: true, force: true });
+      rmSync(staged, { recursive: true, force: true });
+    },
+  );
+
+  it('stagePackageTree signs the very same shape once the key is allow-listed', () => {
+    const src = join(tmpdir(), `bug002-stage-ok-src-${Date.now()}`);
+    const staged = join(tmpdir(), `bug002-stage-ok-out-${Date.now()}`);
+    writeHostGlobalBundle(src, ['@codemirror/language']);
+
+    stagePackageTree(src, staged, { log: () => {} });
+    expect(existsSync(join(staged, 'signature.sig'))).toBe(true);
+    const bundle = readFileSync(join(staged, 'dist/index.esm.js'), 'utf8');
+    const shipped = collectHostGlobalKeys(bundle);
+    expect(shipped).toEqual(['@codemirror/language']);
+    for (const key of shipped) {
+      expect(HOST_SHARED_MODULES).toContain(key);
+    }
+    rmSync(src, { recursive: true, force: true });
+    rmSync(staged, { recursive: true, force: true });
+  });
+
+  it('packEp produces neither .dzx nor signature for an unmapped host key', () => {
+    const src = join(tmpdir(), `bug002-pack-src-${Date.now()}`);
+    const outDir = join(tmpdir(), `bug002-pack-out-${Date.now()}`);
+    mkdirSync(outDir, { recursive: true });
+    writeHostGlobalBundle(src, ['react', UNMAPPED]);
+
+    expect(() =>
+      packEp({
+        extension: 'fixture-ep',
+        extensionDir: src,
+        mode: 'dzx',
+        outDir,
+        skipBuild: true,
+        log: () => {},
+      }),
+    ).toThrow(/unmapped host table key "@codemirror\/search"/);
+    expect(existsSync(join(outDir, dzxFileName('fixture-ep', '9.9.9')))).toBe(false);
+    expect(existsSync(join(outDir, '.pack-ep-staging-fixture-ep/signature.sig'))).toBe(false);
+    rmSync(src, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it('stagePackageTree also refuses a tree whose bytes arrive pre-rewritten', () => {
+    // The CI/prebuilt handoff: `rewriteImports: false` means the bytes were
+    // already turned into host accesses by the extension's own build, so the
+    // input gate has nothing left to look at. The artifact gate is the only
+    // thing standing between that path and a signed, unloadable bundle.
+    const src = join(tmpdir(), `bug002-prebuilt-src-${Date.now()}`);
+    const staged = join(tmpdir(), `bug002-prebuilt-staged-${Date.now()}`);
+    writeFixtureExtension(src);
+    writeFileSync(
+      join(src, 'dist/index.esm.js'),
+      `const { foldGutter } = globalThis.${HOST_GLOBAL_NAME}['${UNMAPPED}'];\nexport { foldGutter };\n`,
+    );
+    expect(() =>
+      stagePackageTree(src, staged, { log: () => {}, rewriteImports: false }),
+    ).toThrow(/unmapped host table key "@codemirror\/search"/);
+    expect(existsSync(join(staged, 'signature.sig'))).toBe(false);
+    rmSync(src, { recursive: true, force: true });
+    rmSync(staged, { recursive: true, force: true });
+  });
+
+  it('createDzxArchive refuses to ship an already-staged tree with an unmapped key', () => {
+    // Defence in depth: `stagePackageTree` is the first gate, but a prebuilt
+    // tree handed straight to the archiver must not slip past it. Build the
+    // tree by hand so it genuinely never passed through the first gate.
+    const src = join(tmpdir(), `bug002-dzx-src-${Date.now()}`);
+    const staged = join(tmpdir(), `bug002-dzx-staged-${Date.now()}`);
+    const outDir = join(tmpdir(), `bug002-dzx-out-${Date.now()}`);
+    mkdirSync(outDir, { recursive: true });
+    writeFixtureExtension(src);
+    writeFileSync(
+      join(src, 'dist/index.esm.js'),
+      `const { foldGutter } = globalThis.${HOST_GLOBAL_NAME}['${UNMAPPED}'];\nexport { foldGutter };\n`,
+    );
+    cpSync(join(src, 'manifest.json'), join(staged, 'manifest.json'));
+    mkdirSync(join(staged, 'dist'), { recursive: true });
+    cpSync(join(src, 'dist/index.esm.js'), join(staged, 'dist/index.esm.js'));
+    signEpPackage({ packageDir: staged });
+    expect(existsSync(join(staged, 'signature.sig'))).toBe(true);
+
+    const outFile = join(outDir, dzxFileName('fixture-ep', '9.9.9'));
+    expect(() => createDzxArchive(staged, outFile)).toThrow(
+      /unmapped host table key "@codemirror\/search"/,
+    );
+    expect(existsSync(outFile)).toBe(false);
+    rmSync(src, { recursive: true, force: true });
+    rmSync(staged, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it('keeps the side-effect-import control green (the gate itself is not broken)', () => {
+    // The group that already worked must keep working — a fix that only turns
+    // everything red is not a fix.
+    expect(() =>
+      rewriteEpImportsToHostGlobals(`import '${UNMAPPED}';`),
+    ).toThrow(/unmapped bare side-effect import "@codemirror\/search"/);
+    const src = join(tmpdir(), `bug002-sideeffect-src-${Date.now()}`);
+    const staged = join(tmpdir(), `bug002-sideeffect-out-${Date.now()}`);
+    writeFixtureExtension(src);
+    writeFileSync(
+      join(src, 'dist/index.esm.js'),
+      `import '${UNMAPPED}';\nexport function activate() {}\n`,
+    );
+    expect(() => stagePackageTree(src, staged, { log: () => {} })).toThrow(
+      /unmapped bare side-effect import "@codemirror\/search"/,
+    );
+    expect(existsSync(join(staged, 'signature.sig'))).toBe(false);
+    rmSync(src, { recursive: true, force: true });
+    rmSync(staged, { recursive: true, force: true });
+  });
 });
