@@ -48,6 +48,20 @@ function isDatabaseOpen(
   return openDbs[dbSessionId]?.has(dbName) ?? false;
 }
 
+/**
+ * The depth every child of a connection is painted at — databases, namespace
+ * branches, and their loading placeholders alike.
+ *
+ * A connection is emitted at depth 1 beneath its section/group header, or at
+ * depth 0 when a search suppresses that header. Its children do not move with
+ * it: they always start here, so a search removes exactly one level of parent
+ * between a connection and its databases.
+ *
+ * `NavigatorTreeRow` reads this to keep `aria-level` pointing at the parent
+ * the user can actually see, so the two must change together.
+ */
+export const CONNECTION_CHILD_DEPTH = 2;
+
 export interface BuildNavigatorFlatRowsParams {
   grouped: { group: string; connections: ConnectionConfig[] }[];
   expandedGroups: Set<string>;
@@ -270,14 +284,14 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
       if ((!isConnected && !isConnecting) || (!isExpanded && !query)) continue;
 
       if (isConnecting) {
-        rows.push({ type: 'db-loading', depth: 2 });
+        rows.push({ type: 'db-loading', depth: CONNECTION_CHILD_DEPTH });
         continue;
       }
 
       const dbSessionId = entry!.dbSessionId!;
       const schemaData = schemas.get(dbSessionId);
       if (!schemaData) {
-        rows.push({ type: 'db-loading', depth: 2 });
+        rows.push({ type: 'db-loading', depth: CONNECTION_CHILD_DEPTH });
         continue;
       }
 
@@ -288,7 +302,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
         const treeEmpty = isLeaf(tree) || Object.keys(tree).length === 0;
         if (treeEmpty) {
           if (!query && (schemaData.loading || schemaData.ensuringCount > 0)) {
-            rows.push({ type: 'db-loading', depth: 2 });
+            rows.push({ type: 'db-loading', depth: CONNECTION_CHILD_DEPTH });
           }
           continue;
         }
@@ -298,7 +312,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
           tree,
           conn.id,
           dbSessionId,
-          2,
+          CONNECTION_CHILD_DEPTH,
           rows,
           expandedDbs,
           query,
@@ -311,7 +325,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
       if (meta?.isKeyValue) {
         const dbs = schemaData.databases;
         if (schemaData.loading && dbs.length === 0) {
-          rows.push({ type: 'db-loading', depth: 2 });
+          rows.push({ type: 'db-loading', depth: CONNECTION_CHILD_DEPTH });
         } else {
           const filteredDbs = query ? dbs.filter((d) => d.toLowerCase().includes(query)) : dbs;
           for (const dbName of filteredDbs) {
@@ -320,7 +334,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
               connectionId: conn.id,
               dbSessionId,
               dbName,
-              depth: 2,
+              depth: CONNECTION_CHILD_DEPTH,
               isSelected: false,
               dbCountsCommand: meta.dbCountsCommand,
             });
@@ -356,7 +370,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
             expanded: isDbExpanded,
             loading: isLoading,
             isOpen: isDatabaseOpen(expandedDbs, openDbs, dbSessionId, dbName, conn.id),
-            depth: 2,
+            depth: CONNECTION_CHILD_DEPTH,
           });
 
           if (!isDbExpanded) continue;
@@ -444,7 +458,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
           expanded: isDbExpanded,
           loading: schemaData.loading && schemaData.tables.length === 0,
           isOpen: isDatabaseOpen(expandedDbs, openDbs, dbSessionId, dbName, conn.id),
-          depth: 2,
+          depth: CONNECTION_CHILD_DEPTH,
         });
 
         if (!isDbExpanded) continue;

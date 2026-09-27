@@ -22,6 +22,7 @@ import { setDragPayload } from '../schema-tree/schemaTreeDrag';
 import { PINNED_GROUP_KEY, RECENT_GROUP_KEY } from '../../../lib/connectionLocator';
 import type { UnifiedRow } from './types';
 import { createDragGhost, depthPadding, namespaceLeafContext, removeDragGhost } from './utils';
+import { CONNECTION_CHILD_DEPTH } from './buildFlatRows';
 import { useKvDbCounts } from './useKvDbCounts';
 
 /** Parse the numeric database index from a `db{n}` name; NaN when not a db name. */
@@ -36,21 +37,19 @@ function dbIndexFromName(dbName: string): number {
  */
 const TOP_LEVEL = 1;
 
-/** The depth `buildFlatRows` paints a connection's first child at. */
-const FIRST_CHILD_DEPTH = 2;
-
 /**
  * The level a screen reader announces, which follows the logical parent rather
  * than the painted indent.
  *
  * Search drops the section/group header and moves connections to depth 0, but
  * every descendant keeps its absolute depth, so a database is still painted at
- * depth 2. Reading that as `depth + 1` would announce it at level 3 under a
- * level-1 connection, telling the user about a level-2 parent that does not
- * exist. The visual indent stays as painted — only the level moves.
+ * `CONNECTION_CHILD_DEPTH`. Reading that as `depth + 1` would announce it at
+ * level 3 under a level-1 connection, telling the user about a level-2 parent
+ * that does not exist. The visual indent stays as painted — only the level
+ * moves.
  */
 function treeItemLevel(depth: number, searchCollapsed: boolean): number {
-  const collapsed = searchCollapsed && depth >= FIRST_CHILD_DEPTH;
+  const collapsed = searchCollapsed && depth >= CONNECTION_CHILD_DEPTH;
   return depth + TOP_LEVEL - (collapsed ? 1 : 0);
 }
 

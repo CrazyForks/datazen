@@ -3774,113 +3774,102 @@ describe('ConnectionNavigatorTree ARIA tree shape audit', () => {
   // reader can resolve to a real parent, and an aria-expanded the reader can
   // hear change. These were `it.fails` while the DOM did not meet them.
 
-  it(
-    'search results must not skip a level: a db is one level under its connection',
-    async () => {
-      const { container, findByText } = await renderWithSqlite(
-        [{ name: 'settings', tableType: 'table', schema: undefined }],
-        {},
-        {},
+  it('search results must not skip a level: a db is one level under its connection', async () => {
+    const { container, findByText } = await renderWithSqlite(
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
+      {},
+      {},
+    );
+    await findByText('settings');
+
+    // Searching drops the section/group header (buildFlatRows only emits one
+    // when `!query`) and moves connections to depth 0, while databases stay
+    // painted at depth 2. The reported level follows the logical parent
+    // rather than that indent, so the connection owns the database directly.
+    fireEvent.change(searchInput(container), { target: { value: 'SQLite' } });
+    await waitFor(() => {
+      expect(container.querySelector('[data-group-header]')).toBeNull();
+    });
+    expect(levelOf(container, '[data-conn-item]')).toBe(1);
+    expect(container.querySelector('[data-tree-node="db"]')).not.toBeNull();
+
+    expect(findLevelGaps(container)).toEqual([]);
+  });
+
+  it('a group header is a treeitem with children, so it must expose aria-expanded', async () => {
+    connectionsState.connections = [makeConn({ id: 'cfg-a1', name: 'A One', group: 'Group A' })];
+    connectionsState.groups = ['Group A'];
+    activeConnectionsState.connections = {};
+
+    const { findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId={null} />,
+    );
+    const header = (await findByText('Group A')).closest('[data-group-header]')!;
+    expect(header.getAttribute('aria-level')).toBe('1');
+    // Groups are seeded expanded on mount (ConnectionNavigatorTree expands
+    // every known group on the first effect), so the contract to pin is that
+    // the attribute exists and tracks the toggle, not a fixed initial value.
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(header);
+    await waitFor(() => {
+      expect(document.querySelector('[data-group-header]')?.getAttribute('aria-expanded')).toBe(
+        'false',
       );
-      await findByText('settings');
+    });
+  });
 
-      // Searching drops the section/group header (buildFlatRows only emits one
-      // when `!query`) and moves connections to depth 0, while databases stay
-      // painted at depth 2. The reported level follows the logical parent
-      // rather than that indent, so the connection owns the database directly.
-      fireEvent.change(searchInput(container), { target: { value: 'SQLite' } });
-      await waitFor(() => {
-        expect(container.querySelector('[data-group-header]')).toBeNull();
-      });
-      expect(levelOf(container, '[data-conn-item]')).toBe(1);
-      expect(container.querySelector('[data-tree-node="db"]')).not.toBeNull();
+  it('a connection treeitem must carry aria-expanded itself, not only its chevron button', async () => {
+    const { container, findByText } = await renderWithSqlite(
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
+      {},
+      {},
+    );
+    await findByText('settings');
 
-      expect(findLevelGaps(container)).toEqual([]);
-    },
-  );
+    const conn = container.querySelector('[data-conn-item]')!;
+    // The chevron <button> inside the row still reports the state...
+    expect(conn.querySelector('button')!.getAttribute('aria-expanded')).toBe('true');
+    // ...but a screen reader walking the tree reads the treeitem, which is
+    // silent, so the node announces as a leaf.
+    expect(conn.getAttribute('aria-expanded')).toBe('true');
+  });
 
-  it(
-    'a group header is a treeitem with children, so it must expose aria-expanded',
-    async () => {
-      connectionsState.connections = [makeConn({ id: 'cfg-a1', name: 'A One', group: 'Group A' })];
-      connectionsState.groups = ['Group A'];
-      activeConnectionsState.connections = {};
+  it('an expanded namespace branch is a treeitem with children and needs aria-expanded', async () => {
+    connectionsState.connections = [
+      makeConn({ id: 'cfg-doris', name: 'Doris Conn', databaseType: 'doris' }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-doris': { status: 'connected', dbSessionId: 'conn-doris', connectionId: 'cfg-doris' },
+    };
+    mockGetDatabases.mockResolvedValue(['db_x']);
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-doris" />,
+    );
+    await settleSessionLoad('conn-doris');
+    seedSessionSchema('conn-doris', {
+      currentDatabase: 'db_x',
+      namespaceTree: { public: { users: [] } },
+      tables: [] as TableInfo[],
+      loadedPaths: new Set<string>(),
+      pathItems: {},
+    });
+    await findByText('public');
 
-      const { findByText } = render(
-        <ConnectionNavigatorTree {...baseProps} activeConnectionId={null} />,
-      );
-      const header = (await findByText('Group A')).closest('[data-group-header]')!;
-      expect(header.getAttribute('aria-level')).toBe('1');
-      // Groups are seeded expanded on mount (ConnectionNavigatorTree expands
-      // every known group on the first effect), so the contract to pin is that
-      // the attribute exists and tracks the toggle, not a fixed initial value.
-      expect(header.getAttribute('aria-expanded')).toBe('true');
+    // The tree is virtualized and recycles row elements by index, so a
+    // captured element is not a stable handle on a row: once the click
+    // shifts the rows, the same element is re-rendered as something else.
+    // Look the branch up by its label, and look it up again afterwards
+    // rather than reusing the element captured before the click.
+    const branch = (await findByText('public')).closest('[data-tree-node="namespace"]')!;
+    expect(branch.getAttribute('aria-expanded')).toBe('false');
 
-      fireEvent.click(header);
-      await waitFor(() => {
-        expect(
-          document.querySelector('[data-group-header]')?.getAttribute('aria-expanded'),
-        ).toBe('false');
-      });
-    },
-  );
-
-  it(
-    'a connection treeitem must carry aria-expanded itself, not only its chevron button',
-    async () => {
-      const { container, findByText } = await renderWithSqlite(
-        [{ name: 'settings', tableType: 'table', schema: undefined }],
-        {},
-        {},
-      );
-      await findByText('settings');
-
-      const conn = container.querySelector('[data-conn-item]')!;
-      // The chevron <button> inside the row still reports the state...
-      expect(conn.querySelector('button')!.getAttribute('aria-expanded')).toBe('true');
-      // ...but a screen reader walking the tree reads the treeitem, which is
-      // silent, so the node announces as a leaf.
-      expect(conn.getAttribute('aria-expanded')).toBe('true');
-    },
-  );
-
-  it(
-    'an expanded namespace branch is a treeitem with children and needs aria-expanded',
-    async () => {
-      connectionsState.connections = [
-        makeConn({ id: 'cfg-doris', name: 'Doris Conn', databaseType: 'doris' }),
-      ];
-      activeConnectionsState.connections = {
-        'cfg-doris': { status: 'connected', dbSessionId: 'conn-doris', connectionId: 'cfg-doris' },
-      };
-      mockGetDatabases.mockResolvedValue(['db_x']);
-      const { container, findByText } = render(
-        <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-doris" />,
-      );
-      await settleSessionLoad('conn-doris');
-      seedSessionSchema('conn-doris', {
-        currentDatabase: 'db_x',
-        namespaceTree: { public: { users: [] } },
-        tables: [] as TableInfo[],
-        loadedPaths: new Set<string>(),
-        pathItems: {},
-      });
-      await findByText('public');
-
-      // A path-hierarchy driver paints one branch per path prefix, and branches
-      // share `data-tree-node="namespace"` with no name of their own, so pick
-      // the one under test by its label rather than by first match.
-      const branch = (await findByText('public')).closest('[data-tree-node="namespace"]')!;
-      expect(branch.getAttribute('aria-expanded')).toBe('false');
-
-      fireEvent.click(branch);
-      await waitFor(() => {
-        expect(container.querySelector('[data-item-name="users"]')).not.toBeNull();
-      });
-      // Re-resolve: expanding loads the path and adds sibling branches, so the
-      // node instance captured before the click must not be reused.
-      const expanded = (await findByText('public')).closest('[data-tree-node="namespace"]')!;
-      expect(expanded.getAttribute('aria-expanded')).toBe('true');
-    },
-  );
+    fireEvent.click(branch);
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="users"]')).not.toBeNull();
+    });
+    // Still connected after the click, but now a leaf — hence the re-resolve.
+    const expanded = (await findByText('public')).closest('[data-tree-node="namespace"]')!;
+    expect(expanded.getAttribute('aria-expanded')).toBe('true');
+  });
 });
