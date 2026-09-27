@@ -50,6 +50,7 @@
 | pane-layout | — | TEST_FAILED (1 bugs) | — | — | — |
 | scripts-gate | — | 未开始 | — | — | — |
 | compartment-retest | — | 未开始 | — | — | — |
+| scripts-retest | — | 未开始 (2 bugs) | — | — | — |
 
 ## 写锁台账
 
@@ -97,6 +98,7 @@
 | pane-layout | — | — | `feature/pane-layout` | TEST_FAILED | — |
 | scripts-gate | — | — | `feature/scripts-gate` (worktree `.worktrees/datazen-scripts-gate`) | 未开始 | — |
 | compartment-retest | — | — | feature/compartment-retest | 未开始 | — |
+| scripts-retest | — | — | `feature/scripts-retest`（worktree `.worktrees/datazen-scripts-retest`） | 未开始 | — |
 
 ## 波次记录
 
@@ -195,6 +197,41 @@
   （「已暂存跳过构建」假绿）。危害：让人**用陈旧产物当验证证据**，「跑通了」与「验过了」不等价。
   CI 因非零退出会中止，故属**本地开发期**隐患。**约束：不得破坏 CI「构建一次、各 release 变体共用」
   的短路语义；不得动 `artifacts/.pack-ep-staging-*` 的保留行为**（那是另一目录，刻意保留供排查）。
+- **✅ scripts-gate 复测：`TEST_DONE`，0 阻断缺陷**（`9444cd160`，零业务代码改动）。
+  六条验收全过，其中三条证据形态值得留档：
+  ① **Tester 第一版复现锚错了** —— 锚在单条日志串上，在父提交上**误报「未复现」**；
+  改用 `prebuilt===true && path===stageDir && 字节未变` 才正确翻红。
+  **教训：判据要锚在「可观测状态」上，不是锚在「日志措辞」上** —— 日志串会因走不同分支而变。
+  ② **「门禁真覆盖」用阳性对照证明**：往 `upx-compress.test.ts` 塞一处确定类型错误 ⇒
+  **新门禁转红并指名该文件行号，而同一时刻根门禁仍 exit 0**。这才是「纳入」的可证形式，
+  比读 `tsconfig` 推断强得多。
+  ③ **盲区判定比台账更重**：标记文件连 `--ignored` 都折叠成 `!! .../builtin-ep/`，
+  `git check-ignore -v` 显示命中的是 `.gitignore:69` 的**目录规则**，
+  即 `scripts-gate` 新增的 `:74 *.incomplete` **是冗余的**（协调方已独立核实）。
+  **补偿措施对本缺陷范围够**（标记在位 ⇒ `stagedTreeUsable=false`，两处都大声报出并带路径/原因/命令；
+  `git clean` 整目录删除故**无「清标记留旧树」的反向风险**）。**残留窄口**：不跑这两者而**手工翻看**该树的人，
+  会看到一个完整已签名、毫无「这是旧的」提示的目录 —— 风险面已从「流水线复用/发货」缩到「人工目视」。
+- **🐛【新登记·中】被保护者进了门禁，保护者的实现没有。**
+  BUG-002 的**产物级主机键不变量，其实现**在 `scripts/pack-ep.mjs:458 hostKeyError`，
+  而该文件是 `.mjs` + `checkJs: false` ⇒ **函数体一行未被类型检查**（协调方已核实：
+  开 `checkJs` 时该文件 **78** 个错误）。而上一轨刚把**被保护的那个测试**
+  （`pack-ep.host-key-invariant.test.ts`）纳入了门禁 —— 形成「测了、门禁也管了，但实现本身没人看」的空洞。
+  同一文件里还有 `stagePackageTree` / `createDzxArchive` / 签名调用点，**是整条打包签名流水线的实现**。
+  **78 个错误的码分布**（协调方实测）：
+  `66 × TS7006`（参数隐式 any = 缺 JSDoc `@param`）、
+  2×TS7034、2×TS7031、2×TS7005、1×TS7053、1×TS7019、1×TS6133，
+  以及 **1×TS2339（属性不存在）、1×TS2322（类型不兼容）、1×TS18046（`x is of type unknown`）**。
+  ⇒ 前 12 个基本都是**补注解**（**增加**类型信息，不放松任何选项）；
+  **最后 3 个不是注解缺口，可能是真实缺陷** —— 尤其 `TS18046` 通常意味着 `catch (e)` 后直接使用异常对象，
+  **这类地方真的会在运行时炸**。已单独派轨查清并清零，且**禁止**顺手去清 `resolve-drivers.mjs`（57）——那是另一轨的范围。
+- **🐛【新登记·低】配置里的注释也会说谎（第 3 次）。**
+  `tsconfig.scripts.json` 的 `$comment` 声称 `scripts/e2e-screenshots/editor-blog-screenshots.ts`
+  属于 `e2e/tsconfig.json` program。**实测不成立**：`e2e/tsconfig.json` 的 `include: ["**/*.ts"]`
+  相对 `e2e/` 解析，**结构上够不到 `scripts/`**；`--listFilesOnly` 对该 spec 命中 **0**。
+  ⇒ **该 spec 不在任何 program 内**。`progress.md` 写对了，**错的是留在配置文件里的那句**。
+  **为什么这类缺陷特别有害**：注释是后来人推理「覆盖范围」时的**依据**，
+  一条与事实相反的注释比没有注释更能误导决策 —— 本项目已被它咬到三次
+  （BUG-002 原始注释、Track E、本条）。已并入同轨处理。
 - **⚠️【方法论·第八·第九次】连续两次，且第二次是第一次的「我把它压掉了」。**
   ⑧ `git -C "$PRO" bundle create "$B"` 里 `$B` 是**相对路径**，而 `-C` 已把工作目录改到 Pro 仓
   ⇒ bundle 生成在 **Pro 仓里**，而我上一条刚 `rm` 掉集成 worktree 里的旧 bundle
