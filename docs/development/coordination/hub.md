@@ -47,6 +47,7 @@
 | multi-cursor | — | TEST_DONE | — | — | — |
 | ep-hooks-settings | — | TEST_FAILED (2 bugs) | — | — | — |
 | pack-ep-key-invariant | — | 未开始 | — | — | — |
+| pane-layout | — | TEST_FAILED (1 bugs) | — | — | — |
 
 ## 写锁台账
 
@@ -91,6 +92,7 @@
 | multi-cursor | — | `.worktrees/datazen-multi-cursor` | `feature/multi-cursor` | TEST_DONE | — |
 | ep-hooks-settings | — | — | `feature/ep-hooks-settings`（宿主）— commit `4192affd8` | TEST_FAILED | — |
 | pack-ep-key-invariant | — | — | feature/pack-ep-key-invariant | 未开始 | — |
+| pane-layout | — | — | `feature/pane-layout` | TEST_FAILED | — |
 
 ## 波次记录
 
@@ -208,6 +210,33 @@
   再收紧一版措辞（Track B Tester 建议，我采纳）：**问题从来不是「忘了打印全集」**——
   而是 `{}` 与 `0 条` 这两种输出**本身就是「它在问『是不是空的？』」的疑点信号**。
   ⇒ 正确动作不是「记得加一条全集打印」，而是**「看到 `{}` / `0 条` 先回头读过滤条件，再让它变成结论」**。
+- **⚠️【判据·一】提交信息/台账里的声明不是证据。** `85594adb4` 正文声称「宿主表不可读 /
+  **条目不可解析**时 fail closed」，而「条目不可解析」这条分支**从未被执行过**——
+  BUG-002 轨 Tester 补的 21 例证明：把它改成 `continue`，**Coder 的 55 例仍全绿**；
+  同理「产物文件缺失时 `return []`」也是 55 例全绿。
+  ⇒ **一个测试套件可以在关键分支完全未覆盖的情况下全绿，而提交信息让读者以为已覆盖。**
+  **判据：凡提交信息或台账声称的行为，都要有「删掉实现 → 对应用例转红」的变异证据**，
+  否则该声明按**未覆盖**处理。
+- **⚠️【判据·二·证据必须分级】因果句必须拆开标注证据等级。**
+  BUG-002 轨 Tester 复查**自己**的报告时发现：「`rewrote bare imports:` 恒空 ⇒ 旁路存在」
+  是**两句合成句**——「恒空」是**观测值**且**有变异证据**（去掉闸门即 exit 0 并留下越界键）；
+  「⇒ 旁路存在」靠的是**机制论证**（Pro `renderChunk` 不查白名单），**没有**变异证据。
+  两者等级不同，它**未分级**就并置在同一句断言里。
+  三级：**变异证据**（最强：删实现→转红）／**真实管线实测**（次之：跑过、注入**且引用**、
+  **先清暂存目录**）／**机制论证**（最弱：读代码推的）。
+  ⇒ **机制论证不得与前两者同句并置。** 判据一管「有没有证据」，判据二管**「证据配不配得上结论」**。
+- **✅ Track C BUG-001 已修（`227b6af8`，合流 `92d49373e`）**：`focusedPaneIdByPanel: Record<string,string>`
+  按 tab 存焦点，唯一写入口 `syncPaneFocus()`。已独立 grep 确认**生产代码无旁路直写**（15 处引用）。
+  独立核实 Coder 的两处报告：① `ContentViewKvToolbar.test.tsx` 的 store mock 确为 **4 键子集**
+  （`panels`/`activePanelId`/`setActivePanel`/`updatePanel`）——读 `map[...]` 会 `TypeError`，
+  读镜像键只是 `undefined`，故回退读镜像是必要的；② 未选「视图侧过滤」的三条理由中**第 2 条最关键**：
+  过滤挡不住孤儿 exec entry，只要「tab B 持有 tab A 的 paneId」这种状态**可表达**，
+  任何 `updateSql(panelId, sql, paneId)` 都还能造出无人认领的 entry。
+  ⚠️ **本修复在生产环境不可观测**：当前生产无 `openPane`/`closePane`/`setFocusedPane` 调用点，
+  `focusedPaneId` 恒 `null`、map 恒空 ⇒ 单 pane 路径逐字节不变。
+  **所以现有测试构造的是生产今天永远不会出现的状态**，而真正的失败模式是
+  **「对构造态正确、对 P2 真实操作序列错误」**。复测必须构造
+  「同 tab 内开第 2 个 pane → 聚焦 → 编辑 → 执行 → 关掉其一」逐帧断言。
 - **⚠️【方法论·已三次】探针键绝不能与被测修复共用同一份被修改的数据**。本项目在 BUG-002
   复验中连续栽了**三个方向**的错，根因同一：
   ① **假绿**：注入只写 `import` 不引用 ⇒ 被 tree-shaking 吃掉，产物里根本没这个键，闸门自然放行；
