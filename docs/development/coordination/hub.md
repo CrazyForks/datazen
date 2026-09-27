@@ -177,6 +177,12 @@
   新增槽位（如 code-folding 的 `fold`）会改动所有轨共用的 `editorExtensions.ts`。
   这是 `code-folding` 必须排在 `ep-hooks-settings` 之后的唯一原因；单实例测试不足，
   需覆盖多实例共享该单例的场景。
+- **B × D 相邻但未交叠**（协调者交叉校验）：`ep-hooks-settings` 改了
+  `src/components/sql-editor/paste/createPasteExtensions.ts`（为 G3 通用路径新增 `proSettings`
+  选项并透传给 EP），`multi-cursor` 改的是同目录的 `multipleSelections.ts`。两文件不重叠，
+  且 B 的改动是纯增量、未改 `[...multiCursor, ...enhancedPaste]` 的顺序。但二者**同处多光标的
+  挂载链路**上：若 B 的 EP 路径后续也贡献 keymap，优先级关系会变。故两轨 Tester 判定时都须确认：
+  EP 侧不会引入与多光标同键位的新绑定。
 
 ## R 阶段清单
 
