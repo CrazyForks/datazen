@@ -71,6 +71,15 @@ artifacts/
 # "staging run did not finish" markers written next to a staged EP tree
 # (pack-ep.mjs / resolve-pro.mjs). A stale one must survive `git status` so a
 # failed build cannot be mistaken for a clean one.
+#
+# Note on redundancy — measured, not assumed (`git check-ignore -v <file>`):
+# for the marker the EP pipeline actually writes, which lands INSIDE
+# src-tauri/resources/builtin-ep/, this line is currently double-cover: rule 69
+# (the directory rule) matches too and is the one git reports, because the last
+# matching rule wins. This line is NOT redundant in general, though — a root
+# level `foo.incomplete` is matched by this rule and by nothing else, and
+# --stage-dir may point anywhere in the tree. Kept for that reason; do not read
+# "rule 69 already covers it" as licence to delete this.
 *.incomplete
 
 # Built-in locale codegen (written by generate-builtin-locales.mjs; not committed)

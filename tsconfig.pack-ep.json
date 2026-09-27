@@ -1,0 +1,41 @@
+{
+  "$comment": [
+    "REAL GATE for the EP packaging script — `pnpm typecheck:pack-ep`, chained",
+    "into `pnpm typecheck` and therefore into CI via .github/workflows/ci.yml.",
+    "",
+    "Why a dedicated program instead of a `// @ts-check` pragma in pack-ep.mjs:",
+    "a config entry is a thing the compiler resolves, so a renamed or deleted",
+    "file becomes TS6053 and turns the gate red. A source pragma just stops",
+    "being checked the moment someone edits the line above it.",
+    "",
+    "Relationship to the other two scripts programs — none of them can mask",
+    "another, because each covers a different set of files:",
+    "  - tsconfig.scripts.json         include scripts/__tests__, checkJs:false.",
+    "    It checks the .ts tests against the signatures pack-ep.mjs INFERs, so a",
+    "    .mjs type change that breaks a test call site fails there. It does not",
+    "    check the .mjs bodies at all.",
+    "  - this file                     files: the two packaging scripts,",
+    "    checkJs:true. It checks the .mjs bodies. It contains no tests, so it",
+    "    cannot report a broken test call site.",
+    "  - tsconfig.scripts-checkjs.json include scripts, checkJs:true. Backlog",
+    "    only — NOT wired into `pnpm typecheck` and referenced by no CI workflow,",
+    "    so it can neither enforce nor hide anything in the two above.",
+    "",
+    "sign-ep.mjs is listed explicitly even though tsc pulls it in anyway as a",
+    "hard import of pack-ep.mjs: naming it means the gate's stated scope is",
+    "exactly what it checks, and dropping the import cannot silently shrink it.",
+    "",
+    "No compiler option is relaxed here. checkJs is on; strict,",
+    "noImplicitAny, noUnusedLocals, noUnusedParameters and skipLibCheck all",
+    "inherit from tsconfig.json unchanged."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true
+  },
+  "files": ["scripts/pack-ep.mjs", "scripts/sign-ep.mjs"],
+  "include": [],
+  "references": []
+}
