@@ -50,7 +50,6 @@ export interface RedisRightPanelProps {
   onRefresh: () => void;
   onRenamed: (newKey: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
-  onClose: () => void;
   /** Console completion feed — the current key list from the left panel. */
   keySuggestions?: string[];
   /** Cluster node for console/monitor. */
@@ -85,7 +84,6 @@ export function RedisRightPanel({
   onRefresh,
   onRenamed,
   onDirtyChange,
-  onClose,
   keySuggestions,
   pinnedNodeAddr,
   onPinnedNodeAddrChange,
@@ -183,7 +181,6 @@ export function RedisRightPanel({
         onRefresh={onRefresh}
         onRenamed={onRenamed}
         onDirtyChange={onDirtyChange}
-        onClose={onClose}
         keySuggestions={keySuggestions}
         pinnedNodeAddr={pinnedNodeAddr}
         onPinnedNodeAddrChange={onPinnedNodeAddrChange}
@@ -208,7 +205,6 @@ function TabContent({
   onRefresh,
   onRenamed,
   onDirtyChange,
-  onClose,
   keySuggestions,
   pinnedNodeAddr,
   onPinnedNodeAddrChange,
@@ -224,7 +220,6 @@ function TabContent({
   onRefresh: () => void;
   onRenamed: (newKey: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
-  onClose: () => void;
   keySuggestions?: string[];
   pinnedNodeAddr?: string;
   onPinnedNodeAddrChange?: (addr: string) => void;
@@ -245,7 +240,6 @@ function TabContent({
             onRefresh={onRefresh}
             onRenamed={onRenamed}
             onDirtyChange={onDirtyChange}
-            onClose={onClose}
           />
         </div>
       );

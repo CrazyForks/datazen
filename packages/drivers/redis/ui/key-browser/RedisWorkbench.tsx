@@ -310,7 +310,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                         void refreshKeys();
                       },
                       onDirtyChange: detail.setEditorDirty,
-                      onClose: detail.clearDetailGuarded,
                     })
                   ) : (
                     <DetailColumn
@@ -328,7 +327,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                         void refreshKeys();
                       }}
                       onDirtyChange={detail.setEditorDirty}
-                      onClose={detail.clearDetailGuarded}
                     />
                   )}
                 </div>

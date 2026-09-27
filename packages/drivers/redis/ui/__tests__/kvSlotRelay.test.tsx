@@ -168,7 +168,6 @@ function detailColumn(overrides: Partial<React.ComponentProps<typeof DetailColum
       modules={[]}
       onRefresh={() => {}}
       onRenamed={() => {}}
-      onClose={() => {}}
       {...overrides}
     />,
   );
@@ -189,9 +188,15 @@ afterEach(() => {
 beforeEach(() => {
   getKey.mockResolvedValue(stringDetail('user:1'));
   getKeyRaw.mockResolvedValue(null);
-  scanKeys.mockResolvedValue({ keys: [{ key: 'user:1', keyType: 'string' }], cursor: 0, dbSize: 1 });
+  scanKeys.mockResolvedValue({
+    keys: [{ key: 'user:1', keyType: 'string' }],
+    cursor: 0,
+    dbSize: 1,
+  });
   listChildren.mockResolvedValue({
-    children: [{ kind: 'key', key: 'user:1', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null }],
+    children: [
+      { kind: 'key', key: 'user:1', keyType: 'string', ttl: -1, logicalLen: 1, memBytes: null },
+    ],
     cursor: 0,
   });
   dbSizes.mockResolvedValue([{ db: 0, keys: 1 }]);
@@ -427,25 +432,6 @@ describe('[tester] RedisWorkbench relay exit paths', () => {
     expect(relay.getSelectedKey()).toBe('user:1');
   }
 
-  it('clears selection and dirty when the detail column is closed', async () => {
-    const relay = makeRelay();
-    renderWorkbench(relay);
-    await draftOnRelay(relay);
-
-    fireEvent.click(screen.getByTestId('redis-detail-close'));
-    // I-1: the close asks first; nothing has been cleared yet.
-    await screen.findByTestId('redis-draft-discard');
-    expect(relay.getDirty()).toBe(true);
-    expect(relay.getSelectedKey()).toBe('user:1');
-
-    fireEvent.click(screen.getByTestId('redis-draft-discard'));
-    await waitFor(() => expect(relay.getDirty()).toBe(false));
-    expect(relay.getSelectedKey()).toBeNull();
-    expect(screen.getByTestId('redis-detail-column').getAttribute('data-detail-state')).toBe(
-      'no-key',
-    );
-  });
-
   it('clears selection and dirty when the search field drops the selection', async () => {
     const relay = makeRelay();
     renderWorkbench(relay, 'sess-1', false);
@@ -472,12 +458,7 @@ describe('[tester] RedisWorkbench relay exit paths', () => {
     await draftOnRelay(relay);
 
     rerender(
-      <RedisWorkbench
-        dbSessionId="sess-2"
-        initialDatabase="db0"
-        hideSidebar
-        kvSlotState={relay}
-      />,
+      <RedisWorkbench dbSessionId="sess-2" initialDatabase="db0" hideSidebar kvSlotState={relay} />,
     );
 
     await waitFor(() => expect(relay.getSelectedKey()).toBeNull());
