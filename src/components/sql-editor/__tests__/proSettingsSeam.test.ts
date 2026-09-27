@@ -44,6 +44,7 @@
  * precisely what went uncovered.
  */
 import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -59,12 +60,62 @@ import { createFoldCompartmentExtensions, foldSettingEnabled } from '../fold/fol
 const PRO_FEATURES_ENTRY = 'packages/pro-extensions/sql-editor-pro/src/proFeatures.ts';
 
 const proEntryPath = resolve(process.cwd(), PRO_FEATURES_ENTRY);
-const proPresent = existsSync(proEntryPath);
-const allowMissing = process.env.DATAZEN_ALLOW_MISSING_PRO === '1';
+
+/**
+ * The shared three-state verdict, produced by `scripts/pro-seam-gate.mjs`.
+ *
+ * This file used to define "the Pro is here" as `existsSync(<its own entry>)`,
+ * i.e. by the very file it consumes. `pack-ep.test.ts` asked a different question
+ * (`package.json`) and the gate asked a third, so a Pro directory that was present
+ * but incomplete went RED in one guard and became a silent acknowledged skip in
+ * the other two — three guards, one opt-out, three verdicts for one checkout.
+ * Measured before this change, with `src/proFeatures.ts` deleted and
+ * `DATAZEN_ALLOW_MISSING_PRO=1` set: pack-ep 1 failed, gate exit 0, this file
+ * `1 passed | 7 skipped`.
+ *
+ * The verdict is fetched over a process boundary rather than imported, because
+ * the root typecheck program has `allowJs: false` and a `.d.mts` would be a
+ * fourth, drift-prone copy of the same shape. The JSON is the implementation's
+ * own output, so it cannot disagree with the gate or with pack-ep.
+ */
+interface ProVerdict {
+  state: 'absent' | 'partial' | 'present';
+  present: boolean;
+  dir: string;
+  dirExists: boolean;
+  missing: string[];
+  allowMissing: boolean;
+  maySkip: boolean;
+  mustFail: boolean;
+}
+
+function readSharedProVerdict(): ProVerdict {
+  const script = resolve(process.cwd(), 'scripts/pro-seam-gate.mjs');
+  const out = execFileSync(process.execPath, [script, '--verdict', `--root=${process.cwd()}`], {
+    encoding: 'utf8',
+  });
+  const parsed: unknown = JSON.parse(out);
+  // Validate the shape instead of asserting a type: a silently reshaped verdict
+  // must fail loudly here, not propagate as `undefined` into the gating below.
+  if (typeof parsed !== 'object' || parsed === null) throw new Error(`bad verdict: ${out}`);
+  const v = parsed as Record<string, unknown>;
+  for (const key of ['state', 'present', 'dir', 'dirExists', 'missing', 'allowMissing', 'maySkip', 'mustFail']) {
+    if (!(key in v)) throw new Error(`verdict is missing "${key}": ${out}`);
+  }
+  if (v.state !== 'absent' && v.state !== 'partial' && v.state !== 'present') {
+    throw new Error(`verdict has an unknown state ${String(v.state)}: ${out}`);
+  }
+  if (!Array.isArray(v.missing)) throw new Error(`verdict "missing" is not an array: ${out}`);
+  return v as unknown as ProVerdict;
+}
+
+const verdict = readSharedProVerdict();
+const proPresent = verdict.present;
+const allowMissing = verdict.allowMissing;
 
 const SKIP_REASON =
-  `Pro checkout not found at ${PRO_FEATURES_ENTRY} — the host→EP→Pro settings seam ` +
-  'is UNTESTED and nothing in this file ran.';
+  `Pro checkout absent (state=${verdict.state}) at ${verdict.dir} — the ` +
+  'host→EP→Pro settings seam is UNTESTED and nothing in this file ran.';
 
 /** The real Pro feature set, or `null` when the checkout is absent. */
 let proFeatures: SqlEditorEnhancedFeatures | null = null;
@@ -108,8 +159,23 @@ describe('pro settings seam: host → EP → real Pro package → settings gate'
     // the missing-provision case is a named failure rather than an opaque
     // collection error. Skipped only when the absence was explicitly acknowledged.
     if (proPresent) {
+      expect(verdict.state).toBe('present');
+      expect(verdict.missing).toEqual([]);
       expect(existsSync(proEntryPath)).toBe(true);
       return;
+    }
+    if (verdict.mustFail) {
+      // state=partial — the directory is here but incomplete. NOT acknowledgeable:
+      // DATAZEN_ALLOW_MISSING_PRO=1 means "this checkout is knowingly Pro-less",
+      // which is false. Before this guard shared the verdict, this branch silently
+      // skipped and reported a pass.
+      throw new Error(
+        `Pro checkout is PRESENT BUT INCOMPLETE at ${verdict.dir} ` +
+          `(missing: ${verdict.missing.join(', ')}). The host→EP→Pro seam is ` +
+          'UNTESTED and DATAZEN_ALLOW_MISSING_PRO=1 does not apply — it ' +
+          'acknowledges a checkout with no Pro, not a broken one. Repair or remove ' +
+          'the Pro checkout.',
+      );
     }
     expect(
       allowMissing,

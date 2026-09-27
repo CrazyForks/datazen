@@ -85,23 +85,77 @@ const BANNER = '─'.repeat(72);
  * can name the specific thing an operator has to provision.
  *
  * @param {string} root host repo root
- * @returns {{ present: boolean, dir: string, missing: string[] }}
+ * @returns {{state: string, present: boolean, dir: string, dirExists: boolean, missing: string[]}}
  */
 export function inspectProCheckout(root) {
   const dir = resolve(root, PRO_REL);
-  const required = {
-    'the Pro checkout directory': dir,
+  // The directory is inspected SEPARATELY from the files inside it. Conflating
+  // them is what produced three different "is the Pro here?" definitions across
+  // three guards: a checkout that is present-but-incomplete then looks absent,
+  // and the `DATAZEN_ALLOW_MISSING_PRO=1` opt-out silently turns a broken
+  // checkout into a green skip.
+  const dirExists = existsSync(dir);
+  const files = {
     'manifest.json': resolve(dir, 'manifest.json'),
     'package.json': resolve(dir, 'package.json'),
     'src/proFeatures.ts': resolve(dir, 'src/proFeatures.ts'),
   };
-  const missing = Object.entries(required)
+  const missing = Object.entries(files)
     .filter(([, path]) => !existsSync(path))
     .map(([label]) => label);
-  return { present: missing.length === 0, dir, missing };
+  /** absent = no checkout at all; partial = here but incomplete; present = usable. */
+  const state = !dirExists ? 'absent' : missing.length === 0 ? 'present' : 'partial';
+  return { state, present: state === 'present', dir, dirExists, missing };
 }
 
-/** Read the Pro `engines.extensionPointsVersion`, or `undefined`. */
+/**
+ * The Pro-availability decision, made once, for the guards that consult the
+ * opt-out.
+ *
+ * ⚠️ "every Pro-dependent guard" was the wording here until a review caught it,
+ * and it was wrong in the same way a comment in `pack-ep.test.ts` was wrong.
+ * `packages/extension-points/src/__tests__/security.test.ts` IS a Pro-dependent
+ * gate and it does NOT make this decision — it never reads
+ * `DATAZEN_ALLOW_MISSING_PRO` (0 occurrences; line 474 calls
+ * `readFileSync(PRO_MANIFEST_PATH)` bare) and ENOENTs on a Pro-less checkout.
+ * It is outside this family and is not covered by anything below. Do not read
+ * this JSDoc as claiming otherwise, and do not "fix" that ENOENT by teaching
+ * that file to check the opt-out: doing so turns the host unit-test step green,
+ * and a green unit-test step is the signal a maintainer reads as "the Pro
+ * guards are fine" — at which point all three guards below skip at once.
+ *
+ * Three states, mutually exclusive and exhaustive over any checkout:
+ *   'present' — usable; the Pro-dependent checks must RUN.
+ *   'partial' — directory here, key files missing. NEVER skippable: a checkout
+ *               that is half-there is a broken checkout, and acknowledging it
+ *               with an env var is exactly the "report success for a check that
+ *               never ran" defect this module exists to prevent. No opt-out.
+ *   'absent'  — no checkout at all. Skippable, but only when explicitly
+ *               acknowledged; otherwise the guards are red.
+ *
+ * @param {string} root host repo root
+ * @param {Record<string, string|undefined>} [env] env source (default: process.env)
+ * @returns {{state: string, present: boolean, dir: string, dirExists: boolean,
+ *            missing: string[], allowMissing: boolean, maySkip: boolean,
+ *            mustFail: boolean}}
+ */
+export function proVerdict(root, env = process.env) {
+  const info = inspectProCheckout(root);
+  const allowMissing = env.DATAZEN_ALLOW_MISSING_PRO === '1';
+  return {
+    ...info,
+    allowMissing,
+    maySkip: info.state === 'absent' && allowMissing,
+    mustFail: info.state === 'partial',
+  };
+}
+
+/**
+ * Read the Pro `engines.extensionPointsVersion`, or `undefined`.
+ *
+ * @param {string} dir
+ * @returns {string|undefined}
+ */
 export function readProContractVersion(dir) {
   try {
     const manifest = JSON.parse(readFileSync(resolve(dir, 'manifest.json'), 'utf8'));
@@ -112,16 +166,21 @@ export function readProContractVersion(dir) {
 }
 
 /**
+ * @typedef {object} GateOptions
+ * @property {string} [root]                host repo root (default: cwd)
+ * @property {boolean} [runTests]           run `npx vitest run` in Pro (default true)
+ * @property {boolean} [runTypecheck]       run `npx tsc --noEmit` in Pro (default true)
+ * @property {Function} [log]               info sink
+ * @property {Function} [error]             error sink
+ * @property {Record<string, string|undefined>} [env] env source (default: process.env)
+ * @property {Function} [spawn]             spawnSync-shaped runner (injectable for tests)
+ * @property {string[]} [argv]              CLI argv (default: process.argv)
+ */
+
+/**
  * Run the Pro gate.
  *
- * @param {object} [opts]
- * @param {string} [opts.root]        host repo root (default: cwd)
- * @param {boolean} [opts.runTests]   run `npx vitest run` in Pro (default true)
- * @param {boolean} [opts.runTypecheck] run `npx tsc --noEmit` in Pro (default true)
- * @param {Function} [opts.log]      info sink
- * @param {Function} [opts.error]     error sink
- * @param {object} [opts.env]         env source (default: process.env)
- * @param {Function} [opts.spawn]     spawnSync-shaped runner (injectable for tests)
+ * @param {GateOptions} [opts]
  * @returns {number} exit code
  */
 export function runProGate(opts = {}) {
@@ -135,14 +194,33 @@ export function runProGate(opts = {}) {
     spawn = spawnSync,
   } = opts;
 
-  const state = inspectProCheckout(root);
+  const verdict = proVerdict(root, env);
+  const state = verdict;
   log(BANNER);
   log('cross-repo seam gate: host → Pro extension package');
   log(`  host root : ${root}`);
   log(`  pro dir   : ${state.dir}`);
+  log(`  pro state : ${state.state.toUpperCase()}`);
+
+  if (state.mustFail) {
+    // Not skippable, not acknowledgeable. A half-present checkout is a broken
+    // checkout; `DATAZEN_ALLOW_MISSING_PRO=1` exists for "there is no Pro here",
+    // and honouring it here is what previously turned a partial Pro into a
+    // silent green skip in two of the three guards.
+    error([
+      '',
+      `  ✖ Pro checkout is PRESENT BUT INCOMPLETE (state=partial). Missing:`,
+      ...state.missing.map((m) => `      · ${m}`),
+      '',
+      '    This is not a "no Pro checkout" situation and cannot be waived with',
+      '    DATAZEN_ALLOW_MISSING_PRO=1 — that variable means "this checkout is',
+      '    knowingly Pro-less", which is false here. A partial Pro is a broken',
+      '    checkout: repairing it (or removing it) is the only correct action.',
+    ].join('\n'));
+    return 1;
+  }
 
   if (!state.present) {
-    const allow = env.DATAZEN_ALLOW_MISSING_PRO === '1';
     const explanation = [
       '',
       '  ✖ Pro checkout NOT available. The host gate is structurally blind to',
@@ -155,7 +233,7 @@ export function runProGate(opts = {}) {
       '    to acknowledge that this checkout is knowingly Pro-less.',
       '',
     ].join('\n');
-    if (allow) {
+    if (verdict.allowMissing) {
       log(explanation.replace('✖', '⚠'));
       log('  → SKIPPED (acknowledged via DATAZEN_ALLOW_MISSING_PRO=1)');
       log(BANNER);
@@ -168,6 +246,7 @@ export function runProGate(opts = {}) {
   const version = readProContractVersion(state.dir);
   log(`  pro EP contract version: ${version ?? '(undeclared)'}`);
 
+  /** @type {Array<[string, string[]]>} */
   const steps = [];
   if (runTypecheck) steps.push(['tsc --noEmit', ['tsc', '--noEmit']]);
   if (runTests) steps.push(['vitest run', ['vitest', 'run']]);
@@ -194,7 +273,12 @@ export function runProGate(opts = {}) {
   return 0;
 }
 
-/** CLI entry, kept separate from the module so it stays unit-testable. */
+/**
+ * CLI entry, kept separate from the module so it stays unit-testable.
+ *
+ * @param {GateOptions} [opts]
+ * @returns {number} exit code
+ */
 export function runCli(opts = {}) {
   const argv = opts.argv ?? process.argv;
   const rest = { ...opts };
@@ -203,6 +287,26 @@ export function runCli(opts = {}) {
   if (rootArg) rest.root = resolve(rootArg.slice('--root='.length));
   if (argv.includes('--skip-tests')) rest.runTests = false;
   if (argv.includes('--skip-typecheck')) rest.runTypecheck = false;
+
+  // `--verdict` prints the shared judgement as JSON and runs NOTHING. It exists
+  // so the TypeScript seam guard can consume this exact implementation instead
+  // of re-deriving its own "is the Pro here?" rule.
+  //
+  // Why a process boundary rather than a plain `import`: the root typecheck
+  // program has `allowJs: false`, so a `src/**` TypeScript file importing this
+  // `.mjs` fails with TS7016, and the project forbids `any`. The alternative
+  // — a hand-written `pro-seam-gate.d.mts` — would be a FOURTH independent
+  // statement of the same shape, free to drift from the implementation, which
+  // is the very defect class (three disagreeing definitions) this refactor
+  // removes. The JSON is the implementation's own output, so it cannot drift.
+  //
+  // This is a query, not a gate: it exits 0 even for `partial`, because the
+  // caller decides what to do with the verdict. It never runs tsc or vitest.
+  if (argv.includes('--verdict')) {
+    const root = rest.root ?? process.cwd();
+    process.stdout.write(`${JSON.stringify(proVerdict(root), null, 2)}\n`);
+    return 0;
+  }
   return runProGate(rest);
 }
 

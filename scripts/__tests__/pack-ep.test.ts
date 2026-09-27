@@ -35,6 +35,7 @@ import {
   signEpPackage,
 } from '../sign-ep.mjs';
 import { generateKeyPairSync } from 'crypto';
+import { proVerdict as computeProVerdict } from '../pro-seam-gate.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pro checkout availability — fail-by-default, one opt-out for the whole family
@@ -42,26 +43,61 @@ import { generateKeyPairSync } from 'crypto';
 //
 // `packages/pro-extensions/sql-editor-pro` is a **separate git repository**,
 // gitignored by the host (`.gitignore:68`) and never cloned by the host-only CI
-// job. Four Pro-dependent checks used to be guarded by `if (!existsSync) return`
-// or `it.skipIf(...)` — i.e. they reported **green for a check that never ran**.
-// Two of them were bare `return`s, so they were not even visible as skips in the
-// reporter. That is the same defect class as the `panelStore` fixture's
-// provenance layer, on a different seam, and the rule is the same: a guard must
-// not report success for a check it did not run.
+// job. SIX checks in this file depend on that checkout. Two of them used to be
+// bare `if (!existsSync) return` guards — not even visible as skips in the
+// reporter — so they reported **green for a check that never ran**. That is the
+// same defect class as the `panelStore` fixture's provenance layer, on a
+// different seam, and the rule is the same: a guard must not report success for
+// a check it did not run.
 //
-// So the default is a FAILURE, carried by the named provisioning test plus one
-// self-describing error per check that needed the Pro (measured: 3 failures
-// together — the provisioning test, the `.dzx` build/sign, and peerDependencies
-// — each naming the exact check, so the cause is never ambiguous). The remaining
-// `vite.config.ts` probes genuinely cannot run without the Pro, so they skip
-// either way: when the absence is unacknowledged the suite is already red, and
-// when it is acknowledged the skip is the intended outcome.
+// Measured inventory of the six, in a 56-test file (this session, Pro absent):
 //
-// `DATAZEN_ALLOW_MISSING_PRO=1` is the single opt-out for **every** Pro-absent
-// gate in this repo (here, `src/components/sql-editor/__tests__/
-// proSettingsSeam.test.ts`, and `scripts/pro-seam-gate.mjs`), so an operator
-// acknowledges the whole family with one variable or none of it. The host-only CI
-// job sets it explicitly, with the reason recorded next to it in the workflow.
+//   3 HARD FAILURES when the absence is unacknowledged — the provisioning test,
+//   the `.dzx` build/sign, and peerDependencies. Each names the exact check, so
+//   the cause is never ambiguous. All three PASS when the absence is
+//   acknowledged: acknowledging means "this host has no Pro", which is a true
+//   statement about the checkout, not a suppression.
+//   2 `it.skipIf(skipProSource)` vite.config.ts probes. They genuinely cannot
+//   run without the Pro source, so when the absence is acknowledged they skip
+//   (2 skipped, 54 passed); when it is NOT acknowledged they RUN and fail
+//   (5 failed, 51 passed) — they are not a silent green either way.
+//   1 un-gated check, `keeps HOST_SHARED_MODULES a literal list`. It reads only
+//   the host-side table and zero Pro content, so gating it would have skipped a
+//   fully runnable check in CI for no benefit. It is deliberately NOT in the
+//   Pro family and is not counted as one.
+//
+// So: 3 hard failures + 2 probes + 1 ungated = 6. The "four" that an earlier
+// revision of this comment claimed counted only the guarded ones and omitted the
+// un-gated one; the number was wrong in a way that read as if less were gated
+// than actually are.
+//
+// `DATAZEN_ALLOW_MISSING_PRO=1` is the single opt-out for the Pro-absent gates in
+// the family that actually consult it — here, `src/components/sql-editor/__tests__/
+// proSettingsSeam.test.ts`, and `scripts/pro-seam-gate.mjs` — and all three now
+// read ONE shared `proVerdict()`, so an operator acknowledges the whole family
+// with one variable or none of it. The host-only CI job sets it explicitly, with
+// the reason recorded next to it in the workflow.
+//
+// ⚠️ It is NOT repo-wide, and an earlier revision of this comment claimed it was.
+// That claim is false and it matters. `packages/extension-points/src/__tests__/
+// security.test.ts` is a FOURTH Pro-dependent gate that never reads the variable
+// (measured: 0 occurrences of `ALLOW_MISSING_PRO`; it calls
+// `readFileSync(PRO_MANIFEST_PATH)` bare, at line 474, and ENOENTs). So setting
+// the opt-out in CI does not and cannot turn that file green — the host unit-test
+// step stays red there for reasons unrelated to these guards.
+//
+// The same over-claim was also corrected in the `proVerdict()` JSDoc in
+// `scripts/pro-seam-gate.mjs`, which had called itself "the single decision every
+// Pro-dependent guard makes". There are two copies because the claim was written
+// in two places; a third would be wrong for the same reason.
+//
+// ⚠️ Do not "fix" that ENOENT by teaching security.test.ts to check the opt-out.
+// It is the only one of the four Pro-dependent gates that does not consult the
+// variable, so it is currently the sole reason the unit-test step is red. Teaching
+// it to skip would turn that step green, and a green unit-test step is precisely
+// the signal a maintainer reads as "the Pro guards are fine" — at which point all
+// three guards above would silently skip at once. That is the false-green
+// channel, and it is loaded by making the suite look better.
 //
 // ⚠️ "This test is slow, so it should skip" is NOT a valid exemption. The Pro
 // build in `builds, signs, and writes .dzx for sql-editor-pro` costs 9.6–13.8s
@@ -75,20 +111,40 @@ import { generateKeyPairSync } from 'crypto';
 // attempting a build. Fail-by-default makes a Pro-less checkout *cheaper*, not
 // more expensive.
 const PRO_PKG_DIR = join(ROOT, 'packages/pro-extensions/sql-editor-pro');
-const proPresent = existsSync(join(PRO_PKG_DIR, 'package.json'));
-const allowMissingPro = process.env.DATAZEN_ALLOW_MISSING_PRO === '1';
 
-/** Skip Pro-dependent checks only when the absence has been acknowledged. */
-const proSkip = !proPresent;
+// The shared verdict — the SAME `proVerdict()` used by `scripts/pro-seam-gate.mjs`
+// and by the host seam guard in
+// `src/components/sql-editor/__tests__/proSettingsSeam.test.ts`. This file used to
+// ask its own question ("does `package.json` exist?") while the other two asked
+// theirs ("does `src/proFeatures.ts` exist?"), so a Pro directory that was
+// present-but-incomplete was RED here and a silent acknowledged skip in the other
+// two — three guards, one opt-out, three different verdicts for the same checkout.
+const proVerdict = computeProVerdict(ROOT);
+const proPresent = proVerdict.present;
+const allowMissingPro = proVerdict.allowMissing;
+
+/** Skip Pro-dependent checks only on the acknowledged, truly-absent path. */
+const proSkip = proVerdict.maySkip;
 
 /**
  * Gate a single Pro-dependent check.
  *
  * @returns `true` when the check may proceed, `false` only on the acknowledged
- *          no-Pro path. Throws (test failure) when the absence is unacknowledged.
+ *          no-Pro path. Throws (test failure) otherwise.
  */
 function requireProCheckout(what: string): boolean {
   if (proPresent) return true;
+  if (proVerdict.mustFail) {
+    // state=partial: the directory is here but incomplete. Not acknowledgeable —
+    // the opt-out means "no Pro here", which is false. Fail even though the
+    // env var is set, so the three guards cannot disagree about this checkout.
+    throw new Error(
+      `[pack-ep] "${what}" needs the real Pro checkout, which is PRESENT BUT ` +
+        `INCOMPLETE at ${PRO_PKG_DIR}. Missing: ${proVerdict.missing.join(', ')}. ` +
+        'DATAZEN_ALLOW_MISSING_PRO=1 does NOT apply: it acknowledges a checkout ' +
+        'with no Pro, not a broken one. Repair or remove the Pro checkout.',
+    );
+  }
   if (allowMissingPro) {
     console.warn(
       `[pack-ep] ACKNOWLEDGED SKIP — "${what}" did NOT run: no Pro checkout at ` +
@@ -108,11 +164,25 @@ function requireProCheckout(what: string): boolean {
 
 describe('Pro checkout provisioning (fail-by-default)', () => {
   it('provisions the real Pro package, or says so', () => {
-    // The single named failure carrying the whole family, so an unacknowledged
-    // absence is one actionable line rather than four unrelated errors.
+    // Carries the verdict for the whole family, so an unacknowledged absence or
+    // a partial checkout is ONE actionable, attributable line rather than a
+    // scattering of unrelated errors. It reports the shared three-state verdict
+    // verbatim, so a disagreement between this file and the other two guards is
+    // impossible by construction.
     if (proPresent) {
-      expect(existsSync(join(PRO_PKG_DIR, 'package.json'))).toBe(true);
+      expect(proVerdict.state).toBe('present');
+      expect(proVerdict.missing).toEqual([]);
       return;
+    }
+    if (proVerdict.mustFail) {
+      // state=partial — NEVER acknowledgeable.
+      throw new Error(
+        `Pro checkout is PRESENT BUT INCOMPLETE at ${PRO_PKG_DIR} ` +
+          `(missing: ${proVerdict.missing.join(', ')}). The Pro packaging contract ` +
+          'is UNTESTED and DATAZEN_ALLOW_MISSING_PRO=1 does not apply here: it ' +
+          'acknowledges a checkout with NO Pro, not a broken one. Repair or remove ' +
+          'the Pro checkout.',
+      );
     }
     expect(
       allowMissingPro,
@@ -700,7 +770,13 @@ describe('externalize / allow-list asymmetry probe (G1 red line)', () => {
     },
   );
 
-  it.skipIf(skipProSource)('keeps HOST_SHARED_MODULES a literal list, free of regexes', () => {
+  // NOTE: deliberately NOT gated on the Pro checkout. This case reads only the
+  // host's `HOST_SHARED_MODULES` table — no Pro content at all — so gating it
+  // would skip a fully runnable guard and make the suite pretend to cover less
+  // than it does. (It was previously `skipIf(!proPresent)`, which meant the
+  // host-only CI job skipped it for no reason.) Gate only what actually needs
+  // the Pro text below.
+  it('keeps HOST_SHARED_MODULES a literal list, free of regexes', () => {
     expect(HOST_SHARED_MODULES.every((entry: unknown) => typeof entry === 'string')).toBe(true);
     expect(HOST_SHARED_MODULES).not.toContain('/^@codemirror\\//');
   });

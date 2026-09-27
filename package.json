@@ -100,6 +100,7 @@
     "test:layers": "node scripts/check-module-layers.mjs",
     "test:boundaries": "node scripts/check-driver-import-boundaries.mjs",
     "test:pro-seam": "node scripts/pro-seam-gate.mjs",
+    "test:pro-guards": "node scripts/run-pro-guards.mjs",
     "test:version": "node scripts/check-version-consistency.mjs",
     "test:scripts": "vitest run scripts/__tests__",
     "test:rust:backup-i18n": "cargo test -p datazen --lib app_data_archive && cargo test -p datazen --lib i18n_locale && cargo test -p datazen --lib store::tests",
