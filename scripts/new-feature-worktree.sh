@@ -157,6 +157,8 @@ git -C "$MAIN" show-ref --verify --quiet "refs/heads/${BRANCH}" && PRE_BRANCH_EX
 
 CREATED_WT=0
 ROLLBACK_DONE=0
+# 1 = worktree 因有未提交改动被**刻意保留**（此时其分支仍被该 worktree 检出）
+WT_KEPT_DIRTY=0
 
 cleanup_hint() {
   printf '\n手动清理命令（确认无用后再执行）:\n  git -C %s worktree remove --force %s\n  git -C %s branch -D %s\n' \
@@ -167,12 +169,25 @@ rollback() {
   local reason=$1 dirty
   [ "$ROLLBACK_DONE" -eq 1 ] && return 0
   ROLLBACK_DONE=1
-  printf '\n⛔ 致命步骤失败，回滚本次调用创建的半成品（原因: %s）\n' "$reason" >&2
+  if [ "$CREATED_WT" -eq 1 ]; then
+    printf '\n⛔ 致命步骤失败，回滚本次调用创建的半成品（原因: %s）\n' "$reason" >&2
+  else
+    # CREATED_WT=0 ⇒ worktree 从未创建成功并通过登记自检 ⇒ 本次调用**没有创建过
+    # 任何需要回滚的对象**（NEW_WT_FORCE_FAIL=worktree 就在这一步之前炸，实测
+    # ${WT} 一个文件都不存在）。此时印「回滚本次调用创建的半成品」是空话。
+    printf '\n⛔ 致命步骤失败（原因: %s）\n' "$reason" >&2
+    if [ -e "$WT" ]; then
+      printf '⚠ worktree 未登记成功，回滚**不碰** %s（可能残留半成品，请人工确认后处理）\n' "$WT" >&2
+    else
+      printf 'ℹ 本次调用**尚未创建任何内容**（%s 不存在），无半成品可回滚。\n' "$WT" >&2
+    fi
+  fi
 
   if [ "$CREATED_WT" -eq 1 ]; then
     if git -C "$MAIN" worktree list --porcelain | grep -qx "worktree ${WT}"; then
       dirty=$(git -C "$WT" status --porcelain 2>/dev/null || true)
       if [ -n "$dirty" ]; then
+        WT_KEPT_DIRTY=1
         printf '⚠ worktree 内有改动，**不自动删除**（避免丢失工作）：\n%s\n' "$dirty" >&2
         cleanup_hint >&2
       elif git -C "$MAIN" worktree remove --force "$WT" 2>/dev/null; then
@@ -189,7 +204,16 @@ rollback() {
   fi
 
   if [ "$PRE_BRANCH_EXISTS" -eq 0 ] && git -C "$MAIN" show-ref --verify --quiet "refs/heads/${BRANCH}"; then
-    if git -C "$MAIN" branch -D "$BRANCH" >/dev/null 2>&1; then
+    if [ "$WT_KEPT_DIRTY" -eq 1 ]; then
+      # 分支仍被上面那个「有改动因而保留」的 worktree 检出 ⇒ git 必然拒绝删除它
+      # （实测：未跟踪文件与已跟踪文件被改两种脏形态下，worktree 与分支都完整留存）。
+      # 刻意**不**再跑 branch -D：跑它只会让 git 拒绝，然后把**安全策略的必然结果**
+      # 印成「删除失败，请手动删除」，读起来像回滚出了岔子 —— 那会诱导人手工
+      # rm -rf，而那才是真正丢数据的一步。
+      printf 'ℹ 分支 %s **未删除**：它仍被上面那个「有改动因而保留」的 worktree 检出，git 必然拒绝删除。\n' "$BRANCH" >&2
+      printf '  这是**预期行为**，不是回滚失败：你的改动一条都没丢，也**不要**用 rm -rf 绕过。\n' >&2
+      printf '  确认这些改动无用后，按上面「手动清理命令」的两条**按序**执行即可。\n' >&2
+    elif git -C "$MAIN" branch -D "$BRANCH" >/dev/null 2>&1; then
       printf '✔ 已删除本次创建的分支 %s\n' "$BRANCH" >&2
     else
       printf '⚠ 分支 %s 删除失败，请手动删除\n' "$BRANCH" >&2
@@ -329,6 +353,13 @@ read_host_ep_version() {
   printf '%s' "$v"
 }
 
+# Pro 侧 manifest 声明的 extensionPointsVersion（读不到就返回空串）
+read_pro_ep_version() {
+  local f="$1/manifest.json"
+  [ -f "$f" ] || { printf ''; return 0; }
+  node -e 'try{const m=require(process.argv[1]);process.stdout.write(String((m.engines||{}).extensionPointsVersion||""))}catch(e){}' "$f" 2>/dev/null || printf ''
+}
+
 PRO_N=$(count_pro_manifest_tests)
 if [ "$PRO_N" -gt 0 ]; then
   PRO_CONSEQUENCE="packages/extension-points/src/__tests__/security.test.ts 中读取该 manifest 的 ${PRO_N} 个用例会 ENOENT 失败（ENOENT: .../${PRO_REL}/manifest.json）——该失败与你的改动无关，请勿记为缺陷。"
@@ -344,7 +375,9 @@ git -C ${PRO_DEST} checkout <pro-branch>"
 
 note "Pro 检出（独立 git 仓，主仓 gitignored，按设计在 worktree 中不存在）"
 if [ -e "$PRO_DEST" ]; then
-  ok "Pro 检出已存在：${PRO_DEST}（跳过克隆）"
+  _pro_exist_branch=$(git -C "$PRO_DEST" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  _pro_exist_ep=$(read_pro_ep_version "$PRO_DEST")
+  ok "Pro 检出已存在：${PRO_DEST}（跳过克隆；分支 ${_pro_exist_branch:-<未知>}，manifest extensionPointsVersion=${_pro_exist_ep:-<未声明>}）"
 elif maybe_fail "pro" && [ -d "$PRO_SRC/.git" ]; then
   # local remote：主检出的 Pro 检出持有 productivity/* 等**仅本地**分支
   _pro_branch="${DATAZEN_PRO_BRANCH:-}"
@@ -362,7 +395,12 @@ elif maybe_fail "pro" && [ -d "$PRO_SRC/.git" ]; then
       "$PRO_CONSEQUENCE"
   elif git clone --quiet --no-hardlinks "$PRO_SRC" "$PRO_DEST" 2>/dev/null \
     && git -C "$PRO_DEST" checkout --quiet "$_pro_branch" 2>/dev/null; then
-    ok "Pro 检出：${PRO_DEST} @ ${_pro_branch}（从主检出作为 local remote 克隆）"
+    # 铺装成功 ≠ 版本正确：Pro 落在 main（ep 1.0.0）上时，克隆/checkout 依然成功，
+    # 紧接着的版本交叉核对却会把它推进「⚠ 未铺成」。不标版本，读者会看到同一个
+    # Pro 检出同时出现在 ✅ 与 ⚠ 两处而以为报告自相矛盾。⇒ 在 ✅ 条目上标出
+    # 分支与 manifest 的 extensionPointsVersion，让两处指向同一个值。
+    _pro_ep=$(read_pro_ep_version "$PRO_DEST")
+    ok "Pro 检出：${PRO_DEST} @ ${_pro_branch}（从主检出作为 local remote 克隆；manifest extensionPointsVersion=${_pro_ep:-<未声明>}）"
     if [ -n "${DATAZEN_PRO_BRANCH:-}" ]; then
       ok "Pro 分支来源：DATAZEN_PRO_BRANCH 显式指定 = ${_pro_branch}"
     else
@@ -383,7 +421,6 @@ elif maybe_fail "pro" && [ -d "$PRO_SRC/.git" ]; then
     fi
     # 契约版本交叉核对：Pro 落在 main 上会让 1.0.0 manifest 撞上 1.1.0 宿主
     _host_ep=$(read_host_ep_version)
-    _pro_ep=$(node -e 'try{const m=require(process.argv[1]);process.stdout.write(String((m.engines||{}).extensionPointsVersion||""))}catch(e){}' "$PRO_DEST/manifest.json" 2>/dev/null || printf '')
     if [ -n "$_host_ep" ] && [ -n "$_pro_ep" ] && [ "$_host_ep" != "$_pro_ep" ]; then
       skipped "Pro/宿主 EP 契约版本一致性" "Pro ${_pro_branch} 的 manifest 声明 extensionPointsVersion=${_pro_ep}，宿主 security.ts 为 ${_host_ep}" \
         "cd ${PRO_DEST} && git log --oneline -5 manifest.json   # 找一个已同步的 Pro 分支后 git -C ${PRO_DEST} checkout <那个分支>" \
