@@ -996,12 +996,27 @@ S 形绕行。同一套形态实测：**反向边 7/10 → 0/10，跨越 18 → 
 现有代码零收益，等出现第一个需要定位的调用点时再实现。规则本身仍然是**新写
 闭集 props 组件时的强制要求**，上表只是记录当前达成度，不是豁免。
 
-其中 `Dialog` 与 `PathInput` 还各有一条**既有**的定位通道，对它们而言契约
-已被另一套既有机制满足，不属于缺口：`Dialog` 的 `testId?: string` 在
-`packages/ui/src/Dialog.tsx:113` 经 `tid()` 应用，现有单测与 E2E 均以它定位；
-`PathInput` 的 `inputTestId?: string` 在 `packages/ui/src/PathInput.tsx:52`
-直接落到 `data-testid`。真正待补的是 `Label`、`Tabs`、`Slider` —— 这三个
-连专门的定位 prop 都没有。
+`PathInput` 与 `Dialog` 各自有一条既有定位通道，但**两者机制不同、结论也
+不同，不能合并陈述**：
+
+- **`PathInput` 是真正已覆盖的。** 它的 `inputTestId?: string` 在
+  `packages/ui/src/PathInput.tsx:52` **无条件**落到 `data-testid`，
+  不经 `tid()`，因此**任何构建里都存在**（普通构建、`VITE_E2E` 构建、
+  生产构建均同）。对 `PathInput` 而言，契约的意图已由既有机制真正满足。
+- **`Dialog` 只在 E2E 构建里有定位符，仍未实现契约。** 它的
+  `testId?: string` 在 `packages/ui/src/Dialog.tsx:113` 是经 `tid()` 应用的，
+  而 `tid()`（`packages/ui/src/tid.ts:6`）返回
+  `import.meta.env.VITE_E2E ? { 'data-testid': id } : {}` ——
+  **该属性只在 `VITE_E2E` 构建下存在，其他构建一律为空对象**。所以在
+  正常生产构建里，`Dialog` 既没有本契约，也没有任何自己的定位符。
+  上面「零调用点」这条延后理由对 `Dialog` 依然成立且未变；E2E-only 这个事实
+  说明的是它**不紧急**，**不是**说它已经完整。
+
+`Dialog` 的 `testId` 与 `PathInput` 的 `inputTestId` 都是既有 API，
+本节不建议改动它们，也不建议改 `tid()` 或 `VITE_E2E` 开关。
+
+真正待补的是 `Label`、`Tabs`、`Slider` —— 这三个连专门的定位 prop 都没有，
+任何构建下都无法被定位。
 
 契约两端都很窄，这是刻意的：
 
