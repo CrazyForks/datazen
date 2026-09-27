@@ -10,13 +10,22 @@ import path from 'node:path';
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SCRIPT = path.join(REPO_ROOT, 'scripts/aggregate-hub.mjs');
 
-/** 造一个临时协调目录，塞入指定轨道，再跑聚合器，返回生成的 hub.md 正文。 */
-function aggregate(tracks: Record<string, string>): string {
+/** 造一个临时协调目录，塞入指定轨道（可选 plan.md / 既有 hub.md），跑聚合器，返回 hub.md 正文。 */
+function aggregate(
+  tracks: Record<string, string>,
+  opts: { plan?: string; existingHub?: string } = {},
+): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'hub-'));
   for (const [id, content] of Object.entries(tracks)) {
     const trackDir = path.join(dir, 'tracks', id);
     mkdirSync(trackDir, { recursive: true });
     writeFileSync(path.join(trackDir, 'progress.md'), content, 'utf8');
+  }
+  if (opts.plan !== undefined) {
+    writeFileSync(path.join(dir, 'demo-plan.md'), opts.plan, 'utf8');
+  }
+  if (opts.existingHub !== undefined) {
+    writeFileSync(path.join(dir, 'hub.md'), opts.existingHub, 'utf8');
   }
   execFileSync('node', [SCRIPT, dir], { cwd: REPO_ROOT, encoding: 'utf8' });
   return readFileSync(path.join(dir, 'hub.md'), 'utf8');
@@ -106,5 +115,40 @@ describe('aggregate-hub 台账解析', () => {
     execFileSync('node', [SCRIPT, dir], { cwd: REPO_ROOT, encoding: 'utf8' });
     const hub = readFileSync(path.join(dir, 'hub.md'), 'utf8');
     expect(rowIn(hub, OVERVIEW, 'eps')).toContain('1 bugs');
+  });
+});
+
+describe('aggregate-hub 静态段落来源', () => {
+  it('优先采用 plan.md 的静态段落，而非既有 hub.md', () => {
+    // 回归：extractSection 此前只读 existingHub，plan.md 里手写的波次记录/风险
+    // 从不被消费，plan 文件形同虚设。
+    const hub = aggregate(
+      { alpha: '# Track: alpha\n\n- **状态**: CODING\n' },
+      {
+        plan: '## 波次记录\n\nPLAN-ONLY-WAVE-MARKER\n',
+        existingHub: '## 波次记录\n\nHUB-ONLY-WAVE-MARKER\n',
+      },
+    );
+    expect(hub).toContain('PLAN-ONLY-WAVE-MARKER');
+    expect(hub).not.toContain('HUB-ONLY-WAVE-MARKER');
+  });
+
+  it('plan.md 缺某段时回退到既有 hub.md，不丢历史', () => {
+    // plan 只写了波次记录；跨轨风险必须从旧 hub 继承，不能被 fallback 覆盖成「无明显冲突」。
+    const hub = aggregate(
+      { alpha: '# Track: alpha\n\n- **状态**: CODING\n' },
+      {
+        plan: '## 波次记录\n\nPLAN-ONLY-WAVE-MARKER\n',
+        existingHub: '## 波次记录\n\nOLD\n\n## 跨轨风险\n\nHUB-ONLY-RISK-MARKER\n',
+      },
+    );
+    expect(hub).toContain('PLAN-ONLY-WAVE-MARKER');
+    expect(hub).toContain('HUB-ONLY-RISK-MARKER');
+  });
+
+  it('两个来源都没有时使用内建兜底文案', () => {
+    const hub = aggregate({ alpha: '# Track: alpha\n\n- **状态**: CODING\n' });
+    expect(hub).toContain('## 波次记录');
+    expect(hub).toContain('## 跨轨风险');
   });
 });

@@ -88,6 +88,7 @@
 
 ## 波次记录
 
+
 ### Redis Workbench P0（集成分支 `feat/redis-workspace-ux`，基准 `ae65ae375`）
 
 - **Wave 0**（2026-09-21）：PRD v1.1.0 与原型落档；三条轨道 worktree 建立。
@@ -114,7 +115,25 @@
   - **教训**：同一文件被两轨以不同"切法"改动时（一轨拆模块、一轨升契约），git 的文本合并会**静默丢失语义** —— 判据必须是契约/语义（哪一侧的形状被冻结、被谁消费），不是"哪个分支更新"。合流前应查两轨是否都碰过同一文件的**不同抽象层**。
 - **R 阶段**（待执行）：见下方「R 阶段清单」。
 
+### Editor Productivity P0（集成分支 `feature/editor-productivity`，基准 `11c2f222a`）
+
+- **Wave 0**（方案定稿）：产出 `docs/development/editor-pro-productivity-plan.zh-CN.md`（567 行）。
+  五项锁定裁决：① Code Folding 落在 Pro，宿主只提供 compartment 槽位；② Split Pane 全部宿主侧；
+  ③ Query History 保持 SQLite，**不**做云同步；④ **收藏改文件优先存储**（ULID 文件名 + `--` front-matter，
+  退役 `favorite_queries` 表，目录树即同步单元，新增 `AppSettings.favoritesRoot`）；
+  ⑤ **不做文件系统监听**，只保留三个手动刷新触发点（面板打开 / 同步或拉取后 / 手动按钮）。
+- **Wave 1**（P0 地基，5 轨并行）：按**文件冲突面**而非功能相邻度拆轨。
+  探针 G1 实证纠正了一处误判：Pro 侧 `isBareExternal` 的宽正则与宿主侧 `HOST_SHARED_MODULES` 的
+  窄白名单之间的不对称是**刻意保留的探针**，不得「顺手统一」——统一会让新增 CodeMirror 包
+  从「构建期硬报错」退化为「静默打进产物」。`ep-runtime-globals` / `ep-hooks-settings` / `pane-layout`
+  三轨先行；`multi-cursor` 按用户裁决并入 Wave 1；`code-folding` 因与 `ep-hooks-settings`
+  争用 `editorExtensions.ts` 的 compartment 闭集而排在其后建轨。
+- 协调者自有基建修复：hub 聚合器三个同源解析缺陷（`状态` 因 Markdown 强调标记恒不匹配、
+  `Pro 分支` 子串覆盖宿主分支、开放 Bug 正则把 `(?:`\*\*`)` 放在冒号之后导致按规程登记的 Bug 一条都数不到），
+  修复于 `9a9027531` 并补 5 例回归测试；pre-commit 钩子此后自动执行该测试。
+
 ## 跨轨风险
+
 
 - **根 `tsc` 对驱动 UI 全盲** — ✅ **已关闭**（`driver-ui-type-gate` 轨 TEST_DONE，合流 `5524f8dce`）：`tsconfig.json:26` include 追加 `packages/drivers/*/ui`，`--listFiles` 实测驱动 UI 生产文件 109 个入程序、`__tests__` 混入 0；清掉 11 条生产 `error TS`（全在 `SearchableInfoPanel.tsx`：TS2345×7/TS6133×2/TS2322×1/TS2488×1；`consoleResultRenderer.tsx` 实测 0 条，非 1 条）。清理中挖出并修掉 2 个**真实行为 bug**（非纯类型）：`variant="outline"` 非法枚举值致按钮无样式、`reconstructInfo` 元组/对象解构错配致结构化回复被静默吞并二次 IPC。合流后 integrate 树 `npx tsc --noEmit` 0 错。
   - **残余**：驱动 UI `__tests__` 仍有 **42 条 error TS / 19 文件**未清，经由根 tsconfig 既有的 `packages/**/__tests__/**`、`*.test.*` exclude 豁免（与宿主测试同规则）⇒ 测试侧类型错误仍在门禁外，留作独立轨。文件行数自动门禁仍缺（仓内无）。
@@ -134,7 +153,33 @@
 - **`Cargo.lock` 的 ` M` 漂移不是 codegen 残留，是真实 lockfile 失同步**（W3 实证，此前被误判并反复 revert）：`cdcfdc833` 把 `flate2` 加进 `packages/drivers/redis/Cargo.toml`（`decode/compress.rs` 真的用它），但**已提交的 `Cargo.lock` 里 `datazen-driver-redis` 依赖列表没有 `flate2`** ⇒ 每次跑 cargo 都会重写那一行 ⇒ 每个 worktree 测完都显示 ` M Cargo.lock`。**正确处置**：把该行提交（已由协调者在集成分支修正），而不是 revert。判据：`git diff Cargo.lock` 只含依赖名增删（如 `+ "flate2",`）时是同步，含版本漂移时另议。
 - **merge 态下索引即提交内容**：merge 未完成时 `git commit` 会把**整个索引**写进 merge commit，任何游离的 staged 改动都会被静默卷走（本项目已两次踩中：`Cargo.lock` 被 W3-B 合流卷走、`coordinator.md` 险些被 E 轨合流卷走）。**规则**：merge 进行中，协调者不得在该 worktree 里暂存任何无关改动；提交方必须只 `git add` 冲突文件，并在提交后用 `git show --stat HEAD` 自查变更列表。
 
+- **`local-link` 分支跳过 EP 契约版本闸门**（协调者实证，非缺陷，按用户裁决维持现状）：
+  `packages/extension-points/src/security.ts:237-239` 在 `checkEngineCompatibility`（`:241`）之前
+  early-return，故**无签名**的 Pro 包不受版本闸门约束。实测同一份 `extensionPointsVersion: 99.99.99`
+  的清单，`dzx` → `ok:false / engine-incompatible`，`local-link` → `ok:true`。
+  判据只有「是否带签名」一项（`sourceKind: pkg.signatureContent ? 'dzx' : 'local-link'`）。
+  正常 pro 流程产物带签名（`signature.sig` 存在）故闸门生效。已按实测修正
+  `scripts/resolve-pro.mjs` 的生成注释（`0e64b9af9`）；`security.ts` 顶部的信任优先级措辞
+  待 `ep-hooks-settings` 交回后一并修正（该文件在跑轨道持有）。
+- **EP 契约版本 bump 必须与契约改动同批次**：`EXTENSION_POINTS_VERSION` 现为 `1.0.0`，
+  `checkEngineCompatibility` 用**精确字符串相等**（无 semver range、无协商窗口），失配即静默降级
+  community（仅 `console.error`，用户只看到功能凭空消失）。`ep-hooks-settings` 交付后，
+  合流时必须同步在集成分支的 Pro 侧 bump 并重签。
+  已排查：仓内两处硬编码 `'1.0.0'`（`epHotplugJourney.test.ts:263`、`pack-ep.test.ts:44`）
+  均为打包/签名测试的 fixture，不走版本闸门，不会被 bump 误伤。
+- **多光标死键的真实机制是挂载顺序，不是代码结构**（Track D 实证）：
+  `pasteExts` 在 `SqlEditor.tsx` 扩展数组中排在 `createBaseEditorExtensions`（内含 `defaultKeymap`）
+  **之后**，CodeMirror 6 同优先级下先注册者胜，故 `Shift-Alt-ArrowUp/Down → addCursorAbove/Below`
+  在 macOS 上被 `defaultKeymap` 的 `copyLineUp/Down` 吃掉。既有测试零覆盖
+  （只直接调 `selectNextOccurrence(view)`，绕过 keymap 分发），故死键从未被测出。
+  修复限定在 `multipleSelections.ts` 内用 `Prec` 提权，**禁止**改 `editorExtensions.ts` / `SqlEditor.tsx`。
+- **`compartments` 是模块级共享单例的固定闭集**（`statement, completion, intention, hover, paste, linter`），
+  新增槽位（如 code-folding 的 `fold`）会改动所有轨共用的 `editorExtensions.ts`。
+  这是 `code-folding` 必须排在 `ep-hooks-settings` 之后的唯一原因；单实例测试不足，
+  需覆盖多实例共享该单例的场景。
+
 ## R 阶段清单
+
 
 - [ ] 全量回归：`npx tsc --noEmit` + 宿主 vitest + `pnpm test:unit:drivers` + `cargo test -p datazen --lib`（W2 合流时已跑过一遍：tsc 0 错、宿主 451 文件 / 4658 例、驱动 47 文件 / 456 例 ×3、Rust 1454 通过 / 3 ignored + `datazen-driver-redis` 239 / 4；R 阶段仍需在主检出复跑一次）。
 - [ ] `node scripts/check-driver-import-boundaries.mjs --root` 在**主检出**复跑（worktree 缺 gitignored 的 git 驱动与 pro-extensions，结果不完整）。
@@ -149,3 +194,12 @@
 - [x] ~~驱动 UI 纳入类型门禁~~ — ✅ **已达成**（`driver-ui-type-gate`，合流 `5524f8dce`）：11 条存量生产 `error TS` 已清、`packages/drivers/*/ui` 已进根 `tsconfig.json` include、合流后 integrate 树 tsc 0 错。**剩余**：驱动 UI `__tests__` 的 42 条 error TS / 19 文件仍被既有 exclude 豁免（另立轨）；自动单文件行数门禁仍未建。
 - [x] ~~`RedisWorkbench.tsx` 行数~~ — 已由三轨共同消化：E 轨后 787 行、D 轨侧 369 行（E/D 合流后以实际为准，≤800 维持）。**未完成**：`cluster_topology.rs`（1164 行）、`ops_workbench.rs` 测试文件（1070+ 行）、`ops_tree_scan.rs`（988 行）与其 `tests.rs`（1072+ 行）的拆分留 R 阶段。
 - [x] ~~轨道 worktree / feature 分支清理~~（三条已合入的可在 R 阶段末删除）：`redis-tree-backend`、`redis-kv-contract`、`redis-codec-write`、`redis-console-safety`、`redis-kvbar-ui`、`redis-overview`、`driver-ui-type-gate` 共 **7 条**已清理；剩 `redis-tree-ui`、`redis-detail-ui` 两条在飞，合流后清理。
+
+- [ ] Editor Productivity Wave 1 五轨全部 `TEST_DONE` 后，在**主检出**复跑全量：
+      `npx tsc --noEmit` + `npx vitest run`（宿主）+ `pnpm test:unit:drivers` + `cargo test -p datazen --lib`。
+- [ ] `node scripts/check-driver-import-boundaries.mjs --root` 在**主检出**复跑（worktree 缺 gitignored 产物）。
+- [ ] 合流后强制走一次完整 Pro 打包：`rm -rf src-tauri/resources/builtin-ep/sql-editor-pro &&
+      node scripts/resolve-pro.mjs --edition=pro`，确认产物带 `signature.sig` 且
+      `engines.extensionPointsVersion` 与宿主 `EXTENSION_POINTS_VERSION` **同步 bump 后**一致。
+- [ ] `src/components/sql-editor/**` 位于 `vitest.config.ts` 覆盖率门禁**之外**，
+      故该目录「测试通过」是弱证据；每个涉及该目录的轨道，Tester 必须显式测量改动行覆盖率。

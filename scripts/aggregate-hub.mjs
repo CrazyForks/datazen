@@ -182,11 +182,17 @@ if (existingHub) {
 }
 
 // 提取静态/保留段落（波次记录、跨轨风险、R 阶段清单）
+// plan.md 是协调者手写的静态段落权威源；hub.md 只是历史遗留的载体。
+// 优先读 plan.md，plan 里没有该段时回退 hub.md，两者皆无才用 fallback。
+// （此前只读 existingHub，导致写进 plan.md 的静态段落从不被消费。）
 function extractSection(heading, fallback = '') {
-  if (!existingHub) return fallback;
   const regex = new RegExp(`##\\s+${heading}([\\s\\S]*?)(?=\\n##\\s+|$)`);
-  const match = existingHub.match(regex);
-  return match ? `## ${heading}${match[1]}`.trim() : fallback;
+  for (const src of [planContent, existingHub]) {
+    if (!src) continue;
+    const match = src.match(regex);
+    if (match) return `## ${heading}${match[1]}`.trim();
+  }
+  return fallback;
 }
 
 // 剥离可能存在的 AUTO-GENERATED 注释
