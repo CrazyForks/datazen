@@ -9,10 +9,10 @@
  */
 
 import { keymap, rectangularSelection, EditorView } from '@codemirror/view';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Prec } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
 import { selectNextOccurrence } from '@codemirror/search';
-import { addCursorAbove, addCursorBelow } from '@codemirror/commands';
+import { addCursorAbove, addCursorBelow, copyLineUp, copyLineDown } from '@codemirror/commands';
 
 /**
  * Multi-cursor extension for CodeMirror 6.
@@ -85,16 +85,71 @@ export function createMultipleSelectionsExtension(): Extension[] {
         run: addCursorBelow,
         preventDefault: true,
       },
+      /*
+       * copy line keeps a home now that Option+Shift+Up/Down is multi-cursor.
+       *
+       * `Mod-Shift-ArrowUp/Down` is free on Windows/Linux, where it is
+       * registered as a normal-precedence binding so it can never shadow the
+       * editor's own custom shortcuts. On macOS that chord is NOT free:
+       * `standardKeymap` owns it as { mac: "Cmd-ArrowUp", shift: selectDocStart },
+       * i.e. Cmd+Shift+Up selects to the start of the document. Leaving it
+       * alone (no Prec) preserves that core macOS gesture instead of breaking
+       * it — hence the mac-only four-modifier fallback below.
+       */
       {
-        key: 'Shift-Alt-ArrowUp',
-        run: addCursorAbove,
+        key: 'Mod-Shift-ArrowUp',
+        run: copyLineUp,
         preventDefault: true,
       },
       {
-        key: 'Shift-Alt-ArrowDown',
-        run: addCursorBelow,
+        key: 'Mod-Shift-ArrowDown',
+        run: copyLineDown,
+        preventDefault: true,
+      },
+      {
+        key: 'Alt-Shift-Mod-ArrowUp',
+        mac: 'Alt-Shift-Cmd-ArrowUp',
+        run: copyLineUp,
+        preventDefault: true,
+      },
+      {
+        key: 'Alt-Shift-Mod-ArrowDown',
+        mac: 'Alt-Shift-Cmd-ArrowDown',
+        run: copyLineDown,
         preventDefault: true,
       },
     ]),
+    /*
+     * KEYMAP PRECEDENCE — the actual fix for the dead Shift-Alt-Arrow* keys.
+     *
+     * CodeMirror resolves a keymap by facet precedence first and by
+     * registration order within one precedence. This extension is mounted
+     * through `compartments.paste.of(...)`, which comes AFTER
+     * `createBaseEditorExtensions()` in the SqlEditor extension array, so its
+     * plain `keymap.of(...)` above lost every conflict to the defaultKeymap
+     * registered in `editorExtensions.ts`.
+     *
+     * `@codemirror/commands` binds `Shift-Alt-ArrowUp/Down` to
+     * `copyLineUp/copyLineDown` with NO platform variant, so the conflict is
+     * NOT macOS-only — it exists on every platform.
+     *
+     * `Prec.high` lifts ONLY these two bindings above defaultKeymap. Raising
+     * the whole keymap would also outrank the editor's own custom shortcuts
+     * (execute / save / Tab), which this extension must not do.
+     */
+    Prec.high(
+      keymap.of([
+        {
+          key: 'Shift-Alt-ArrowUp',
+          run: addCursorAbove,
+          preventDefault: true,
+        },
+        {
+          key: 'Shift-Alt-ArrowDown',
+          run: addCursorBelow,
+          preventDefault: true,
+        },
+      ]),
+    ),
   ];
 }
