@@ -58,3 +58,8 @@ docs/development/coordination/
 - [编码简报模板 (coder-brief.md)](templates/coder-brief.md)
 - [测试简报模板 (tester-brief.md)](templates/tester-brief.md)
 - [接管简报模板 (rescuer-brief.md)](templates/rescuer-brief.md)
+
+## 5. 配套参考
+
+- [worktree-isolation.md](worktree-isolation.md) — worktree 隔离边界：哪些状态私有、哪些全局共享，
+  以及由此产生的引用移动、基准漂移、跨 worktree 基线不可比等干扰与对策。

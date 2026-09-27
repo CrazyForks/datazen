@@ -36,6 +36,10 @@ scripts/new-feature-worktree.sh <track-id> <base-branch>
 4. 复制主检出未跟踪的规格文档（保持 untracked）。
 5. 准备 `docs/development/coordination/tracks/<track-id>/` 目录。
 
+> **隔离边界**：worktree 只隔离工作目录文件与暂存区，**分支引用、对象库、分支 reflog 是全局共享的**。
+> 「各自在独立 worktree 工作」不保证合并阶段互不影响。合并安全性、临时 worktree 收尾、
+> 跨 worktree 测试基线不可比等，见 [worktree-isolation.md](worktree-isolation.md)。
+
 ## 3. 简报准备与派发
 
 从 `docs/development/subagent/templates/` 提取对应角色的简报模板，组装以下要素后使用 `Task` 工具派发全新实例：
