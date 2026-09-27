@@ -1,7 +1,7 @@
 //! Unified local-port tunnels for database connections.
 //!
 //! Drivers always connect to `127.0.0.1:<local_port>` when a tunnel is active.
-//! See `docs/architecture/rfc/http-https-websocket-tunnel.zh-CN.md`.
+//! See `docs/architecture/backend/tunnel.md`.
 
 mod http_proxy;
 mod websocket;

@@ -6,7 +6,10 @@
  *
  * Outputs directly to:
  * - site/assets/screenshots/
- * - docs/release-notes/screenshots/
+ *
+ * That directory is the single source of truth for every still used by the
+ * website, the release posts and `posts/`; the release posts link to it by
+ * remote URL, so no per-release copy is generated here.
  */
 import { browser, $ } from '@wdio/globals';
 import { assertGallerySize, ensureMaximized } from '../lib/capture-window';
@@ -16,7 +19,6 @@ import url from 'node:url';
 
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 const OUT_SITE = path.join(ROOT, 'site', 'assets', 'screenshots');
-const OUT_DOCS = path.join(ROOT, 'docs', 'release-notes', 'screenshots');
 
 const DEMO_PG_DB = process.env.E2E_DEMO_PG_DB || 'datazen_demo';
 const DEMO_PG_USER = process.env.E2E_DEMO_PG_USER || 'datazen_demo';
@@ -44,16 +46,13 @@ async function invoke<T = unknown>(cmd: string, args: Record<string, unknown> = 
 async function shot(name: string, settleMs = 800) {
   await browser.pause(settleMs);
   fs.mkdirSync(OUT_SITE, { recursive: true });
-  fs.mkdirSync(OUT_DOCS, { recursive: true });
 
   const sitePath = path.join(OUT_SITE, name);
-  const docsPath = path.join(OUT_DOCS, name);
 
   await browser.saveScreenshot(sitePath);
-  fs.copyFileSync(sitePath, docsPath);
 
   const size = fs.statSync(sitePath).size;
-  console.log(`[shot] ${name} (${size} bytes) -> saved to site & docs`);
+  console.log(`[shot] ${name} (${size} bytes) -> saved to site`);
 }
 
 /**
@@ -291,7 +290,6 @@ describe('SQL Editor Latest Features Screenshots', () => {
     await ensureMaximized();
     await assertGallerySize('editor-features before');
     fs.mkdirSync(OUT_SITE, { recursive: true });
-    fs.mkdirSync(OUT_DOCS, { recursive: true });
 
     // Save demo PostgreSQL connection explicitly pointing to DEMO_PG_DB
     await invoke('save_connection', {

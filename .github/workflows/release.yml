@@ -261,7 +261,7 @@ jobs:
 
   build:
     # Secrets (Deploy Keys, Windows signing) live in Environment "release"
-    # — see docs/development/ci-private-plugins.md
+    # — see docs/development/ci-private-drivers.md
     needs: [prepare-pro-extension, warm-driver-deps]
     environment: release
     permissions:
@@ -885,14 +885,24 @@ jobs:
         id: release-notes
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          NOTES_FILE="docs/release-notes/${TAG}-github.md"
-          if [ -f "$NOTES_FILE" ]; then
+          TAG="${GITHUB_REF_NAME}"            # e.g. v0.2.2
+          VERSION="${TAG#v}"                  # e.g. 0.2.2
+          NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
+          # Per-release prose is promotional material and is NOT committed (it lives
+          # in the local, gitignored `posts/`). The release body is therefore the
+          # matching CHANGELOG.md section — the only committed source of truth.
+          awk -v ver="${VERSION//./\\.}" '
+            $0 ~ "^## \\[" ver "\\]"  { found=1; next }
+            found && /^## \[/        { exit }
+            found                    { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+
+          if [ -s "$NOTES_FILE" ]; then
             echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
-            echo "✅ Found release notes: $NOTES_FILE"
+            echo "✅ Release body from CHANGELOG.md [$VERSION]"
           else
-            echo "⚠️ No release notes found at $NOTES_FILE, release body will be empty"
             echo "path=" >> "$GITHUB_OUTPUT"
+            echo "⚠️ No CHANGELOG.md section for [$VERSION], falling back to auto-generated notes"
           fi
 
       - name: Upload artifacts to release
@@ -903,6 +913,7 @@ jobs:
           draft: true
           files: artifacts/*
           body_path: ${{ steps.release-notes.outputs.path || '' }}
+          generate_release_notes: ${{ steps.release-notes.outputs.path == '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

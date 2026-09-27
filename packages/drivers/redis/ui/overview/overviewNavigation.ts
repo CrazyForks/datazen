@@ -18,9 +18,8 @@
  *              entry that does work today (left navigation tree), and the
  *              affordance carries `data-overview-jump="unwired"` for E2E.
  *
- * Wiring the bridge is a host-side follow-up (see
- * docs/development/coordination/tracks/redis-overview/progress.md, open issues);
- * 本轨不改宿主、不扩 `src/**`。
+ * Wiring the bridge is a host-side follow-up; this module never touches the host
+ * and never reaches outside the driver UI.
  */
 
 /** Where a 屏 A affordance wants to land. */

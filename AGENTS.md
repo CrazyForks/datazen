@@ -58,7 +58,8 @@ datazen/
 │   └── themes/                  # 旧 v1 ThemePack 存档
 ├── e2e/                         # Host WebdriverIO E2E（通用 UI / IPC；非驱动方言）
 ├── test/                        # 手工黑盒测试
-└── docs/                        # 文档：features/、architecture/、development/
+├── docs/                        # 入库文档：features/、architecture/、development/、blogs/
+└── posts/                       # 推广与发布文案本地存档（gitignored，不提交）
 ```
 
 ## 核心架构模式
@@ -178,7 +179,15 @@ cargo test -p datazen-driver-postgres  # 示例：某个驱动 crate 的 Rust �
 > 若某个 mock 确实只实现子集，请用精确断言（`as unknown as X`、`satisfies`、`Pick<>`）显式说明，
 > 禁止用 `any` 绕过；也不要为了让类型通过而删测试或删断言。
 
-多功能需求由主代理协调编码/测试子代理并行开发：三角色模型、bug 流转状态机、worktree 轨道编排与子代理恢复协议见 [docs/development/subagent/](docs/development/subagent/README.md)。
+并行开发用子代理时，主代理直接派发独立子任务并在汇总时验收；**不写进度台账、不写缺陷清单文件**——结论必须落在代码、测试和 `docs/` 的正式文档里（`docs/features/`、`docs/architecture/`、`docs/development/`）。推广与发布文案只写本地 `posts/`（gitignored）。
+
+### 文档维护纪律
+
+- 仓库只维护三类文档：功能使用（`docs/features/`）、代码架构（`docs/architecture/`）、开发流程（`docs/development/`）。索引见 [docs/README.md](docs/README.md)。
+- **不新增** PRD、设计稿、原型图、实施规范、开发进度、Bug List、评审记录类文档；这些是一次性过程产物，已交付即失效。
+- 需要长期留存的设计结论，**改写为「已实现」的事实**并入对应架构文档，而不是保留方案原文。
+- 引用文件路径、命令、IPC 名称、驱动数量等事实前先核对代码；删除或重构代码时同步删除失效引用。
+- 写完文档自查链接可达：`pnpm exec` 下的脚本与 CI 不会校验 Markdown 链接，失效引用只能靠人工/代理检查。
 
 ### E2E 测试
 

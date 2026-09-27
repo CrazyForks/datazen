@@ -10,12 +10,12 @@
  * before asserting (the frame these rules cover is the one *between* the render
  * that moves a selection and the effect that starts the next read).
  *
- * Mutation policy for this file (per the coordination ruling on BUG-001): each
+ * Mutation policy for this file: each
  * identity field of a read — database session, database index, key name — is
  * pinned by its own case, so dropping any one of them from the ownership token
  * reddens exactly that case instead of leaving a silent survivor.
  *
- * Assertion policy (PRD §7-6): `data-*` markers, i18n keys and values echoed by
+ * Assertion policy: `data-*` markers, i18n keys and values echoed by
  * Redis only. No rendered English copy is asserted anywhere in this file.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -219,7 +219,7 @@ describe('[fix:BUG-001] read ownership rule (publishRead, pure)', () => {
     expect(publishRead(settled, null)).toEqual(NOTHING);
   });
 
-  it('does not let another key\'s in-flight flag reach the renderer', () => {
+  it("does not let another key's in-flight flag reach the renderer", () => {
     // `loading` is published with the same ownership test as `info`: a borrowed
     // loading flag would name the new key `loading` before its own read exists,
     // which is the mirror image of the stale-payload bug.
@@ -315,9 +315,9 @@ describe('[fix:BUG-001] superseded replies (rendered through the statusBar slot)
 
     pending.get('sess-1|5|user:1')!.resolve(info({ ttlMs: 125_000 }));
     await waitFor(() =>
-      expect(container.querySelector('[data-status-state]')?.getAttribute('data-status-state')).toBe(
-        'ready',
-      ),
+      expect(
+        container.querySelector('[data-status-state]')?.getAttribute('data-status-state'),
+      ).toBe('ready'),
     );
     expect(container.querySelector('[data-part="size"]')?.textContent).toBe('640 B');
     expect(container.querySelector('[data-part="ttl"]')?.textContent).toBe('2m 05s');
@@ -356,9 +356,9 @@ describe('[fix:BUG-002] one round trip per key for the whole panel', () => {
     // `key_object_info` calls (each `SELECT` + pipeline) and 3 commands overall.
     expect(keysRead()).toEqual(['user:1']);
     expect(bar.container.querySelector('[data-part="type"]')?.textContent).toBe('hash');
-    expect(
-      side.container.querySelector('[data-attr="type"] dd')?.getAttribute('data-value'),
-    ).toBe('hash');
+    expect(side.container.querySelector('[data-attr="type"] dd')?.getAttribute('data-value')).toBe(
+      'hash',
+    );
     expect(
       side.container.querySelector('[data-attr="memory"] dd')?.getAttribute('data-value'),
     ).toBe('2.0 KB');
@@ -406,9 +406,9 @@ describe('[fix:BUG-002] one round trip per key for the whole panel', () => {
     fireEvent.click(side.container.querySelector('[data-testid="redis-kv-props-refresh"]')!);
     await waitFor(() => expect(propsState(side.container)).toBe('ready'));
     expect(readsOf('key_object_info')).toBe(1);
-    expect(
-      side.container.querySelector('[data-attr="type"] dd')?.getAttribute('data-value'),
-    ).toBe('zset');
+    expect(side.container.querySelector('[data-attr="type"] dd')?.getAttribute('data-value')).toBe(
+      'zset',
+    );
     // `reload` is still each slot's own attempt — the bar recovers on the next
     // selection, not on the drawer's refresh. Naming that split here so a later
     // round that shares the attempt across the panel flips this assertion on
@@ -443,9 +443,7 @@ const POLICY_SECTIONS = (policy: string) => ({
 
 function policyValue(container: HTMLElement): string | null {
   return (
-    container
-      .querySelector('[data-attr="maxmemory-policy"] dd')
-      ?.getAttribute('data-value') ?? null
+    container.querySelector('[data-attr="maxmemory-policy"] dd')?.getAttribute('data-value') ?? null
   );
 }
 
@@ -477,9 +475,7 @@ describe('[fix:BUG-003] the refresh action covers the policy row', () => {
     commandInvoke.mockImplementation((_plugin: string, command: string) => {
       if (command === 'key_object_info') return Promise.resolve(info({ freq: null }));
       policyReads += 1;
-      return Promise.resolve(
-        POLICY_SECTIONS(policyReads === 1 ? 'noeviction' : 'allkeys-lfu'),
-      );
+      return Promise.resolve(POLICY_SECTIONS(policyReads === 1 ? 'noeviction' : 'allkeys-lfu'));
     });
     const { container } = render(
       <RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />,

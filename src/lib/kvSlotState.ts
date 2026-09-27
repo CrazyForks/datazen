@@ -28,9 +28,8 @@
  *    render storm).
  *
  * The state is *published* by the driver and *read* by the slots — the host never
- * invents a fact and never caches one in front of this relay (see the BUG-005
- * ruling in `docs/development/coordination/tracks/redis-kvbar-ui/progress.md`:
- * state belongs to the UI segment that really owns it).
+ * invents a fact and never caches one in front of this relay: state belongs to
+ * the UI segment that really owns it.
  */
 import type { KvSlotState } from '@datazen/driver-sdk';
 

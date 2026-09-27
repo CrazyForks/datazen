@@ -165,3 +165,7 @@ e2e/.demo-recording-v2/
 e2e/demo-recording-v2.mp4
 e2e/demo-recording-v2.webm
 datazen-redis-work/
+
+# 推广/发布文案本地存档（Product Hunt、V2EX、头条、各版本发布说明与配图）。
+# 属于一次性对外物料，不是仓库资产：不提交、不参与构建、不被 CI 校验。
+/posts/

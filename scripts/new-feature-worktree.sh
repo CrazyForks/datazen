@@ -44,7 +44,7 @@ echo "▶ 驱动 codegen（basic）"
 echo "▶ 内置 locale codegen"
 ( cd "$WT" && node scripts/generate-builtin-locales.mjs )
 
-echo "▶ 拷贝主检出未跟踪的规格文档（保持未跟踪，禁止 git add）"
+echo "▶ 拷贝主检出未跟踪的本地文档（保持未跟踪，禁止 git add）"
 while IFS= read -r f; do
   rel="${f#${MAIN}/}"
   rel="${rel%/}"
@@ -59,16 +59,12 @@ while IFS= read -r f; do
     cp "$src" "$dest"
     echo "   + ${rel}（untracked）"
   fi
-done < <(git -C "$MAIN" status --porcelain docs/development | awk '$1=="??"{print $2}')
+done < <(git -C "$MAIN" status --porcelain --ignored --untracked-files=all posts docs | awk '$1=="??"||$1=="!!"{print $2}')
 
 if [ -f "${MAIN}/e2e/.env" ]; then
   cp "${MAIN}/e2e/.env" "${WT}/e2e/.env"
   echo "▶ e2e/.env 已拷贝"
 fi
-
-echo "▶ coordination tracks 目录准备（方案 B：各轨独立维护 tracks/<track>/，禁止修改或软链 hub.md）"
-COORD_DIR="${WT}/docs/development/coordination"
-mkdir -p "${COORD_DIR}/tracks/${TRACK}"
 
 cat <<EOF
 
@@ -76,6 +72,6 @@ cat <<EOF
 后续提醒:
   - 代理简报必须写明: 该工作目录 + 禁止修改其他检出
   - 简报环境注意三件套: Grep 工具搜索(禁 bash 全仓 grep) / CARGO_TARGET_DIR 策略 / 禁 add 未跟踪文档
-  - 进度管理: 各轨独立维护 tracks/${TRACK}/progress.md，禁止修改或提交 hub.md
-  - 活性与死亡恢复协议见 docs/development/subagent/README.md
+  - 开发进度与缺陷台账不写进仓库：结论直接落到代码、测试与 docs/ 正式文档
+  - 推广文案等本地物料在 posts/（gitignored），如需查阅见 AGENTS.md
 EOF

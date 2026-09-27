@@ -61,8 +61,6 @@ import url from 'node:url';
 
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..');
 const SITE_DIR = path.join(ROOT, 'site', 'assets', 'screenshots');
-/** Kept in step with the shot() helpers that write both. */
-const MIRROR_DIRS = [path.join(ROOT, 'docs', 'release-notes', 'screenshots')];
 
 const argv = process.argv.slice(2);
 const checkOnly = argv.includes('--check');
@@ -218,11 +216,6 @@ for (const s of offSize) {
     rewrite(src, path.join(OUT_DIR, s.f));
   } else {
     rewrite(src, src);
-    // Keep the docs mirror byte-identical to the site copy.
-    for (const dir of MIRROR_DIRS) {
-      const m = path.join(dir, s.f);
-      if (fs.existsSync(m)) fs.copyFileSync(src, m);
-    }
   }
 }
 console.log(
