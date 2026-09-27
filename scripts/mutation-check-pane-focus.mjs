@@ -94,9 +94,14 @@
  * not immutable after the call. A process.on('exit') listener still runs and can
  * set process.exitCode over it (set 7 -> 99 that way). The fold is bypassed
  * regardless; the number is only safe because nothing here registers such a
- * listener — checked by preloading a wrapper over process.on onto a real
- * PANE_MUTATION_FAULT=backup run, which reported none. Adding one would put 7
- * under the same "cannot co-occur" claim without the mechanism to back it.
+ * listener — checked, not assumed, by preloading a wrapper over process.on /
+ * .addListener / .prependListener / .once / .off / .removeListener onto a real
+ * PANE_MUTATION_FAULT=backup run: zero registrations. The coverage is deliberate.
+ * A wrapper over process.on alone sees 2 of the 4 registrations in a control that
+ * registers one through each of on/addListener/prependListener/once, so the
+ * narrower spy would have reported a false 0 exactly as convincingly. Adding an
+ * exit listener here would put 7 under this "cannot co-occur" claim with nothing
+ * behind it.
  *
  * `PANE_MUTATION_FAULT` is a debug-only fault injector (off by default), the
  * counterpart of `NEW_WT_FORCE_FAIL` in scripts/new-feature-worktree.sh. Each

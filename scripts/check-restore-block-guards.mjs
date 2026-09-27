@@ -13,30 +13,60 @@
  * first proof of the restore path found a *different* bare call in the same block.
  *
  * What it checks, and why each part is there:
- *   1. the `finally` block exists — otherwise the property is vacuously "true",
- *      and a deleted block would pass;
- *   2. every node:fs call in it sits at try-depth > 0;
- *   3. it contains no `throw` statement. This is what makes (2) sufficient rather
- *      than merely necessary: a guarded call inside a try whose catch re-throws is
- *      protected by nothing, and depth counting alone would call that safe.
+ *   1. every `finally` block in the file, and there is at least one. Taking only
+ *      the first one in the file was a bug in an earlier version of this checker:
+ *      a longer, compliant `try/finally` in a helper above the real block
+ *      satisfied the check on its behalf, and a bare `unlinkSync` in the actual
+ *      restore block passed with "ok" and exit 0. All of them are checked now,
+ *      and each finding names the block it came from so a decoy cannot mask the
+ *      real one;
+ *   2. every node:fs call in them sits inside a try/catch;
+ *   3. none contains a `throw` statement. This is what makes (2) sufficient
+ *      rather than merely necessary: a guarded call inside a try whose catch
+ *      re-throws is protected by nothing, and depth counting alone would call
+ *      that safe.
  *
  * Usage:
  *   node scripts/check-restore-block-guards.mjs           check the harness
  *   node scripts/check-restore-block-guards.mjs <file>    check some other file
  *   node scripts/check-restore-block-guards.mjs --selftest prove the check itself
+ *   pnpm check:restore-guards                             the same, by name
  *
  * Exit 0 = invariant holds. Exit 1 = it does not, and every offending line is
  * printed. Exit 2 = the file could not be read or does not have the expected
  * shape. The selftest exits 0 only if the check FAILS on the fixtures it is
  * supposed to fail on AND passes on the real file; a check that cannot report a
- * failure is worse than no check, so that is the point of `--selftest`.
+ * failure is worse than no check, so that is the point of `--selftest`. It also
+ * asserts the fixture inputs are pairwise distinct, since two identical inputs
+ * test one path and inflate the count — the "depth bug" fixture used to be a
+ * byte-for-byte copy of another one and was counted twice.
  *
- * Scope — read this before assuming it is a gate. Nothing in CI runs this: no
- * workflow and no npm script names it (grep the .github/ and package.json for
- * `check-restore-block-guards` and you get nothing). It is in the `files` list of
- * tsconfig.pack-ep.json, so `pnpm typecheck` checks its *types* — that is what
- * the list is for, and it says nothing about the harness being re-checked on
- * every commit. Run it by hand after touching the finally block.
+ * It is a gate, not a courtesy. `pnpm typecheck` runs it first, ahead of the tsc
+ * programs, and CI runs `pnpm typecheck` (.github/workflows/ci.yml), so a bare
+ * call in the restore block fails the build. It was previously wired to nothing
+ * at all, which made it worth exactly as much as remembering to run it; keeping
+ * it in the typecheck chain costs about 35 ms per run, of which roughly 23 ms is
+ * node startup, against tsc passes that take seconds. Putting it in
+ * tsconfig.pack-ep.json's `files` list remains about its *types* only, and is not
+ * what makes it a gate.
+ *
+ * Known limits, named because a tool that cannot see them is worse than one that
+ * does not check:
+ *   - `strip()` blanks comments and quoted strings but not regular-expression
+ *     literals, so a regex containing a quote blanks the rest of the file and the
+ *     run ends in "no `finally` block found" (exit 2). It refuses loudly rather
+ *     than passing wrongly; tell/slash is deliberately not special-cased.
+ *   - a call is identified by name, not by what it resolves to: a helper named
+ *     `rethrow(` is correctly not read as a throw statement, but equally a helper
+ *     that *does* re-throw is invisible. It reads the file, it does not run it.
+ *   - a `try { … } catch { … }` written on one line is handled, because the brace
+ *     stack is a separate pass; but the pairing pass looks ahead for a `catch`,
+ *     so an unterminated `try` at end of file is read as having none.
+ *
+ * The `files` list of tsconfig.pack-ep.json still cannot force a *future* new .mjs
+ * under scripts/ to be registered there: `files` plus `include: []` is a
+ * whitelist, not a discovery set. That is a property of that program, not
+ * something this file can fix from the inside.
  */
 
 import { readFileSync } from 'node:fs';
@@ -90,7 +120,7 @@ function strip(src) {
 }
 
 /**
- * @typedef {{ ok: boolean, blockFound: boolean, linesChecked: number, findings: string[] }} Verdict
+ * @typedef {{ ok: boolean, blockFound: boolean, blocksChecked: number, linesChecked: number, findings: string[] }} Verdict
  */
 
 /**
@@ -167,40 +197,22 @@ function blockTable(text, from, to) {
 }
 
 /**
- * The check itself, over a source string, so `--selftest` can feed it fixtures.
- * @param {string} src
- * @returns {Verdict}
+ * @param {string} ch
+ * @returns {boolean}
  */
-function checkSource(src) {
-  const text = strip(src);
-  const lineOf = (/** @type {number} */ i) => text.slice(0, i).split('\n').length;
+function isWordChar(ch) {
+  return ch !== undefined && /[A-Za-z0-9_$]/.test(ch);
+}
 
-  // Locate the `finally` block by its keyword, not by the shape of a line, so a
-  // reformatted `} finally {` does not silently stop being checked.
-  const fin = /finally\s*\{/.exec(text);
-  if (!fin) {
-    return {
-      ok: false,
-      blockFound: false,
-      linesChecked: 0,
-      findings: ['no `finally` block found — the invariant is vacuous without one'],
-    };
-  }
-  const open = fin.index + fin[0].length - 1;
-  // Recompute the matching close for this specific block (the table below covers
-  // only up to here, so a stray brace later in the file cannot skew it).
-  let depth = 0;
-  let close = text.length;
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}') {
-      depth--;
-      if (depth === 0) {
-        close = i;
-        break;
-      }
-    }
-  }
+/**
+ * The check for ONE `finally` block, delimited by its own open and close braces.
+ * @param {string} text already stripped
+ * @param {number} open index of the block's `{`
+ * @param {number} close index of the block's matching `}`
+ * @returns {{ findings: string[], linesChecked: number }}
+ */
+function scanBlock(text, open, close) {
+  const lineOf = (/** @type {number} */ i) => text.slice(0, i).split('\n').length;
   const table = blockTable(text, open, close);
   const bodyStart = open + 1;
   const linesChecked = text.slice(bodyStart, close).split('\n').length;
@@ -225,7 +237,7 @@ function checkSource(src) {
       if (!text.startsWith(fn, i)) continue;
       // Skip when the previous character IS a word char — that means we are inside
       // a longer identifier, e.g. the tail of `myUnlinkSync(`.
-      if (/[A-Za-z0-9_$]/.test(text[i - 1] ?? ' ')) continue;
+      if (isWordChar(text[i - 1])) continue;
       const after = text[i + fn.length];
       if (after !== '(') continue;
       // A declaration does not throw: `function unlinkSync(` is a definition.
@@ -235,7 +247,9 @@ function checkSource(src) {
       }
       i += fn.length;
     }
-    if (text.startsWith('throw', i) && !/[A-Za-z0-9_$]/.test(text[i + 5] ?? ' ')) {
+    // Both boundaries matter: the right one keeps `throwx` out, the left one keeps
+    // `rethrow(` out — that is an identifier, and it is not a throw statement.
+    if (text.startsWith('throw', i) && !isWordChar(text[i + 5]) && !isWordChar(text[i - 1])) {
       findings.push(`line ${lineOf(i)}: throw in the block — a re-throw escapes the try it sits in`);
     }
   }
@@ -245,18 +259,101 @@ function checkSource(src) {
         `vacuously, so this is reported rather than trusted`,
     );
   }
-  return { ok: findings.length === 0, blockFound: true, linesChecked, findings };
+  return { findings, linesChecked };
+}
+
+/**
+ * The check itself, over a source string, so `--selftest` can feed it fixtures.
+ *
+ * Every `finally` block in the file is checked, and all of them must hold. Taking
+ * only the first one is the bug this function used to have: the block it checked
+ * was whichever came first in the file, so a longer, compliant `try/finally` in a
+ * helper ABOVE the real one satisfied the check on its behalf and a bare
+ * `unlinkSync` in the actual restore block passed as "ok". Requiring all of them
+ * is stricter than the invariant, which is scoped to the harness's own block; a
+ * helper with a deliberately bare fs call in a finally would be reported too. The
+ * finding prints the line of the block it came from, so an unrelated helper
+ * cannot mask the real one by being the one that trips.
+ *
+ * @param {string} src
+ * @returns {Verdict}
+ */
+function checkSource(src) {
+  const text = strip(src);
+  const lineOf = (/** @type {number} */ i) => text.slice(0, i).split('\n').length;
+
+  // Locate every `finally` block by its keyword, not by the shape of a line, so a
+  // reformatted `} finally {` does not silently stop being checked.
+  /** @type {number[]} */
+  const opens = [];
+  const re = /finally\s*\{/g;
+  let m = re.exec(text);
+  while (m !== null) {
+    opens.push(m.index + m[0].length - 1);
+    m = re.exec(text);
+  }
+  if (opens.length === 0) {
+    return {
+      ok: false,
+      blockFound: false,
+      blocksChecked: 0,
+      linesChecked: 0,
+      findings: ['no `finally` block found — the invariant is vacuous without one'],
+    };
+  }
+
+  /** @type {string[]} */
+  const findings = [];
+  let linesChecked = 0;
+  for (const open of opens) {
+    // Recompute the matching close for this specific block, so a stray brace
+    // later in the file cannot skew it.
+    let depth = 0;
+    let close = text.length;
+    for (let i = open; i < text.length; i++) {
+      if (text[i] === '{') depth++;
+      else if (text[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          close = i;
+          break;
+        }
+      }
+    }
+    const one = scanBlock(text, open, close);
+    linesChecked += one.linesChecked;
+    for (const f of one.findings) findings.push(`finally block at line ${lineOf(open)}: ${f}`);
+  }
+  return { ok: findings.length === 0, blockFound: true, blocksChecked: opens.length, linesChecked, findings };
 }
 
 /**
  * Fixtures that the check MUST fail on, plus the real file that it must pass.
  * Without these a silently-broken check would report "invariant holds" forever.
+ *
+ * The selftest also asserts these inputs are pairwise distinct, because two
+ * fixtures that are the same string test the same code path and inflate the
+ * count. That is not hypothetical: the "depth bug" fixture used to be a
+ * byte-identical copy of the "one bare unlinkSync" one, differing only in `name`,
+ * so the regression it was named for was never independently pinned. It is now a
+ * different input exercising a different path.
  * @returns {{ name: string, src: string, expect: boolean }[]}
  */
 function fixtures() {
   const head = 'const STORE = "x";\ntry {\n  run();\n';
   const tail = '\n} catch (err) {\n  record(err);\n} finally {\n';
   const end = '\n}\nprocess.exitCode = 0;\n';
+  // A helper whose finally is long and fully compliant — the exact decoy from the
+  // bug this file was fixed for: while the check read only the FIRST finally in
+  // the file, this block satisfied it on behalf of the real one below.
+  const decoy =
+    'function helper() {\n' +
+    '  try {\n    doWork();\n  } finally {\n' +
+    '    try { releaseLock(); } catch (e) { note(e); }\n' +
+    '    try { flushMetrics(); } catch (e) { note(e); }\n' +
+    '    try { closeSocket(); } catch (e) { note(e); }\n' +
+    '  }\n' +
+    '}\n';
   return [
     {
       name: 'all four calls guarded (must PASS)',
@@ -289,13 +386,16 @@ function fixtures() {
       expect: false,
     },
     {
-      name: 'single-line try/catch, then a bare call after it (must FAIL — the depth bug)',
+      // Different bytes from the "one bare unlinkSync" fixture, a different bare
+      // call, and no writeFileSync to carry the earlier assertion: the earlier
+      // single-line `try { … } catch { … }` leaks one level of try-depth, so
+      // without the brace-stack pass every later call looks guarded.
+      name: 'single-line try/catch leaking depth, then a bare chmodSync (must FAIL)',
       src:
-        head +
-        tail +
-        '  try { writeFileSync(STORE, a); } catch (e) { note(e); }\n' +
-        '  // padding so this fixture fails for the bare call and nothing else\n' +
-        '  // padding\n  unlinkSync(STORE);\n' + end,
+        head + tail +
+        '  try { readFileSync(STORE); } catch (e) { note(e); }\n' +
+        '  // distinct from the unlinkSync fixture: different call, no earlier one to lean on\n' +
+        '  // padding\n  // padding\n  // padding\n  chmodSync(STORE, 0o644);\n' + end,
       expect: false,
     },
     {
@@ -316,6 +416,33 @@ function fixtures() {
       expect: false,
     },
     {
+      name: 'a longer compliant finally ABOVE a bare unlinkSync (must FAIL — the decoy)',
+      src:
+        decoy + head + tail + '  unlinkSync(STORE);\n' + end,
+      expect: false,
+    },
+    {
+      // The positive twin of the decoy: adding a compliant helper must not turn
+      // the check red. Without this, "require all blocks" could be satisfied by
+      // failing on every file instead of by looking at the right one.
+      name: 'the same compliant helper above a fully guarded block (must PASS)',
+      src:
+        decoy + head + tail +
+        '  // padding\n  // padding\n  try { unlinkSync(STORE); } catch (e) { note(e); }\n' + end,
+      expect: true,
+    },
+    {
+      // Documents a limit rather than a fix: `rethrow(` is an identifier, so the
+      // `throw` keyword is not there. But a wrapper that does re-throw is equally
+      // invisible — the checker reads this file, it does not call it.
+      name: 'a helper named rethrow( is not a throw statement (must PASS — known limit)',
+      src:
+        head + tail +
+        '  // padding so this fixture stands or falls on the identifier alone\n' +
+        '  // padding\n  try { unlinkSync(STORE); } catch (e) { rethrow(e); }\n' + end,
+      expect: true,
+    },
+    {
       name: 'no finally block at all (must FAIL — vacuous truth is not a pass)',
       src: head + '  run();\n}\nprocess.exitCode = 0;\n',
       expect: false,
@@ -330,7 +457,24 @@ function fixtures() {
 function main(args) {
   if (args.includes('--selftest')) {
     let bad = 0;
-    for (const f of fixtures()) {
+    const cases = fixtures();
+    // Distinctness first: a duplicate input tests nothing new, and the previous
+    // version of this file counted one and called it a regression.
+    const seen = new Map();
+    for (const f of cases) {
+      const dup = seen.get(f.src);
+      if (dup !== undefined) {
+        bad++;
+        console.log(`  FAIL  duplicate fixture input — same bytes as "${dup}" — ${f.name}`);
+      } else {
+        seen.set(f.src, f.name);
+      }
+    }
+    console.log(
+      `  ${seen.size === cases.length ? 'ok   ' : 'FAIL '} ${cases.length} fixtures, ` +
+        `${seen.size} distinct inputs\n`,
+    );
+    for (const f of cases) {
       const v = checkSource(f.src);
       const pass = v.ok === f.expect;
       if (!pass) bad++;
@@ -342,7 +486,7 @@ function main(args) {
     const real = checkSource(readFileSync(resolve(HARNESS), 'utf8'));
     const realOk = real.ok;
     if (!realOk) bad++;
-    console.log(`  ${realOk ? 'ok  ' : 'FAIL'}  expected PASS, got ${real.ok ? 'PASS' : 'FAIL'}  — the real ${HARNESS}`);
+    console.log(`  ${realOk ? 'ok  ' : 'FAIL'}  expected PASS, got ${real.ok ? 'PASS' : 'FAIL'}  — the real ${HARNESS} (${real.blocksChecked} finally block(s))`);
     for (const line of real.findings) console.log(`          ${line}`);
     console.log(bad === 0 ? '\nselftest: the check can report failure. good.' : `\nselftest: ${bad} case(s) wrong.`);
     return bad === 0 ? 0 : 1;
@@ -351,7 +495,9 @@ function main(args) {
   const target = args.find((a) => !a.startsWith('--')) ?? HARNESS;
   const verdict = checkSource(readFileSync(resolve(target), 'utf8'));
   if (verdict.ok) {
-    console.log(`ok: every fs call in the finally block of ${target} is guarded, and nothing there throws.`);
+    console.log(
+      `ok: all ${verdict.blocksChecked} finally block(s) of ${target} are guarded, and nothing there throws.`,
+    );
     return 0;
   }
   console.error(`✖ the finally block of ${target} can throw:`);
