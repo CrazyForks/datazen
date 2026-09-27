@@ -1,16 +1,30 @@
 /**
- * [tester] Every action that touches pane focus must go through `syncPaneFocus`.
+ * [tester] Every focus-touching action must route through `syncPaneFocus` **and
+ * actually drop the entries it should** — pinned by mutation, not by reading.
  *
  * `focusedPaneIdByPanel` has exactly one writer (`syncPaneFocus`, plus the two
  * whole-state literals at module scope and in `reset`). A reader cannot tell from
  * reading the code whether an action actually uses it, so the rule is pinned the
  * only way a store rule can be: by **mutation**.
  *
- * The accompanying harness `scripts-tester-mutation-pane-focus.py` reverts each
- * of the actions below to its pre-BUG-001 shape (a plain `activePanelId` write,
- * a plain global `focusedPaneId` write, or no focus patch at all) and requires
- * this file to go red. The first run of that harness caught 7/15 mutations; the
- * six that survived are exactly the six behaviours pinned here.
+ * Harness: `scripts/mutation-check-pane-focus.mjs` (`node scripts/mutation-check-pane-focus.mjs`).
+ * It reverts each action to its pre-BUG-001 shape — a plain `activePanelId`
+ * write, a plain global `focusedPaneId` write, or no focus patch at all — and
+ * requires this file to go red.
+ *
+ * Two things this file has to get right, both learned the hard way:
+ *
+ *  1. **A guard is only a guard if the mutation actually reaches it.** A test that
+ *     drives an action in a state where the state it maintains was never created
+ *     is green under every mutation. `addPanel(A); removePanel(A);` on an unsplit
+ *     tab is the textbook case: there is no entry to prune, so a removed prune
+ *     changes nothing. Every closing action below therefore removes a tab that
+ *     *holds* a focus entry, asserted before the removal.
+ *  2. **The surviving mutation count is a measurement, not a promise.** The three
+ *     holes this file used to carry (`removePanel`, `closePanelsToTheRight`, and
+ *     `closePane`'s `clearsFocus` predicate) were each 0-red here while still
+ *     being caught by other files in the suite. See the header of
+ *     `scripts/mutation-check-pane-focus.mjs` for the scope it measures.
  */
 
 import { describe, expect, it, beforeEach, vi } from 'vitest';
@@ -67,6 +81,7 @@ const B = 'panel-q-2';
 const C = 'panel-q-3';
 const TBL = 'panel-tbl-1';
 const P2 = 'p2';
+const P3 = 'p3';
 
 describe('[tester] every focus-touching action goes through syncPaneFocus', () => {
   let usePanelStore: typeof import('../panelStore').usePanelStore;
@@ -152,6 +167,31 @@ describe('[tester] every focus-touching action goes through syncPaneFocus', () =
     expect(route(A)).toBe(`${A}::${P2}`);
   });
 
+  it('removePanel: drops the focus entry of the tab it removes', () => {
+    st().addPanel(makeQueryPanel(A));
+    st().addPanel(makeQueryPanel(B));
+    st().addPanel(makeQueryPanel(C, 'cfg-2'));
+    st().openPane(A, P2);
+    st().openPane(B, P2);
+    st().openPane(C, P2);
+    st().setActivePanel(B);
+    expect(Object.keys(st().focusedPaneIdByPanel).sort()).toEqual([A, B, C].sort());
+
+    st().removePanel(A);
+
+    // A *held* a focus entry, so the prune pass has something to do here. That
+    // precondition is the whole point: `addPanel(A); removePanel(A);` on an
+    // unsplit tab prunes nothing, so a missing prune is invisible to it — which
+    // is how `removePanel` stayed unguarded.
+    expect(Object.keys(st().focusedPaneIdByPanel)).not.toContain(A);
+    // Asserted by equality, not by presence: "A is absent" alone would also pass
+    // a prune that wrongly dropped the surviving tabs' entries.
+    expect(st().focusedPaneIdByPanel).toEqual({ [B]: P2, [C]: P2 });
+    expect(st().panels.map((p) => p.id)).toEqual([B, C]);
+    expect(st().activePanelId).toBe(B);
+    expect(st().focusedPaneId).toBe(P2);
+  });
+
   it('removeAllForConnection: drops the focus of every tab it removes', () => {
     st().addPanel(makeQueryPanel(A));
     st().addPanel(makeQueryPanel(B));
@@ -230,6 +270,26 @@ describe('[tester] every focus-touching action goes through syncPaneFocus', () =
     expect(st().focusedPaneId).toBeNull();
   });
 
+  it('closePanelsToTheRight: drops the focus of every tab it closes', () => {
+    st().addPanel(makeQueryPanel(A));
+    st().addPanel(makeQueryPanel(B));
+    st().addPanel(makeQueryPanel(C, 'cfg-2'));
+    st().openPane(A, P2);
+    st().openPane(B, P2);
+    st().openPane(C, P2);
+    st().setActivePanel(A);
+    expect(Object.keys(st().focusedPaneIdByPanel).sort()).toEqual([A, B, C].sort());
+
+    st().closePanelsToTheRight(A);
+
+    expect(st().panels.map((p) => p.id)).toEqual([A]);
+    // B and C each held an entry and both tabs are gone, so both entries must be
+    // gone too — the tab on the left of the cut keeps its own.
+    expect(st().focusedPaneIdByPanel).toEqual({ [A]: P2 });
+    expect(st().activePanelId).toBe(A);
+    expect(st().focusedPaneId).toBe(P2);
+  });
+
   it('closePanelsToTheLeft: drops the focus of the tabs it closes', () => {
     st().addPanel(makeQueryPanel(A));
     st().addPanel(makeQueryPanel(B));
@@ -245,6 +305,57 @@ describe('[tester] every focus-touching action goes through syncPaneFocus', () =
     expect(st().focusedPaneIdByPanel).toEqual({ [C]: P2 });
     expect(st().activePanelId).toBe(C);
     expect(st().focusedPaneId).toBe(P2);
+  });
+
+  it('closePane: the closed pane loses the focus of its own tab, and nothing else', () => {
+    st().addPanel(makeQueryPanel(A));
+    st().addPanel(makeQueryPanel(B));
+    st().openPane(A, P2);
+    st().openPane(B, P2);
+    st().updateSql(A, 'SELECT 1');
+    st().updateSql(A, 'SELECT 2', P2);
+    st().setActivePanel(A);
+    expect(st().focusedPaneIdByPanel).toEqual({ [A]: P2, [B]: P2 });
+    expect(st().focusedPaneId).toBe(P2);
+    expect(st().queryExec.has(`${A}::${P2}`)).toBe(true);
+
+    st().closePane(A, P2);
+
+    // `clearsFocus` is what decides whether the closed pane's tab drops its
+    // entry. Force it to `false` and the entry survives while the pane's exec
+    // entry does not — the focus ends up naming a pane that no longer exists,
+    // so the editor routes to a key nothing can resolve.
+    expect(st().queryExec.has(`${A}::${P2}`)).toBe(false);
+    expect(st().focusedPaneIdByPanel).toEqual({ [B]: P2 });
+    expect(st().focusedPaneId).toBeNull();
+
+    // Behavioural form of the same claim: the pane key the editor would route to
+    // is always a key that still has exec state. (B's entry is untouched by a
+    // pane close in A — that is the "and nothing else" half.)
+    expect(st().queryExec.has(route(A))).toBe(true);
+    st().setActivePanel(B);
+    expect(st().focusedPaneId).toBe(P2);
+    expect(st().queryExec.has(route(B))).toBe(true);
+  });
+
+  it('closePane: closing an *unfocused* pane leaves its tab focus where it was', () => {
+    st().addPanel(makeQueryPanel(A));
+    st().openPane(A, P2);
+    st().openPane(A, P3);
+    st().openPane(A, P2);
+    st().setActivePanel(A);
+    expect(st().focusedPaneIdByPanel).toEqual({ [A]: P2 });
+    expect(st().queryExec.has(`${A}::${P3}`)).toBe(true);
+
+    st().closePane(A, P3);
+
+    // `clearsFocus` must be false here: p3 is not the pane that held the focus.
+    // Always clearing would drop the entry and hand the tab back to its default
+    // pane even though the pane the user was working in is still open.
+    expect(st().focusedPaneIdByPanel).toEqual({ [A]: P2 });
+    expect(st().focusedPaneId).toBe(P2);
+    expect(st().queryExec.has(`${A}::${P2}`)).toBe(true);
+    expect(st().queryExec.has(route(A))).toBe(true);
   });
 
   it('reset: clears the focus map, not just the mirror', () => {
@@ -297,9 +408,22 @@ describe('[tester] every focus-touching action goes through syncPaneFocus', () =
     st().closePane(A, P2);
     st().closeOtherPanels(B);
     st().closeAllPanels();
+    // A must hold a focus entry before it is removed, or the removal prunes
+    // nothing and the sequence below cannot tell a missing prune from a correct
+    // one. The mirror invariant alone also cannot see it (a stale entry for a
+    // closed tab still satisfies "mirror == map[active]"), so the map is checked
+    // directly here.
     st().addPanel(makeQueryPanel(A));
+    st().openPane(A, P2);
     st().removePanel(A);
+    expect(st().focusedPaneIdByPanel).toEqual({});
     st().addPanel(makeQueryPanel(A));
+    st().addPanel(makeQueryPanel(B));
+    st().openPane(A, P2);
+    st().openPane(B, P2);
+    st().setActivePanel(A);
+    st().closePanelsToTheRight(A);
+    expect(st().focusedPaneIdByPanel).toEqual({ [A]: P2 });
     st().reset();
 
     expect(violations).toEqual([]);
@@ -324,6 +448,24 @@ describe('[tester] every focus-touching action goes through syncPaneFocus', () =
     st().closeAllPanels();
     expect(orphanEntries()).toEqual([]);
     st().reset();
+    expect(orphanEntries()).toEqual([]);
+
+    // Every remaining closing action, each with the closed tab(s) actually
+    // holding an entry — an orphan can only be *produced* by a tab that had one.
+    st().addPanel(makeQueryPanel(A));
+    st().addPanel(makeQueryPanel(B));
+    st().addPanel(makeQueryPanel(C, 'cfg-2'));
+    st().openPane(A, P2);
+    st().openPane(B, P2);
+    st().openPane(C, P2);
+
+    st().removePanel(A);
+    expect(orphanEntries()).toEqual([]);
+    st().closePanelsToTheRight(B);
+    expect(orphanEntries()).toEqual([]);
+    st().closePanelsToTheLeft(C);
+    expect(orphanEntries()).toEqual([]);
+    st().closeOtherPanels(C);
     expect(orphanEntries()).toEqual([]);
   });
 });
