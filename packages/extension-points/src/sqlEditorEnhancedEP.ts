@@ -5,6 +5,7 @@
  * Host ships a no-op fallback; enhanced extensions register the implementation.
  */
 import type { Extension } from '@codemirror/state';
+import type { KeyBinding } from '@codemirror/view';
 import type { CompletionSource } from '@codemirror/autocomplete';
 import type React from 'react';
 import { createExtensionPoint } from './extensionPoints';
@@ -56,6 +57,19 @@ export interface ExtensionSettingsContribution {
   renderGroup?: (props: ExtensionGroupRenderProps) => React.ReactNode;
 }
 
+/**
+ * A privileged extension's contribution to a host-owned React panel slot.
+ *
+ * The host owns the frame (placement, styling, lifecycle); the extension owns
+ * only what goes inside it, plus an optional teardown hook.
+ */
+export interface EditorPanelSlot {
+  /** Render the panel body. */
+  render: () => React.ReactNode;
+  /** Teardown for subscriptions/timers owned by the panel. */
+  dispose?: () => void;
+}
+
 export interface SqlEditorEnhancedFeatures {
   /** Pro-only visual SQL query builder UI and lifecycle. */
   queryBuilder?: QueryBuilderContribution;
@@ -99,6 +113,35 @@ export interface SqlEditorEnhancedFeatures {
     opts: SqlEditorEnhancedOptions,
     refs: SqlEditorEnhancedOptions,
   ) => Extension[];
+  /**
+   * Generic escape hatch for capabilities the host has no dedicated slot for.
+   *
+   * The host installs the result in its own re-configurable `extra` compartment
+   * (e.g. code folding), so the extension never needs a host release to ship
+   * a new editor capability. Returns `[]` when nothing applies.
+   */
+  createExtraExtensions?: (opts?: SqlEditorEnhancedOptions) => Extension[];
+  /**
+   * Extra keymap bindings.
+   *
+   * The host installs them with `Prec.highest`, which is what makes this hook
+   * useful: `createBaseEditorExtensions` registers `defaultKeymap` *before* any
+   * Pro compartment, and several of its commands return `true` whenever they
+   * do anything at all — `copyLineUp`/`copyLineDown`
+   * (`Shift-Alt-ArrowUp`/`Down`), `moveLineUp`/`moveLineDown`
+   * (`Alt-ArrowUp`/`Down`), `addCursorAbove`/`addCursorBelow`
+   * (`Mod-Alt-ArrowUp`/`Down`). CodeMirror stops at the first handler that
+   * returns `true`, so at default precedence a binding on one of those chords
+   * would be silently swallowed and the keystroke would never reach the
+   * extension. Returning `false` from a handler hands the chord back to the
+   * host binding, so `Prec.highest` widens reach without making the hook greedy.
+   */
+  createExtraKeymap?: (opts?: SqlEditorEnhancedOptions) => KeyBinding[];
+  /**
+   * Generic React panel slot. Returns `null` when the requested `slotId` is not
+   * one this extension provides.
+   */
+  createEditorPanelSlot?: (slotId: string, ctx: SqlEditorEnhancedOptions) => EditorPanelSlot | null;
   /** Settings contributions. */
   settingsContributions?: ExtensionSettingsContribution[];
 }
@@ -116,6 +159,9 @@ const fallbackFeatures: SqlEditorEnhancedFeatures = Object.freeze({
   createPasteExtensions: () => [],
   createPasteAsInContextMenuItems: () => null,
   createLinterExtensions: () => [],
+  createExtraExtensions: () => [],
+  createExtraKeymap: () => [],
+  createEditorPanelSlot: () => null,
   renderBindParamPanel: () => null,
   useBindParameters: () => ({
     params: [],

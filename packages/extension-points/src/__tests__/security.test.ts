@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   buildSignaturePayload,
   EP_SIGNATURE_ALGORITHM,
@@ -444,5 +446,69 @@ describe('EP security gate (security.test.ts)', () => {
     if (!result.ok) {
       expect(result.code).toBe('invalid-signature');
     }
+  });
+});
+
+/**
+ * The 1.1.0 contract version, pinned from both ends.
+ *
+ * `checkEngineCompatibility` compares `engines.extensionPointsVersion` to
+ * `EXTENSION_POINTS_VERSION` with exact string equality and silently falls
+ * back to the community feature set on a mismatch — it does not range-check and
+ * it does not warn. A one-sided bump is therefore invisible: either the host
+ * rejects the Pro package, or (worse) an old manifest is rejected by a new
+ * host, and the failure surfaces as "Pro features quietly stopped working"
+ * rather than as an error. These tests read the real Pro manifest off disk so
+ * that the two sides cannot drift apart in a future change.
+ */
+describe('EXTENSION_POINTS_VERSION 1.1.0 contract (security.test.ts)', () => {
+  // `import.meta.url` is not a file: URL under this Vitest transform, so the
+  // manifest is located from the workspace root instead. Vitest runs with cwd
+  // at the config root, which is the repository root.
+  const PRO_MANIFEST_PATH = resolve(
+    process.cwd(),
+    'packages/pro-extensions/sql-editor-pro/manifest.json',
+  );
+
+  function readProManifest(): ExtensionManifest {
+    return JSON.parse(readFileSync(PRO_MANIFEST_PATH, 'utf8')) as ExtensionManifest;
+  }
+
+  it('pins the host contract version at 1.1.0', () => {
+    expect(EXTENSION_POINTS_VERSION).toBe('1.1.0');
+  });
+
+  it('the Pro manifest declares the same version', () => {
+    // `engines` lives in manifest.json, not package.json.
+    expect(readProManifest().engines?.extensionPointsVersion).toBe('1.1.0');
+  });
+
+  it('the real Pro manifest is compatible with this host', () => {
+    const result = checkEngineCompatibility(readProManifest());
+    expect(result).toEqual({ compatible: true });
+  });
+
+  it('a manifest pinned to the previous 1.0.0 contract is rejected', () => {
+    // The failure mode a one-sided bump produces. Asserted explicitly so the
+    // exactness of the comparison cannot be quietly relaxed to a range check.
+    const result = checkEngineCompatibility({
+      ...readProManifest(),
+      engines: { ...readProManifest().engines, extensionPointsVersion: '1.0.0' },
+    });
+    expect(result.compatible).toBe(false);
+    if (!result.compatible) {
+      expect(result.reason).toContain('1.0.0');
+    }
+  });
+
+  it('a minor mismatch is rejected too — there is no semver range', () => {
+    // '1.2.0' would satisfy a caret range on a 1.1.0 host, but this gate is
+    // exact equality on purpose: the hook surface is not negotiated at runtime.
+    expect(
+      checkEngineCompatibility({
+        ...readProManifest(),
+        engines: { ...readProManifest().engines, extensionPointsVersion: '1.2.0' },
+      }).compatible,
+    ).toBe(false);
   });
 });

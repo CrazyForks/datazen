@@ -10,8 +10,19 @@ import {
   type EpSignatureFile,
 } from './signaturePayload';
 
-/** Current host extension-points contract version (Wave 1 baseline). */
-export const EXTENSION_POINTS_VERSION = '1.0.0';
+/**
+ * Current host extension-points contract version.
+ *
+ * 1.1.0 — added the three generic hooks (`createExtraExtensions`,
+ * `createExtraKeymap`, `createEditorPanelSlot`) to `SqlEditorEnhancedFeatures`.
+ *
+ * Bumping this is a **breaking** act by construction: `checkEngineCompatibility`
+ * compares by exact string equality with `manifest.engines.extensionPointsVersion`
+ * and offers no semver range and no negotiation window, so every privileged
+ * manifest must be bumped and re-signed in the same batch or it silently
+ * degrades to the community fallback.
+ */
+export const EXTENSION_POINTS_VERSION = '1.1.0';
 
 /**
  * Built-in official Ed25519 public key (SPKI DER, base64).
@@ -75,7 +86,9 @@ export interface ExtensionVerificationFailure {
     | 'unsigned-rejected';
 }
 
-export type ExtensionVerificationResult = ExtensionVerificationSuccess | ExtensionVerificationFailure;
+export type ExtensionVerificationResult =
+  | ExtensionVerificationSuccess
+  | ExtensionVerificationFailure;
 
 export interface VerifyExtensionOptions extends ExtensionSecurityConfig {
   manifest: ExtensionManifest;
@@ -141,7 +154,9 @@ export function checkEngineCompatibility(
   return { compatible: true };
 }
 
-async function computeActualDigests(files: ExtensionPackageFiles): Promise<Record<string, { sha256: string }>> {
+async function computeActualDigests(
+  files: ExtensionPackageFiles,
+): Promise<Record<string, { sha256: string }>> {
   return {
     'manifest.json': { sha256: await sha256Hex(files.manifestContent) },
     'dist/index.esm.js': { sha256: await sha256Hex(files.bundleContent) },
