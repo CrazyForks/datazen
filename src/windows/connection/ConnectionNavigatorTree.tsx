@@ -869,7 +869,7 @@ export const ConnectionNavigatorTree = forwardRef<
           }
         }}
       >
-        <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+        <div role="tree" style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {virtualizer.getVirtualItems().map((virtualRow) => (
             <div
               key={virtualRow.key}
@@ -884,6 +884,7 @@ export const ConnectionNavigatorTree = forwardRef<
             >
               <NavigatorTreeRow
                 row={flatRows[virtualRow.index]}
+                searchCollapsed={query !== ''}
                 t={t}
                 connections={connections}
                 activeConnections={activeConnections}

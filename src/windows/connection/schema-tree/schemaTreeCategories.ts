@@ -71,16 +71,6 @@ export const OBJECT_KIND_CATEGORIES: Record<string, SchemaTreeCategoryDef> = {
   },
 };
 
-export const KV_CATEGORIES: SchemaTreeCategoryDef[] = [
-  {
-    id: 'tables',
-    labelKey: 'schemaTree.keys',
-    icon: Table2,
-    iconId: 'schema.table',
-    color: 'text-blue-400',
-  },
-];
-
 export const LEAF_KIND_ICON: Record<string, SchemaTreeIconDef> = {
   table: { icon: Table2, iconId: 'schema.table', color: 'text-blue-400' },
   view: { icon: Eye, iconId: 'schema.view', color: 'text-purple-400' },
@@ -100,13 +90,4 @@ export function getCategoriesForDriver(databaseType: string): SchemaTreeCategory
   if (!objectKinds || objectKinds.length === 0) return BASE_CATEGORIES;
   const objectCats = objectKinds.map((kind) => OBJECT_KIND_CATEGORIES[kind]).filter(Boolean);
   return [...BASE_CATEGORIES, ...objectCats];
-}
-
-/** Effective categories for UnifiedSchemaTree (KV stores use keys label). */
-export function getEffectiveCategories(
-  databaseType: string,
-  isKeyValue = false,
-): SchemaTreeCategoryDef[] {
-  if (isKeyValue) return KV_CATEGORIES;
-  return getCategoriesForDriver(databaseType);
 }
