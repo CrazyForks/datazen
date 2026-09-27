@@ -93,6 +93,16 @@ export function buildSignaturePayload(files, version = EP_SIGNATURE_VERSION) {
  *   signedAt?: string,
  *   outPath?: string,
  * }} opts
+ * @returns {{
+ *   outPath: string,
+ *   sigDoc: {
+ *     version: string,
+ *     algorithm: string,
+ *     signedAt: string,
+ *     files: Record<string, { sha256: string }>,
+ *     signature: string,
+ *   },
+ * }}
  */
 export function signEpPackage(opts) {
   const packageDir = path.resolve(opts.packageDir);

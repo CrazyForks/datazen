@@ -398,6 +398,25 @@ export function downloadPrebuiltEp({ prebuiltUrl, extension = 'sql-editor-pro', 
   }
 }
 
+/**
+ * Build, rewrite, sign and stage the Pro extension into `builtin-ep`.
+ *
+ * The `@param` is not decoration: with a bare destructuring pattern, TypeScript
+ * synthesizes the option type from the *default initializers only*, so
+ * `stageProExtension({ extensionDir, skipBuild })` from the tests would be
+ * rejected for having "no properties in common" with `{ mode?, log? }`. Naming
+ * the real shape is what lets the test file be checked against the real
+ * signature.
+ *
+ * @param {{
+ *   extensionDir?: string,
+ *   skipBuild?: boolean,
+ *   mode?: 'stage' | 'dzx' | 'both',
+ *   log?: (...args: unknown[]) => void,
+ *   stageDir?: string,
+ *   outDir?: string,
+ * }} [opts]
+ */
 export function stageProExtension({
   extensionDir,
   skipBuild = false,
@@ -438,6 +457,15 @@ export function pinProCheckout(dir, ref, { log = console.log } = {}) {
  * `proDest` and `tmpFallbackDir` are path overrides for callers that must not
  * write into the real tree (tests redirect both into a tmp sandbox). Omitting
  * them keeps the historical paths exactly as they were.
+ *
+ * @param {{
+ *   proPath?: string | null,
+ *   proGit?: string | null,
+ *   proRef?: string | null,
+ *   codegenOnly?: boolean,
+ *   proDest?: string,
+ *   tmpFallbackDir?: string,
+ * }} [opts]
  */
 export function ensureProCheckout({
   proPath,

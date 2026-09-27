@@ -1,0 +1,35 @@
+{
+  "$comment": [
+    "Typecheck program for scripts/__tests__/** — the test code that guards the",
+    "build pipeline itself (resolve-drivers, resolve-pro, pack-ep, sign-ep,",
+    "driver stash, CI scripts). Until this existed, no file under scripts/ was in",
+    "ANY tsc program: the root tsconfig include list is src + packages/*, so",
+    "'tsc --noEmit is clean' covered 0% of these files.",
+    "",
+    "allowJs is REQUIRED, not a relaxation. The tests import the build scripts as",
+    "`.mjs`; with allowJs off, every one of those imports fails with TS7016",
+    "'implicitly has an any type', which silently voids the type of everything the",
+    "scripts export (measured: 33 TS7016 + 44 downstream implicit-any errors).",
+    "A gate that cannot see the module under test is not a gate.",
+    "",
+    "checkJs stays OFF. Turning it on type-checks the build scripts themselves and",
+    "yields 343 errors across the .mjs files reachable from these tests (472 across",
+    "all of scripts/), almost all missing JSDoc on a codebase that predates the",
+    "gate. That is a real backlog, not something to force green here — see",
+    "tsconfig.scripts-checkjs.json for the measurable version of it.",
+    "",
+    "scripts/e2e-screenshots/ is excluded on purpose: editor-blog-screenshots.ts",
+    "is a WebdriverIO spec that imports @wdio/globals and e2e/helpers.ts, which",
+    "belongs to the e2e/tsconfig.json program (it declares the @wdio types).",
+    "It is currently in no program at all — registered as a finding, not silently",
+    "retyped here."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["scripts/__tests__"],
+  "exclude": ["scripts/e2e-screenshots"],
+  "references": []
+}

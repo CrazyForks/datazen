@@ -104,6 +104,17 @@ export function writeUpdaterConfigFile(dir = join(tmpdir(), 'datazen-ci-tauri'))
   return writeTauriConfigFile({ updater: true, isPro: false, dir });
 }
 
+/**
+ * Write the Tauri `--config` override that carries the updater block and the
+ * injected build hook. `dir` is an override so tests do not share a temp path.
+ *
+ * @param {{
+ *   updater?: boolean,
+ *   isPro?: boolean,
+ *   beforeBuildCommand?: string | null,
+ *   dir?: string,
+ * }} [opts]
+ */
 export function writeTauriConfigFile({
   updater = false,
   isPro = false,
@@ -131,6 +142,18 @@ export function writeTauriConfigFile({
   return file;
 }
 
+/**
+ * @param {{
+ *   target?: string | null,
+ *   updater?: boolean,
+ *   edition?: string,
+ *   features?: string[],
+ *   configPath?: string | null,
+ *   updaterConfigPath?: string | null,
+ *   beforeBuildCommand?: string | null,
+ *   extraArgs?: string[],
+ * }} [opts]
+ */
 export function buildTauriArgs({
   target = null,
   updater = false,
