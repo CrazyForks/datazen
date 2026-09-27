@@ -205,11 +205,18 @@ describe('DEFECT-B: clipboard rejection handling', () => {
     }
   });
 
-  it('[tester] a stale rejection must not erase the confirmation of a LATER successful copy', async () => {
-    // Click #1 is still in flight; click #2 lands and succeeds. The label
-    // shows "Copied" for #2 — then #1 finally rejects. The rollback is bound
-    // to the request that started it, so #1's late rejection is dropped and
-    // #2's (correct) confirmation survives.
+  it('[tester] a stale rejection must not erase the confirmation — or the window — of a LATER successful copy', async () => {
+    // Click #1 is still in flight; click #2 lands and stays in flight. The
+    // label shows "Copied" for #2 — then #1 finally rejects. The rollback is
+    // bound to the request that started it, so #1's late rejection is dropped.
+    //
+    // It must be dropped in BOTH respects. Asserting only the label would not
+    // be enough: a rollback that cleared the (shared) timer but skipped the
+    // `setCopied(false)` would leave the label reading "Copied" while quietly
+    // killing #2's window, stranding the button on "Copied" forever. That is
+    // the same class of defect as a truncated window, reached from the other
+    // direction, so the deadline itself is asserted below.
+    vi.useFakeTimers();
     const rejecters: Array<(e: Error) => void> = [];
     let call = 0;
     stubClipboard(
@@ -232,7 +239,9 @@ describe('DEFECT-B: clipboard rejection handling', () => {
     });
     expect(copyBtn()).toHaveTextContent(COPIED);
 
-    // Now the FIRST write finally rejects.
+    // Now the FIRST write finally rejects, while #2's 1500ms window is still
+    // open. Microtasks only — no fake time passes, so #2's deadline is still
+    // exactly 1500ms away.
     await act(async () => {
       rejecters[0]?.(new Error('clipboard denied'));
       await Promise.resolve();
@@ -240,6 +249,19 @@ describe('DEFECT-B: clipboard rejection handling', () => {
     });
 
     expect(copyBtn()).toHaveTextContent(COPIED);
+
+    // #2's window must still be counting down, not cancelled by #1's
+    // rejection: still "Copied" one tick before the deadline...
+    act(() => {
+      vi.advanceTimersByTime(1498);
+    });
+    expect(copyBtn()).toHaveTextContent(COPIED);
+
+    // ...and reverting exactly at it, rather than never.
+    act(() => {
+      vi.advanceTimersByTime(2);
+    });
+    expect(copyBtn()).toHaveTextContent(COPY);
   });
 
   it('[tester] a second click must restart the full 1.5s feedback window', () => {

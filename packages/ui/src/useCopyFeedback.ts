@@ -17,9 +17,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  *  - **The rollback is bound to the request that started it.** A rejection
  *    that arrives after a newer click is ignored, so a late failure cannot
  *    erase a newer, successful confirmation.
- *  - **The timer is cleared on unmount**, so the closure never outlives the
- *    component and call `setState` on a dead fiber. React 18 dropped the
- *    setState-after-unmount warning, so this leaks silently without this.
+ *  - **The feedback timer is cleared on unmount**, so that closure never
+ *    outlives the component to call `setState` on a dead fiber. React 18
+ *    dropped the setState-after-unmount warning, so without the cleanup this
+ *    leaks silently. The guarantee is scoped to the timer on purpose: a
+ *    `writeText()` promise that rejects *after* unmount still runs its
+ *    rejection handler, because a promise cannot be cancelled. React discards
+ *    that `setState` harmlessly and the closure is collectable once the
+ *    promise settles, so it is not a leak — but it is not prevented either.
  */
 export function useCopyFeedback(feedbackMs: number): {
   copied: boolean;
