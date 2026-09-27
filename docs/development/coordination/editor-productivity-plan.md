@@ -86,11 +86,16 @@ title: 多目标协调计划（hub 静态段落来源）
   而 `Mod-d` / `Mod-D` 都活着——因字符键在 `runHandlers` 主查表**排除 Shift**，带 Shift 前缀的
   键名根本没机会被查。处置：四条全留、零行为改动。**另修正 spec §1**：`Shift-Alt-ArrowUp` 无
   mac 变体，冲突在**所有平台**存在，不只 macOS。
-- **codegen 缺失的跨 worktree 陷阱**：Track D 的 worktree 缺整个 `src/extensions/` 目录，
-  导致 174 个文件级失败 + 28 条 tsc 错**全是假阳性**。Coder 归因正确（禁 `pnpm install`），
-  但「未新增失败」一度只是推断。协调者已从集成 worktree 补入 `generated.ts` + `generated-pro.ts`
-  （gitignored，不污染 git；`generated.ts` 全仓 md5 一致，`generated-pro.ts` 各 worktree 不同、
-  反映各自合并态）。**教训：新建 worktree 后必须先核 codegen 存在再让代理跑全量**。
+- **codegen 缺失的跨 worktree 陷阱（两轮才定位准）**：Track D 的 worktree 报 174 个文件级失败
+  + 28 条 tsc 错。协调者第一轮判断根因是缺 `src/extensions/generated.ts`，补入后**仍有 104 文件 /
+  160 用例红**，且大量条目显示 `(0 test)`（收集阶段失败，非断言失败）。**真凶是
+  `src/locales/builtinLocales.ts` 缺失** —— `Failed to resolve import "./builtinLocales" from
+  "src/locales/index.ts"`。逐 worktree 实测：**`datazen-multi-cursor` 是全仓唯一缺失者**，
+  因为它建得较早，当时 `new-feature-worktree.sh` 还没有「内置 locale codegen」这一步。补齐后
+  该文件由 `(0 test)` 恢复 13 passed。
+  **教训：`(0 test)` / 收集阶段失败 ≠ 断言失败，必须先跑一个失败文件拿真实错误再下结论；
+  新建 worktree 必须同时核 `src/extensions/generated*.ts` 与 `src/locales/builtinLocales.ts`。
+  参照基线：同基座的 `datazen-pane-layout` 为 463 文件 / 4589 用例全绿。**
 - **Track B 合流**（`1837096f0`）：宿主 12 文件 + Pro 4 文件；Pro 侧 `63b212a`
   已合入 Pro 集成分支 `productivity/editor-productivity`（现 `967fdbd`，含 A+B 两侧）。
   双侧 `extensionPointsVersion` 均 `1.1.0`（已实测核验），合流后 `resolve-pro --edition=pro` 打包正常。
