@@ -9,6 +9,26 @@ on:
 # Default: no token scopes. Job below opts into contents:write for draft releases.
 permissions: {}
 
+# One release at a time. Two overlapping tag pushes would otherwise compile the
+# same driver union twice over the same runner pool.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# ── Shared release build settings ──
+# `ci-release` is a thin-LTO profile (see [profile.ci-release] in Cargo.toml).
+# Every cargo invocation in this workflow — the driver warmup included — must
+# name the same profile, or its artifacts land in a different target dir and
+# the variant jobs recompile the driver crates from scratch.
+#
+# DATAZEN_CI_TYPECHECK_ONCE=1 drops `tsc --noEmit` from the per-variant frontend
+# build: warm-driver-deps typechecks the union driver set once, which is a
+# strict superset of what each variant would have checked.
+env:
+  DATAZEN_KEYRING: file
+  DATAZEN_BUILD_PROFILE: ci-release
+  DATAZEN_CI_TYPECHECK_ONCE: '1'
+
 jobs:
   # Build + sign the SQL Editor Pro extension ONCE and hand it to every variant
   # as an artifact. Doing it here rather than inside each matrix job means one
@@ -61,7 +81,7 @@ jobs:
           git config --global --add url."git@github.com-pro:flyxl/datazen-extension-sql-editor-pro.git".insteadOf "https://github.com/flyxl/datazen-extension-sql-editor-pro.git"
 
       - name: Install frontend dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Clone, build and sign the Pro extension at the pinned revision
         run: node scripts/resolve-pro.mjs --edition=pro
@@ -98,10 +118,153 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # ── Driver union warmup: compile every driver ONCE per target ──
+  # The variant matrix is 11 jobs over 4 (platform, target) pairs, and each
+  # variant has its own Cargo feature set — but only the host `datazen` lib
+  # actually differs. The driver crates and every third-party dependency are
+  # identical across variants, so this job builds the union
+  # (all path drivers + the two git drivers the Akulaku SKU needs) and leaves it
+  # in the shared rust-cache. Each variant job then rebuilds only the host lib,
+  # links, builds its own Vite bundle and packages.
+  #
+  # This job is the ONLY writer of that cache key. Previously all variant jobs
+  # on a target shared one key, and since actions/cache keeps a single entry per
+  # key only the first job to finish could save — which is always the cheapest
+  # variant (`basic`, 4 drivers). The cache therefore stayed pinned at basic
+  # forever, and `-all` recompiled its 11 extra driver crates on every release.
+  # The build jobs below restore with `save-if: false` so the warmup stays the
+  # sole writer and the cache cannot regress.
+  warm-driver-deps:
+    runs-on: ${{ matrix.platform }}
+    # Deploy Keys for the private git drivers live in Environment "release".
+    environment: release
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux system deps (Tauri / webkit2gtk)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libxdo-dev \
+            pkg-config \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf \
+            libfuse2
+
+      # Must stay byte-identical to the build job's cache step: same
+      # shared-key, and it runs on a clean (un-injected) tree so the
+      # Cargo.toml hash in the key matches.
+      - name: Cache Rust compilation
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          shared-key: ${{ matrix.target }}
+          cache-workspace-crates: true
+          cache-on-failure: true
+
+      - name: Setup SSH for private git drivers
+        shell: bash
+        env:
+          KIWI_DEPLOY_KEY: ${{ secrets.KIWI_DEPLOY_KEY }}
+          SUPERSET_DEPLOY_KEY: ${{ secrets.SUPERSET_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
+
+          touch ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+          if [ -n "${KIWI_DEPLOY_KEY:-}" ]; then
+            printf '%s\n' "$KIWI_DEPLOY_KEY" > ~/.ssh/datazen_kiwi
+            chmod 600 ~/.ssh/datazen_kiwi
+            printf '%s\n' \
+              'Host github.com-kiwi' \
+              '  HostName github.com' \
+              '  User git' \
+              '  IdentityFile ~/.ssh/datazen_kiwi' \
+              '  IdentitiesOnly yes' \
+              >> ~/.ssh/config
+            git config --global --add url."git@github.com-kiwi:flyxl/datazen-driver-kiwi.git".insteadOf "https://github.com/flyxl/datazen-driver-kiwi.git"
+            git config --global --add url."git@github.com-kiwi:flyxl/datazen-driver-kiwi.git".insteadOf "https://github.com/flyxl/datazen-driver-kiwi"
+          fi
+
+          if [ -n "${SUPERSET_DEPLOY_KEY:-}" ]; then
+            printf '%s\n' "$SUPERSET_DEPLOY_KEY" > ~/.ssh/datazen_superset
+            chmod 600 ~/.ssh/datazen_superset
+            printf '%s\n' \
+              'Host github.com-superset' \
+              '  HostName github.com' \
+              '  User git' \
+              '  IdentityFile ~/.ssh/datazen_superset' \
+              '  IdentitiesOnly yes' \
+              >> ~/.ssh/config
+            git config --global --add url."git@github.com-superset:flyxl/datazen-driver-superset.git".insteadOf "https://github.com/flyxl/datazen-driver-superset.git"
+            git config --global --add url."git@github.com-superset:flyxl/datazen-driver-superset.git".insteadOf "https://github.com/flyxl/datazen-driver-superset"
+          fi
+
+      # resolve-drivers imports the fflate chain from resolve-pro at module
+      # load, so node_modules is still required — but this job never runs a
+      # lifecycle script or a Vite build, so the install stays minimal.
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # `all,kiwi,superset` is the superset of basic / all / akulaku.
+      # --typecheck replaces the 11 per-variant `tsc --noEmit` passes the
+      # build jobs skip via DATAZEN_CI_TYPECHECK_ONCE=1.
+      - name: Compile the driver union
+        run: node scripts/with-driver-inject.mjs --drivers=all,kiwi,superset -- node scripts/ci-driver-warmup.mjs --target=${{ matrix.target }} --typecheck
+
   build:
     # Secrets (Deploy Keys, Windows signing) live in Environment "release"
     # — see docs/development/ci-private-plugins.md
-    needs: prepare-pro-extension
+    needs: [prepare-pro-extension, warm-driver-deps]
     environment: release
     permissions:
       contents: write
@@ -252,9 +415,11 @@ jobs:
           shared-key: ${{ matrix.target }}
           # Retain workspace driver artifacts alongside dependency artifacts.
           # Cargo checks fingerprints and rebuilds changed inputs/features.
-          # Parallel variants can only restore caches already saved by earlier jobs.
+          # Read-only: warm-driver-deps owns this key. Letting every variant
+          # save is what pinned the cache to whichever job finished first.
           cache-workspace-crates: true
           cache-on-failure: true
+          save-if: false
 
       # Git-driver & Pro extension SKUs: read-only Deploy Keys for private repos.
       # Public key exposure is harmless; private keys must stay in Environment secrets.
@@ -399,7 +564,7 @@ jobs:
           # Note: with-driver-inject.mjs restores staging dirs after the child command,
           # so src-tauri/resources/builtin-ep/ may already be cleared here.
           # We verify the actual bundled output instead.
-          BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
+          BUNDLE_DIR="target/${{ matrix.target }}/${{ env.DATAZEN_BUILD_PROFILE }}/bundle"
           FAIL=0
 
           # ── macOS: check .app bundle ──
@@ -477,7 +642,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $releaseDir = Join-Path "target/${{ matrix.target }}" "release"
+          $releaseDir = Join-Path "target/${{ matrix.target }}" $env:DATAZEN_BUILD_PROFILE
           $executable = Join-Path $releaseDir "datazen.exe"
           if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
             $executable = Join-Path $releaseDir "DataZen.exe"
@@ -522,14 +687,34 @@ jobs:
           } else {
             $archive = Join-Path "artifacts" "DataZen-$version-$osLabel-portable.zip"
           }
-          Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath $archive -CompressionLevel Optimal -Force
+          # 7-Zip ships on GitHub's Windows runners and compresses a ~150 MB
+          # staged tree in a fraction of the time Compress-Archive takes
+          # (its Deflate "Optimal" pass is the slow part of this step).
+          # Compress-Archive stays as the fallback so the step never depends
+          # on 7-Zip being present.
+          $sevenZip = "C:\Program Files\7-Zip\7z.exe"
+          # $archive is relative (the upload step globs "artifacts/*.zip"), so
+          # resolve it before changing the working directory below.
+          $archiveFull = [System.IO.Path]::GetFullPath($archive)
+          if (Test-Path -LiteralPath $sevenZip) {
+            Push-Location $stageDir
+            try {
+              & $sevenZip a -tzip -mx=5 -bd $archiveFull ".\\*" | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw "7-Zip failed with exit code $LASTEXITCODE" }
+            } finally {
+              Pop-Location
+            }
+          } else {
+            Write-Warning "7-Zip not found — falling back to Compress-Archive (slower)"
+            Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath $archive -CompressionLevel Optimal -Force
+          }
           Write-Host "Created portable archive: $archive"
 
       # ── Canonical artifact naming: DataZen-{Version}-{Platform}-{Arch}[-{Variant}].{ext} ──
       - name: Rename artifacts with canonical names
         shell: bash
         run: |
-          BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
+          BUNDLE_DIR="target/${{ matrix.target }}/${{ env.DATAZEN_BUILD_PROFILE }}/bundle"
           VERSION=$(node -p "require('./package.json').version")
           OS_LABEL="${{ matrix.os_label }}"
           VARIANT="${{ matrix.variant_suffix }}"

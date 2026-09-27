@@ -11,6 +11,7 @@
  *
  * Usage:
  *   node scripts/ci-tauri-build.mjs --target=x86_64-pc-windows-msvc
+ *   DATAZEN_BUILD_PROFILE=ci-release node scripts/ci-tauri-build.mjs --target=...
  */
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
@@ -27,6 +28,23 @@ const require = createRequire(import.meta.url);
 export const UPDATER_CONFIG = { bundle: { createUpdaterArtifacts: true } };
 
 export const PRO_CONFIG = {};
+
+/**
+ * Cargo profile every build in one run must agree on. The release workflow
+ * sets `ci-release` (thin LTO) so the link step is affordable; upx-compress
+ * and the workflow's bundle paths read the same variable to find the output.
+ */
+export const BUILD_PROFILE_ENV = 'DATAZEN_BUILD_PROFILE';
+
+/**
+ * When `1`, the frontend build drops `tsc --noEmit`: the release matrix would
+ * otherwise re-typecheck 11 times, and the driver warmup job already runs one
+ * typecheck over the *union* driver set (a strict superset of every variant).
+ */
+export const TYPECHECK_ONCE_ENV = 'DATAZEN_CI_TYPECHECK_ONCE';
+
+/** `pnpm build` without the `tsc --noEmit` pass. */
+export const FAST_FRONTEND_BUILD_COMMAND = 'pnpm build:bundle';
 
 /** Relative paths that must exist under the staged Pro extension tree. */
 export const REQUIRED_PRO_STAGED_PATHS = [
@@ -71,16 +89,25 @@ export function writeUpdaterConfigFile(dir = join(tmpdir(), 'datazen-ci-tauri'))
 export function writeTauriConfigFile({
   updater = false,
   isPro = false,
+  beforeBuildCommand = null,
   dir = join(tmpdir(), 'datazen-ci-tauri'),
 } = {}) {
   mkdirSync(dir, { recursive: true });
-  const file = join(dir, `config-${isPro ? 'pro' : 'base'}-${updater ? 'updater' : 'plain'}.json`);
+  const file = join(
+    dir,
+    `config-${isPro ? 'pro' : 'base'}-${updater ? 'updater' : 'plain'}${
+      beforeBuildCommand ? '-fastfe' : ''
+    }.json`,
+  );
   const config = {};
   if (updater) {
     Object.assign(config, UPDATER_CONFIG);
   }
   if (isPro) {
     Object.assign(config, PRO_CONFIG);
+  }
+  if (beforeBuildCommand) {
+    config.build = { beforeBuildCommand };
   }
   writeFileSync(file, `${JSON.stringify(config)}\n`);
   return file;
@@ -93,17 +120,24 @@ export function buildTauriArgs({
   features = [],
   configPath = null,
   updaterConfigPath = null,
+  profile = null,
+  beforeBuildCommand = null,
   extraArgs = [],
 } = {}) {
   const args = ['build'];
   if (target) {
     args.push('--target', target);
   }
+  if (profile) {
+    args.push('--profile', profile);
+  }
   const isPro = edition === 'pro';
-  if (updater || isPro) {
+  if (updater || isPro || beforeBuildCommand) {
     args.push(
       '--config',
-      configPath ?? updaterConfigPath ?? writeTauriConfigFile({ updater, isPro }),
+      configPath ??
+        updaterConfigPath ??
+        writeTauriConfigFile({ updater, isPro, beforeBuildCommand }),
     );
   }
   if (Array.isArray(features) && features.length > 0) {
@@ -135,13 +169,19 @@ function main() {
   const argv = process.argv.slice(2);
   const targetArg = argv.find((a) => a.startsWith('--target='));
   const target = targetArg ? targetArg.slice('--target='.length) : null;
+  const profileArg = argv.find((a) => a.startsWith('--profile='));
+  const profile = profileArg
+    ? profileArg.slice('--profile='.length)
+    : process.env[BUILD_PROFILE_ENV] || null;
+  const beforeBuildCommand =
+    process.env[TYPECHECK_ONCE_ENV] === '1' ? FAST_FRONTEND_BUILD_COMMAND : null;
   const isPro =
     argv.includes('--pro') ||
     argv.includes('--edition=pro') ||
     process.env.DATAZEN_EDITION === 'pro';
   const edition = isPro ? 'pro' : 'community';
 
-  const knownPrefixes = ['--target=', '--edition='];
+  const knownPrefixes = ['--target=', '--edition=', '--profile='];
   const knownFlags = new Set(['--pro', '--community', '--updater']);
   const extraArgs = argv.filter((a) => {
     if (knownFlags.has(a)) return false;
@@ -175,6 +215,8 @@ function main() {
     updater: argv.includes('--updater'),
     edition,
     features,
+    profile,
+    beforeBuildCommand,
     extraArgs,
   });
   const result = spawnTauri(args);

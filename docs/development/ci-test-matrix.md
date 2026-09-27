@@ -123,6 +123,23 @@ cargo test -p datazen-ai-api --lib
 - **All**：四平台 × 全部 path 驱动（**不进 PR CI** 的集成验证点）。
 - **Akulaku**：三平台（Windows / macOS）× 含 git 私有驱动；Secrets 在 GitHub Environment `release`。
 
+### 6.1 构建耗时优化：driver union 预热
+
+11 个 variant job 共享 4 个 `(platform, target)` 组合，但**只有宿主 `datazen` lib 随
+driver feature 集变化**：driver crate 和第三方依赖在所有 variant 中源码与 features 完全一致。
+`warm-driver-deps` 因此在矩阵之前按 target 编译一次 **union**（`all,kiwi,superset`，
+即 basic / all / akulaku 的超集），把结果写进共享 cargo 缓存。
+
+| 约定 | 说明 |
+| --- | --- |
+| 唯一写入者 | 只有 `warm-driver-deps` 写该缓存 key；`build` 全部 `save-if: false`。此前同 key 的 3 个 variant 竞争，只有最先结束（恒为最便宜的 basic）能落盘，缓存被永久钉死在 basic 上 |
+| 预热时机 | `rust-cache` 必须在 `with-driver-inject` **之前**（干净工作区），两个 job 的 key 才一致 |
+| 编译范围 | `--lib`：跳过每 variant 各不相同的 LTO 链接与 `generate_context!` 嵌入的 `dist/` |
+| Cargo profile | 统一 `ci-release`（`[profile.ci-release]`，thin LTO）；产物目录随之为 `target/<triple>/ci-release`，`upx-compress` 与 workflow 的路径读取同一 `DATAZEN_BUILD_PROFILE` |
+| 类型检查 | 预热 job 对 union 做一次 `tsc --noEmit`（是各 variant 的严格超集），variant job 以 `DATAZEN_CI_TYPECHECK_ONCE=1` 改用 `pnpm build:bundle`（codegen + Vite，不含 tsc） |
+
+本地 `pnpm build` / `pnpm tauri:build` 不受影响：仍用 `release` profile，仍做完整类型检查。
+
 ## 7. 相关文档
 
 - [e2e-testing.md](./e2e-testing.md) — WebDriver 构建与跑法
