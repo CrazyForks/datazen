@@ -12,9 +12,9 @@ title: 多目标协调计划（hub 静态段落来源）
 | Track | 工作区 | 任务摘要 |
 | --- | --- | --- |
 | ep-runtime-globals | 已合流 `46be145af`（Tester FAILED，见 BUG-002/003） | G1 补齐 EP 运行时共享模块（`@codemirror/language`、`@codemirror/commands`）并加防漂移测试守住宽/窄探针不对称 |
-| ep-hooks-settings | .worktrees/datazen-ep-hooks-settings | G2 通用契约钩子 + G3 打通设置生效 + G4 契约版本 bump |
-| pane-layout | .worktrees/datazen-pane-layout | G5 pane 维度布局模型与焦点路由（不含 UI） |
-| multi-cursor | .worktrees/datazen-multi-cursor | 解 `Shift-Alt-ArrowUp/Down` 多光标死键（macOS 被 `defaultKeymap` 抢占） |
+| ep-hooks-settings | 已合流 `1837096f0`；Tester 复测中（6bef2cf8） | G2 通用契约钩子 + G3 打通设置生效 + G4 契约版本 bump |
+| pane-layout | 已合流 `0042d8ef7`；7 处真门禁类型错修复中（Coder 8bbf64a0） | G5 pane 维度布局模型与焦点路由（不含 UI） |
+| multi-cursor | +343 行在盘，尚未提交；收尾简报已发（Coder a952a1ad） | 解 `Shift-Alt-ArrowUp/Down` 多光标死键（macOS 被 `defaultKeymap` 抢占） |
 | code-folding | （待 `ep-hooks-settings` 交回后建轨） | Code Folding：Pro 侧实现，宿主提供 compartment 槽位 |
 
 ## 波次记录
@@ -66,7 +66,23 @@ title: 多目标协调计划（hub 静态段落来源）
   合流时另发现两处基础设施缺口并已修复：Pro 侧**根本没有集成分支**（宿主集成态无法与 Pro 对齐），
   以及跨仓断言的 skip 条件把「目录存在」误当「检出在匹配 commit」——陈旧检出会给出
   看似代码缺陷的红灯，现已改为失败时自证出处（`d53b8f0bb`）。
-- 协调者自有基建修复：hub 聚合器三个同源解析缺陷（`状态` 因 Markdown 强调标记恒不匹配、
+- **基座追平（回合 3）**：合流前发现集成分支落后 `main` **7 个提交**，其中 `d14037e8b`
+  删除了 `tsconfig.json` 的 `exclude`。**Wave 1 四条轨道与所有 Tester 的 `tsc` 结论都建立在
+  一份已作废的 tsconfig 上**。已 `git merge main`（零冲突），并把 `main` 同步进
+  `ep-hooks-settings` / `pane-layout` / `multi-cursor` 三条轨道分支（均零冲突），
+  从根上消除「Tester 在错基座上重蹈覆辙」的盲区。**协调者此前基于旧配置测得的
+  「1980 条测试文件类型债」是伪结论**——main 的 `d14037e8b` 已清掉，实测真门禁下
+  合流态 `tsc` **0 错**。此前登记的 BUG-003 随之**关闭**。
+- **真门禁的第一次兑现**：Track C 的两个新测试文件有 **7 处**类型错（夹具缺
+  `QueryPanel.database/schema`、`TablePanel.database/tableSchema`、两处未使用导入、
+  一处 `Partial<PanelState>` 转换）——**恰是 AGENTS.md 新门禁要防的「mock 与真实类型长期漂移」**。
+  生产代码 0 错、1199 运行期用例全绿，纯夹具问题，已回退 Coder 修正。
+  Track B 在真门禁下 **0 新增错误**（其 Coder 用临时 tsconfig 自验「本轨 0 错」属实）。
+- **Track B 合流**（`1837096f0`）：宿主 12 文件 + Pro 4 文件；Pro 侧 `63b212a`
+  已合入 Pro 集成分支 `productivity/editor-productivity`（现 `967fdbd`，含 A+B 两侧）。
+  双侧 `extensionPointsVersion` 均 `1.1.0`（已实测核验），合流后 `resolve-pro --edition=pro` 打包正常。
+  已派发独立 Tester。
+- **协调者自有基建修复：hub 聚合器三个同源解析缺陷**（`状态` 因 Markdown 强调标记恒不匹配、
   `Pro 分支` 子串覆盖宿主分支、开放 Bug 正则把 `(?:`\*\*`)` 放在冒号之后导致按规程登记的 Bug 一条都数不到），
   修复于 `9a9027531` 并补 5 例回归测试；pre-commit 钩子此后自动执行该测试。
 
@@ -172,7 +188,8 @@ title: 多目标协调计划（hub 静态段落来源）
       `engines.extensionPointsVersion` 与宿主 `EXTENSION_POINTS_VERSION` **同步 bump 后**一致。
 - [ ] **裁决 BUG-003**：`tsconfig.json` 的 exclude 与 `AGENTS.md` 声称的「测试参与类型检查」矛盾；
       放开后 1980 条历史错误待清。需用户裁决是修文档还是清债。
-- [ ] **合流前须落 BUG-002**（Track E 的前置）：否则 Track E 的具名导入会静默打进已签名产物。
+- [ ] **合流前须落 BUG-002**（Track E 的前置）：修复轨 `feature/pack-ep-key-invariant` 已开，Coder 8ff5a178 在跑。
+- [x] ~~裁决 BUG-003~~ **已关闭**：main 的 `d14037e8b` 早已删除 exclude 并清掉 2014 错，实为集成分支基座过时所致。
 - [ ] `src/components/sql-editor/**` 位于 `vitest.config.ts` 覆盖率门禁**之外**，
       故该目录「测试通过」是弱证据；每个涉及该目录的轨道，Tester 必须显式测量改动行覆盖率。
 
