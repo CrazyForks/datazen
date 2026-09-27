@@ -24,8 +24,9 @@ import {
 } from '../schemaCache';
 
 const schema: TableSchema = {
-  name: 'users',
+  tableName: 'users',
   columns: [],
+  primaryKeys: [],
   indexes: [],
   foreignKeys: [],
 };

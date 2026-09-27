@@ -9,6 +9,7 @@ import {
   resolveTauriCli,
   REQUIRED_PRO_STAGED_PATHS,
   UPDATER_CONFIG,
+  writeTauriConfigFile,
   writeUpdaterConfigFile,
 } from '../ci-tauri-build.mjs';
 
@@ -46,6 +47,61 @@ describe('ci-tauri-build args', () => {
       updaterConfigPath: join(dir, 'test-pro.json'),
     });
     expect(args).toEqual(['build', '--config', join(dir, 'test-pro.json'), '-f', 'driver-redis']);
+  });
+
+  it('forwards a custom cargo profile and orders it before --config', () => {
+    // Tauri puts the output in target/<triple>/<profile>, so a typo here is
+    // what makes the workflow look for binaries in a directory that never
+    // gets written.
+    const args = buildTauriArgs({
+      target: 'aarch64-apple-darwin',
+      profile: 'ci-release',
+      updater: true,
+      updaterConfigPath: '/tmp/updater.json',
+    });
+    expect(args).toEqual([
+      'build',
+      '--target',
+      'aarch64-apple-darwin',
+      '--profile',
+      'ci-release',
+      '--config',
+      '/tmp/updater.json',
+    ]);
+  });
+
+  it('defaults to no profile so local release builds keep full fat LTO', () => {
+    expect(buildTauriArgs({ features: ['driver-redis'] })).not.toContain('--profile');
+  });
+});
+
+describe('ci-tauri-build typecheck-once override', () => {
+  it('emits a build config even when no updater artifacts are requested', () => {
+    // The only reason to pass --config here is the beforeBuildCommand
+    // override, so omitting it would silently keep the slow pnpm build.
+    const dir = mkdtempSync(join(tmpdir(), 'datazen-ci-tauri-'));
+    const args = buildTauriArgs({
+      features: ['driver-redis'],
+      beforeBuildCommand: 'pnpm build:bundle',
+    });
+    expect(args[0]).toBe('build');
+    expect(args).toContain('--config');
+    const config = JSON.parse(readFileSync(args[args.indexOf('--config') + 1], 'utf-8'));
+    expect(config).toEqual({ build: { beforeBuildCommand: 'pnpm build:bundle' } });
+
+    const file = writeTauriConfigFile({ beforeBuildCommand: 'pnpm build:bundle', dir });
+    expect(file).toContain('-fastfe');
+  });
+
+  it('keeps the updater artifact flag alongside the override', () => {
+    const file = writeTauriConfigFile({
+      updater: true,
+      beforeBuildCommand: 'pnpm build:bundle',
+    });
+    expect(JSON.parse(readFileSync(file, 'utf-8'))).toEqual({
+      ...UPDATER_CONFIG,
+      build: { beforeBuildCommand: 'pnpm build:bundle' },
+    });
   });
 });
 

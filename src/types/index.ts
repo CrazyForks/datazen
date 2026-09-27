@@ -105,9 +105,12 @@ export interface PrivilegeGrant {
 
 export interface TableInfo {
   name: string;
-  schema?: string;
+  /** `driver-api` declares both as `Option<_>` without `skip_serializing_if`, so
+   *  serde puts `null` on the wire — not `undefined`. `?:` alone is a lie that
+   *  silently rejects the backend's own payload. */
+  schema?: string | null;
   tableType: TableType;
-  rowCount?: number;
+  rowCount?: number | null;
 }
 
 export interface ColumnSchema {

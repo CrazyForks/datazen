@@ -24,13 +24,5 @@
     }
   },
   "include": ["src", "packages/driver-sdk", "packages/extension-points", "packages/wapp-sdk", "packages/ui", "packages/drivers/*/ui"],
-  "exclude": [
-    "src/**/__tests__/**",
-    "src/**/*.test.ts",
-    "src/**/*.test.tsx",
-    "packages/**/__tests__/**",
-    "packages/**/*.test.ts",
-    "packages/**/*.test.tsx"
-  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

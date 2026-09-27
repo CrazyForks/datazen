@@ -59,7 +59,9 @@ const panels: Panel[] = [
     connectionId: 'connection-1',
     dbSessionId: 'session-1',
     connectionName: 'Local',
-    databaseType: 'postgres',
+    databaseType: 'postgresql',
+    database: 'app',
+    schema: null,
   },
 ];
 

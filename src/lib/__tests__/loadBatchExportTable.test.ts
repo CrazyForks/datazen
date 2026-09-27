@@ -70,6 +70,8 @@ function makeDeps(overrides: Partial<LoadBatchExportTableDeps> = {}): LoadBatchE
     getDdl: vi.fn().mockResolvedValue('CREATE TABLE users (id INT);'),
     getTableData: vi.fn().mockResolvedValue(pageResult(0, 500, [[1, 'Alice']], 1)),
     getDialect: vi.fn().mockReturnValue(fakeDialect(0)),
+    // None of the fixtures here live in a schema-qualified namespace.
+    getRelationSchema: vi.fn().mockReturnValue(null),
     ...overrides,
   };
 }

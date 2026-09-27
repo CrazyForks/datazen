@@ -94,6 +94,13 @@ bindSchemaStore(
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    // Host-store fields this suite never exercises; bound to satisfy the bridge
+    // contract so the Redis tree only ever reads `databases` / `loading`.
+    pathItems: {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -120,7 +127,10 @@ function useKeyspace(keys: readonly string[]): void {
         ? keys
         : keys.filter((key) => {
             const re = new RegExp(
-              `^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`,
+              `^${pattern
+                .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                .replace(/\*/g, '.*')
+                .replace(/\?/g, '.')}$`,
             );
             return re.test(key);
           });
@@ -186,8 +196,18 @@ function press(key: string): void {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
-  dbSizes.mockResolvedValue([{ db: 0, keys: 3 }, { db: 1, keys: 0 }]);
-  getKey.mockResolvedValue({ key: 'app:1', keyType: 'string', ttl: -1, value: 'v', size: 1, memory: null });
+  dbSizes.mockResolvedValue([
+    { db: 0, keys: 3 },
+    { db: 1, keys: 0 },
+  ]);
+  getKey.mockResolvedValue({
+    key: 'app:1',
+    keyType: 'string',
+    ttl: -1,
+    value: 'v',
+    size: 1,
+    memory: null,
+  });
 });
 
 afterEach(() => {

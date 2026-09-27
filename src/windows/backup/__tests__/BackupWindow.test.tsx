@@ -14,9 +14,13 @@ const {
 } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   loadSettingsMock: vi.fn().mockResolvedValue(undefined),
-  urlParamMock: vi.fn((name: string) => (name === 'mode' ? null : null)),
+  // Explicit signatures: each test re-implements these with its own arity/return,
+  // and the production call sites are `listen(name, handler)` / `getUrlParam(name)`.
+  urlParamMock: vi.fn<(name: string) => string | null>(() => null),
   confirmDialogFn: vi.fn().mockResolvedValue(true),
-  listenMock: vi.fn(async () => () => {}),
+  listenMock: vi.fn<
+    (name: string, handler: (event: { payload: unknown }) => void) => Promise<() => void>
+  >(async () => () => {}),
   // Mutable per-test dialect backup options; defaults to the previous empty list.
   backupOptionsRef: { current: [] as Array<{ id: string; label: string }> },
 }));
@@ -62,7 +66,8 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: (...args: unknown[]) => listenMock(...args),
+  listen: (name: string, handler: (event: { payload: unknown }) => void) =>
+    listenMock(name, handler),
 }));
 
 vi.mock('../../../hooks/useConfirmDialog', () => ({

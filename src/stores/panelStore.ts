@@ -18,6 +18,7 @@ import { panelTargetDatabase, panelTargetSchema } from './panelQueryContext';
 import { cancelAndCleanupExec, cancelAndCleanupPaneExec } from './panelExecCleanup';
 import { DEFAULT_PANE_ID, paneKey } from './paneKeys';
 import { resolveNextActive, resetPanelIdCounter, type Panel } from './panelTypes';
+import { createPanelCloseNotifier } from './panelCloseNotifier';
 
 export type { QueryExecState, BindParams };
 export { EMPTY_QUERY_EXEC, emptyQueryExecState } from './queryExecActions';
@@ -608,3 +609,9 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     });
   },
 }));
+
+// Tab-closed notifications are derived from this store's own state changes, so
+// they are wired up here rather than from each of the many removal actions (see
+// `panelCloseNotifier`). Re-exported so the view layer registers against the
+// notifier for the store it actually renders, without importing the store.
+export const { onPanelClosed } = createPanelCloseNotifier(usePanelStore);

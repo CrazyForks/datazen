@@ -34,7 +34,6 @@ vi.mock('../../../components/ui/Select', () => ({
   ),
 }));
 
-const fileCommands = vi.fn();
 const exportTablesStream = vi.fn();
 
 vi.mock('../../../commands/file', () => ({

@@ -45,6 +45,7 @@ vi.mock('../../../components/ui/Select', () => ({
 }));
 
 import { ServerStatusView } from '../ServerStatusView';
+import type { ServerStatusCache } from '../../../stores/panelTypes';
 
 /** A flat snapshot exactly like `server_status_snapshot` data payloads. */
 function payload(overrides: Record<string, unknown> = {}) {
@@ -64,6 +65,16 @@ function payload(overrides: Record<string, unknown> = {}) {
 /** 构造带时间戳的 TrendSeries 夹具：values 顺序即时间递增。 */
 function series(baseTs: number, values: number[]): { t: number; v: number }[] {
   return values.map((v, i) => ({ t: baseTs + i * 5000, v }));
+}
+
+/**
+ * `initialData.status` is the flat *scalar* record; the variables array travels
+ * separately (the view only reads `statusVariables` off a fetched payload, and
+ * skips that key when rendering `status` anyway).
+ */
+function statusRecord(snapshot: ReturnType<typeof payload>): ServerStatusCache['status'] {
+  const { statusVariables: _variables, ...scalars } = snapshot;
+  return scalars as ServerStatusCache['status'];
 }
 
 describe('ServerStatusView data cards + charts (data-driven)', () => {
@@ -108,7 +119,7 @@ describe('ServerStatusView data cards + charts (data-driven)', () => {
         dbSessionId="conn-mysql"
         connectionName="mysql"
         initialData={{
-          status: data,
+          status: statusRecord(data),
           variables: data.statusVariables,
           history: {
             qps: series(Date.now(), [1, 2, 3]),
@@ -133,7 +144,7 @@ describe('ServerStatusView data cards + charts (data-driven)', () => {
       <ServerStatusView
         dbSessionId="conn-pg"
         initialData={{
-          status: data,
+          status: statusRecord(data),
           variables: data.statusVariables,
           history: {
             qps: series(Date.now(), [1, 2, 3]),

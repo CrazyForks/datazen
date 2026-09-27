@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
-import { render, fireEvent, cleanup, screen } from '@testing-library/react';
+import { render, cleanup, screen } from '@testing-library/react';
 import { ExportDialog } from '../ExportDialog';
 import type { ColumnSchema } from '../../../types';
 

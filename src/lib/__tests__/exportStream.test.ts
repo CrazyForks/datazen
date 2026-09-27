@@ -21,8 +21,8 @@ const usersEvents: QueryStreamEvent[] = [
     index: 0,
     sql: 'SELECT * FROM users',
     columns: [
-      { name: 'id', dataType: 'int' },
-      { name: 'name', dataType: 'text' },
+      { name: 'id', dataType: 'int', nullable: false },
+      { name: 'name', dataType: 'text', nullable: true },
     ],
   },
   {
@@ -109,7 +109,7 @@ describe('streamTableExportText', () => {
       await emitAll(usersEvents, onEvent);
     });
     const text = await streamTableExportText({
-dbSessionId: 'c1',
+      dbSessionId: 'c1',
       tableName: 'users',
       columns: ['id', 'name'],
       format: 'json',
@@ -140,7 +140,7 @@ describe('streamTableExportToSaveDialog', () => {
       abort: vi.fn().mockResolvedValue(undefined),
     };
     const result = await streamTableExportToSaveDialog({
-dbSessionId: 'c1',
+      dbSessionId: 'c1',
       tableName: 'users',
       columns: ['id', 'name'],
       format: 'csv',
@@ -157,7 +157,7 @@ dbSessionId: 'c1',
 
   it('returns cancelled when dialog is dismissed', async () => {
     const result = await streamTableExportToSaveDialog({
-dbSessionId: 'c1',
+      dbSessionId: 'c1',
       tableName: 'users',
       columns: ['id'],
       format: 'json',

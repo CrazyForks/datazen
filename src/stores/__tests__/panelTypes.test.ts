@@ -22,6 +22,8 @@ describe('[tester] panelTypes', () => {
         dbSessionId: 's',
         connectionName: 'n',
         databaseType: 'postgresql',
+        database: 'd',
+        schema: null,
       },
       {
         id: 'b',
@@ -31,6 +33,8 @@ describe('[tester] panelTypes', () => {
         dbSessionId: 's',
         connectionName: 'n',
         databaseType: 'postgresql',
+        database: 'd',
+        schema: null,
       },
     ];
     expect(resolveNextActive(panels, 'b', 'a')).toBe('a');
@@ -46,6 +50,8 @@ describe('[tester] panelTypes', () => {
         dbSessionId: 's',
         connectionName: 'n',
         databaseType: 'postgresql',
+        database: 'd',
+        schema: null,
       },
       {
         id: 'b',
@@ -55,6 +61,8 @@ describe('[tester] panelTypes', () => {
         dbSessionId: 's',
         connectionName: 'n',
         databaseType: 'postgresql',
+        database: 'd',
+        schema: null,
       },
     ];
     expect(resolveNextActive(panels, 'b', 'b')).toBe('a');

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { render } from '@testing-library/react';
-import React, { createRef } from 'react';
+import { createRef } from 'react';
 import { SqlEditor, type SqlEditorHandle } from '../SqlEditor';
 import { extensionRegistry, sqlEditorEnhancedEP } from '@datazen/extension-points';
 import { EditorView } from '@codemirror/view';

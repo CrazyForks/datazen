@@ -7,12 +7,16 @@ const okRun: WidgetRun = {
   id: 'run-1',
   dashboardId: 'dash-1',
   widgetId: 'widget-1',
+  workflowId: 'workflow-1',
   startedAt: '2026-08-09T00:00:00.000Z',
   finishedAt: '2026-08-09T00:00:01.000Z',
   status: 'ok',
   rowCount: 2,
   columns: ['x', 'v'],
-  rows: [['a', 1], ['b', 2]],
+  rows: [
+    ['a', 1],
+    ['b', 2],
+  ],
 };
 
 describe('widgetRunToChartData', () => {

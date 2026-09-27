@@ -10,7 +10,7 @@ import {
   type ConfirmDialogOptions,
   type SettingsBridgeState,
 } from '@datazen/driver-sdk';
-import { useRedisGate } from '../shared/useRedisGate';
+import { useRedisGate, type GateWriteFn, type RedisGateLevel } from '../shared/useRedisGate';
 
 // Components take `useI18n` from the single @datazen/ui runtime; keep the
 // assertions locale-independent by overriding only that hook.
@@ -36,7 +36,7 @@ beforeAll(() => {
   bindSettingsStore(harnessSettingsStore);
 });
 
-let latestGateWrite: ((level: string, command?: string) => Promise<boolean>) | null = null;
+let latestGateWrite: GateWriteFn | null = null;
 let lastConfirmOptions: ConfirmDialogOptions | null = null;
 let resolveLastConfirm: ((value: boolean) => void) | null = null;
 
@@ -54,7 +54,7 @@ function setSafeMode(value: boolean) {
   }));
 }
 
-function gateCall(level: string, command?: string): Promise<boolean> {
+function gateCall(level: RedisGateLevel, command?: string): Promise<boolean> {
   if (!latestGateWrite) throw new Error('gate not mounted');
   return latestGateWrite(level, command);
 }

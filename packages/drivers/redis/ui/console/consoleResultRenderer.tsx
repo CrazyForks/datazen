@@ -22,19 +22,19 @@ export interface ConsoleResultItem {
 export function ConsoleResultView({ item }: { item: ConsoleResultItem }) {
   if (!item.ok && item.error) {
     return (
-      <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400 font-mono">
+      <div className="rounded border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger font-mono">
         {item.error}
       </div>
     );
   }
 
   if (item.resultType === 'nil') {
-    return <span className="text-zinc-500 italic font-mono text-sm">(nil)</span>;
+    return <span className="text-fg-muted italic font-mono text-sm">(nil)</span>;
   }
 
   if (item.resultType === 'ok') {
     return (
-      <span className="text-green-400 font-mono text-sm font-semibold">{item.value ?? 'OK'}</span>
+      <span className="text-success font-mono text-sm font-semibold">{item.value ?? 'OK'}</span>
     );
   }
 
@@ -47,7 +47,7 @@ export function ConsoleResultView({ item }: { item: ConsoleResultItem }) {
   }
 
   // scalar
-  return <span className="text-zinc-200 font-mono text-sm">{item.value}</span>;
+  return <span className="text-fg font-mono text-sm">{item.value}</span>;
 }
 
 /**
@@ -63,16 +63,16 @@ function parseArrayItems(value: string): string[] {
 function ArrayResult({ value }: { value: string }) {
   const items = parseArrayItems(value);
   if (items.length === 0) {
-    return <span className="text-zinc-500 font-mono text-sm">(empty array)</span>;
+    return <span className="text-fg-muted font-mono text-sm">(empty array)</span>;
   }
   return (
-    <div className="rounded border border-zinc-700 bg-zinc-900/50 overflow-hidden text-sm font-mono">
+    <div className="rounded border border-edge bg-surface-alt overflow-hidden text-sm font-mono">
       <table className="w-full">
         <tbody>
           {items.map((item, i) => (
-            <tr key={i} className="border-t border-zinc-800 first:border-t-0">
-              <td className="px-3 py-1 text-zinc-500 w-10 text-right select-none">{i}</td>
-              <td className="px-3 py-1 text-zinc-200">{item}</td>
+            <tr key={i} className="border-t border-edge first:border-t-0">
+              <td className="px-3 py-1 text-fg-muted w-10 text-right select-none">{i}</td>
+              <td className="px-3 py-1 text-fg">{item}</td>
             </tr>
           ))}
         </tbody>
@@ -96,16 +96,16 @@ function parseMapEntries(value: string): Array<{ key: string; val: string }> {
 function MapResult({ value }: { value: string }) {
   const entries = parseMapEntries(value);
   if (entries.length === 0) {
-    return <span className="text-zinc-500 font-mono text-sm">(empty map)</span>;
+    return <span className="text-fg-muted font-mono text-sm">(empty map)</span>;
   }
   return (
-    <div className="rounded border border-zinc-700 bg-zinc-900/50 overflow-hidden text-sm font-mono">
+    <div className="rounded border border-edge bg-surface-alt overflow-hidden text-sm font-mono">
       <table className="w-full">
         <tbody>
           {entries.map((e, i) => (
-            <tr key={i} className="border-t border-zinc-800 first:border-t-0">
-              <td className="px-3 py-1 text-zinc-400 font-medium">{e.key}</td>
-              <td className="px-3 py-1 text-zinc-200">{e.val}</td>
+            <tr key={i} className="border-t border-edge first:border-t-0">
+              <td className="px-3 py-1 text-fg-secondary font-medium">{e.key}</td>
+              <td className="px-3 py-1 text-fg">{e.val}</td>
             </tr>
           ))}
         </tbody>

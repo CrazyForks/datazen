@@ -24,7 +24,6 @@ const releaseConnectionMock = vi.fn();
 const pingMock = vi.fn().mockResolvedValue(undefined);
 const fetchConnectionsMock = vi.fn().mockResolvedValue(undefined);
 const fetchGroupsMock = vi.fn().mockResolvedValue(undefined);
-const fetchDashboardsMock = vi.fn().mockResolvedValue(undefined);
 const emitCrossWindowMock = vi.fn().mockResolvedValue(undefined);
 const listenCrossWindowMock = vi.fn().mockResolvedValue(() => {});
 const hasOpenChildWindowsMock = vi.fn().mockResolvedValue(false);
@@ -35,7 +34,6 @@ const openSchemaDiffWindowMock = vi.fn();
 const openWorkflowWindowMock = vi.fn();
 const openDashboardWindowMock = vi.fn();
 const upsertSchemaMock = vi.fn();
-const webviewGetAllMock = vi.fn().mockResolvedValue([{ label: 'main' }]);
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({ t: (k: string) => k }),

@@ -4,9 +4,6 @@ import { CompletionContext } from '@codemirror/autocomplete';
 import {
   inferSqlCompletionKind,
   contextualKeywordCompletion,
-  contextualSchemaCompletion,
-  filterKeywordsByKind,
-  filterCompletionsByKind,
 } from '../../../../lib/sqlCompletionContext';
 import { resolveCmDialect } from '../../contracts';
 import { keywordCompletionSource } from '@codemirror/lang-sql';
@@ -145,9 +142,16 @@ describe('SQL Editing Typing Journey (Continuous Typing State Machine)', () => {
         { name: 'name', dataType: 'character varying', nullable: true, isPrimaryKey: false },
         { name: 'order', dataType: 'character varying', nullable: true, isPrimaryKey: false },
       ],
+      // Remaining `EditorRelationMetadata` fields: the completion path reads
+      // only the identity, the kind and the columns.
+      primaryKey: ['id'],
+      indexes: [],
+      foreignKeys: [],
+      loadedAt: 0,
     };
     const snapshot = {
       dbSessionId: 's1',
+      database: 'test',
       epoch: 1,
       relations: new Map([['er_customers', erCustomers]]),
     };

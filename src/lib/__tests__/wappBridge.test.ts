@@ -1,6 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginRequestEnvelope } from '../wappBridge';
 
+/**
+ * Store double for `useConnectionStore`. The bridge only reads the whitelisted
+ * `id` / `name` / `databaseType` triple off each config, so the stub keeps the
+ * rest of the config opaque instead of pinning a full `ConnectionConfig`.
+ */
+type StoreConnectionStub = Record<string, unknown> & {
+  id: string;
+  name: string;
+  databaseType: string;
+};
+
 const {
   storageGetMock,
   storageSetMock,
@@ -19,7 +30,11 @@ const {
   driverExecuteMock: vi.fn(),
   getConnectionsIpcMock: vi.fn(),
   connectionStoreState: {
-    current: { connections: [], connectionsLoaded: false, loading: false },
+    current: {
+      connections: [] as StoreConnectionStub[],
+      connectionsLoaded: false,
+      loading: false,
+    },
   },
   activeConnectionStoreState: { current: { connections: {} } },
   notificationInvokeMock: vi.fn(),

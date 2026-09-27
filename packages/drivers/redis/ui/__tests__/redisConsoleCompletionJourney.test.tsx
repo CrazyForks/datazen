@@ -32,6 +32,7 @@ vi.mock('../shared/redisInvoke', () => ({
 }));
 
 import { RedisConsole } from '../console/RedisConsole';
+import { resetTranscript } from '../console/consoleTranscript';
 
 // Harness capability bindings (host injects the real ones at startup).
 bindSettingsStore(
@@ -47,6 +48,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+// Per-tab UI state key. Distinct from `dbSessionId`, which is the wire id.
+const PANEL = 'panel-safety';
+
 beforeEach(() => {
   commandInvoke.mockResolvedValue({ results: [] });
   scanKeys.mockResolvedValue({
@@ -54,6 +58,10 @@ beforeEach(() => {
     cursor: 0,
     done: true,
   });
+  // The input draft lives in the module-level transcript store so it survives
+  // a panel switch; it therefore survives `cleanup()` too and must be reset
+  // per case or a leftover draft leaks into the next one.
+  resetTranscript(PANEL);
 });
 
 function setInput(input: HTMLTextAreaElement, value: string, cursor: number = value.length) {
@@ -64,7 +72,7 @@ function setInput(input: HTMLTextAreaElement, value: string, cursor: number = va
 
 describe('RedisConsole completion — command mode', () => {
   it('opens popup on "SE" listing SET-family candidates', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     setInput(input, 'SE');
@@ -80,7 +88,7 @@ describe('RedisConsole completion — command mode', () => {
   });
 
   it('ArrowDown moves the highlight and Tab accepts (appends a space, closes popup)', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     setInput(input, 'SE');
@@ -116,7 +124,7 @@ describe('RedisConsole completion — command mode', () => {
   });
 
   it('Escape dismisses the popup without editing the text', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     setInput(input, 'SE');
@@ -134,7 +142,7 @@ describe('RedisConsole completion — command mode', () => {
 
 describe('RedisConsole completion — key mode', () => {
   it('fetches key candidates for the argument token and accepts with Enter', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     setInput(input, 'SET user');

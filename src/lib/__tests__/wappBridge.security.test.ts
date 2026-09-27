@@ -382,7 +382,7 @@ describe('F6 security: malformed command.invoke payloads', () => {
   });
 
   afterEach(() => {
-    handle.detach();
+    handle?.detach();
   });
 
   const invoke = (reqId: string, payload: unknown) => {

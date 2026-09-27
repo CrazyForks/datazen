@@ -107,9 +107,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -271,7 +276,7 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
     expect(empty.getAttribute('data-empty-state')).toBe('no-match');
     // … and 「全选已加载」 is disabled over an empty visible set rather than
     // selecting an off-screen one.
-    expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(true);
+    expect((screen.getByTestId('redis-tree-select-all') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByTestId('redis-tree-select-all'));
     expect(tickedRows()).toEqual([]);
 

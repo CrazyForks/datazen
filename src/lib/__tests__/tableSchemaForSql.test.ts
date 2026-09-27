@@ -37,7 +37,7 @@ describe('tableSchemaForSql', () => {
     });
 
     it('returns bare name when schema is absent', () => {
-      expect(driverTableRefsToTry('users', undefined, 'postgresql')).toEqual(['users']);
+      expect(driverTableRefsToTry('users', null, 'postgresql')).toEqual(['users']);
     });
   });
 

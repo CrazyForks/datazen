@@ -9,6 +9,7 @@ describe('WidgetRunStatus', () => {
       id: 'run-1',
       dashboardId: 'd1',
       widgetId: 'w1',
+      workflowId: 'wf-1',
       startedAt: '2026-08-09T00:00:00.000Z',
       finishedAt: '2026-08-09T00:01:00.000Z',
       status: 'timeout',

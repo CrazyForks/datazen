@@ -17,6 +17,7 @@ function makeSchema(
     columns: columns.map((c) => ({
       name: c.name,
       dataType: c.dataType,
+      nullable: true,
       isNullable: true,
       isPrimaryKey: primaryKeys.includes(c.name),
     })),

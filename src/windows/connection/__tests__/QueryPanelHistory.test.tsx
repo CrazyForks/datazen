@@ -175,6 +175,13 @@ function renderPanel() {
       dbSessionId="sess-cfg-1"
       connectionId="cfg-1"
       databaseType="postgresql"
+      // The sidebar scopes history with `database ?? currentDatabase`, and
+      // `QueryPanelProps.database` is typed `string` even though a freshly
+      // created panel carries no bound database. Keep it undefined here so the
+      // panel keeps following the session's currentDatabase, which is exactly
+      // what the "current-database" and "fallback hint" cases below exercise.
+      database={undefined as unknown as string}
+      schema={null}
     />,
   );
 }

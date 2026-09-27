@@ -39,6 +39,7 @@ vi.mock('../shared/redisInvoke', () => ({
 }));
 
 import { RedisConsole } from '../console/RedisConsole';
+import { resetTranscript } from '../console/consoleTranscript';
 
 function setDriverSettings(redis: Record<string, unknown>) {
   useBoundSettingsStore.setState((s) => ({
@@ -54,11 +55,9 @@ bindSettingsStore(
 bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 
 let confirmCalls: ConfirmDialogOptions[] = [];
-let confirmBehaviour: (index: number) => boolean = () => true;
 
 function stubConfirm(behaviour: (index: number) => boolean = () => true) {
   confirmCalls = [];
-  confirmBehaviour = behaviour;
   const confirmFn = vi.fn<ConfirmDialogFn>((options) => {
     const index = confirmCalls.length;
     confirmCalls.push(options);
@@ -84,15 +83,22 @@ afterEach(() => {
   useBoundSettingsStore.setState((s) => ({ settings: { ...s.settings, safeMode: false } }));
 });
 
+// Per-tab UI state key. Distinct from `dbSessionId`, which is the wire id.
+const PANEL = 'panel-safety';
+
 beforeEach(() => {
   commandInvoke.mockResolvedValue({ results: [] });
   scanKeys.mockResolvedValue({ keys: [], cursor: 0, done: true });
   stubConfirm();
+  // The transcript is a module-level store (it has to outlive the unmount that
+  // a panel switch causes), so it is not reset by cleanup() the way component
+  // state is. Every case shares `sess-1`, so reset it explicitly.
+  resetTranscript(PANEL);
 });
 
 describe('typing journey — the badge leaves the unknown state as the command completes', () => {
   it('walks KEYS from a half-typed token to a known destructive command and back out', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     // 'K' / 'KE' are not commands: fail-closed means the badge already refuses.
@@ -122,7 +128,7 @@ describe('typing journey — the badge leaves the unknown state as the command c
   });
 
   it('grades a multi-line batch by its strictest line', () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nSET b 1');
@@ -139,14 +145,14 @@ describe('typing journey — the badge leaves the unknown state as the command c
 
 describe('blocked commands never reach the server', () => {
   it('refuses a known destructive command with the destructive copy key', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'KEYS *');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
-    expect(screen.getByTestId('redis-console-error').textContent).toContain(
+    await waitFor(() => expect(screen.getByTestId('redis-console-entry-error')).toBeTruthy());
+    expect(screen.getByTestId('redis-console-entry-error').textContent).toContain(
       'redis.consoleSafety.blockedDestructive',
     );
     expect(commandInvoke).not.toHaveBeenCalled();
@@ -155,40 +161,42 @@ describe('blocked commands never reach the server', () => {
   });
 
   it('refuses an unrecognised command with its own copy key', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'JSON.GET doc');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
-    const text = screen.getByTestId('redis-console-error').textContent ?? '';
+    await waitFor(() => expect(screen.getByTestId('redis-console-entry-error')).toBeTruthy());
+    const text = screen.getByTestId('redis-console-entry-error').textContent ?? '';
     expect(text).toContain('redis.consoleSafety.blockedUnknown');
     expect(text).not.toContain('redis.consoleSafety.blockedDestructive');
     expect(commandInvoke).not.toHaveBeenCalled();
   });
 
   it('refuses the whole batch when one line is blocked, but keeps the good lines typed', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nEVAL "return 1" 0');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
-    expect(screen.getByTestId('redis-console-error').textContent).toContain('EVAL "return 1" 0');
+    await waitFor(() => expect(screen.getByTestId('redis-console-entry-error')).toBeTruthy());
+    expect(screen.getByTestId('redis-console-entry-error').textContent).toContain(
+      'EVAL "return 1" 0',
+    );
     expect(commandInvoke).not.toHaveBeenCalled();
   });
 
   it('keeps the dedicated FLUSHDB copy without the allowFlush opt-in', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'FLUSHDB');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-error')).toBeTruthy());
-    expect(screen.getByTestId('redis-console-error').textContent).toContain(
+    await waitFor(() => expect(screen.getByTestId('redis-console-entry-error')).toBeTruthy());
+    expect(screen.getByTestId('redis-console-entry-error').textContent).toContain(
       'redis.console.flushBlocked',
     );
     expect(commandInvoke).not.toHaveBeenCalled();
@@ -197,7 +205,7 @@ describe('blocked commands never reach the server', () => {
 
 describe('batch gate semantics (R-3)', () => {
   it('asks once for a mixed batch and lists every danger-tier-and-above command', async () => {
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nDEL b\nEXPIRE c 1');
@@ -206,12 +214,14 @@ describe('batch gate semantics (R-3)', () => {
     await waitFor(() => expect(commandInvoke).toHaveBeenCalledTimes(1));
     expect(confirmCalls).toHaveLength(1);
     expect(confirmCalls[0].codePreview).toContain('DEL b, EXPIRE c 1');
-    expect(commandInvoke.mock.calls[0]?.[2]).toMatchObject({ commands: 'GET a\nDEL b\nEXPIRE c 1' });
+    expect(commandInvoke.mock.calls[0]?.[2]).toMatchObject({
+      commands: 'GET a\nDEL b\nEXPIRE c 1',
+    });
   });
 
   it('cancelling the single confirmation stops the whole batch', async () => {
     stubConfirm(() => false);
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nDEL b');
@@ -223,7 +233,7 @@ describe('batch gate semantics (R-3)', () => {
 
   it('asks twice for an allowFlush FLUSHDB (destructive second brake)', async () => {
     setDriverSettings({ allowFlush: true });
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'SET a 1\nFLUSHDB');
@@ -241,7 +251,7 @@ describe('batch gate semantics (R-3)', () => {
   it('stops before the server when the second confirmation is refused', async () => {
     setDriverSettings({ allowFlush: true });
     stubConfirm((index) => index === 0);
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'FLUSHDB');
@@ -253,7 +263,7 @@ describe('batch gate semantics (R-3)', () => {
 
   it('keeps Safe Mode in front of the write path (I-6 unchanged)', async () => {
     useBoundSettingsStore.setState((s) => ({ settings: { ...s.settings, safeMode: true } }));
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'SET a 1');
@@ -275,23 +285,22 @@ describe('per-command results (P0-3 / R-3.2)', () => {
         { command: 'PING', ok: true, value: 'PONG', resultType: 'ok' },
       ],
     });
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'GET a\nGET hash:1\nPING');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-failed-count')).toBeTruthy());
-    expect(screen.getByTestId('redis-console-failed-count').textContent).toContain(
-      'redis.errorsCount',
+    await waitFor(() =>
+      expect(screen.getAllByTestId('redis-console-entry-result')).toHaveLength(3),
     );
-    // sequential execution: the third command is still there and selectable
-    const tabs = screen.getAllByRole('button').filter((b) => b.title?.startsWith('GET') || b.title === 'PING');
-    expect(tabs).toHaveLength(3);
-    fireEvent.click(tabs[1]);
-    expect(screen.getByTestId('redis-console-result').textContent).toContain('WRONGTYPE');
-    fireEvent.click(tabs[2]);
-    expect(screen.getByTestId('redis-console-result').textContent).toContain('PONG');
+    // All three land in the scrollback at once. The old model paginated them
+    // behind tabs, so "the later results are not dropped" only ever held for
+    // whichever tab happened to be selected.
+    const rows = screen.getAllByTestId('redis-console-entry-result');
+    expect(rows[0].textContent).toContain('1');
+    expect(rows[1].textContent).toContain('WRONGTYPE');
+    expect(rows[2].textContent).toContain('PONG');
   });
 
   it('renders the server-provided resultType instead of re-guessing it', async () => {
@@ -301,15 +310,19 @@ describe('per-command results (P0-3 / R-3.2)', () => {
         { command: 'GET z', ok: true, value: 'scalar-looking', resultType: 'scalar' },
       ],
     });
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'HGETALL h');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-result')).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getAllByTestId('redis-console-entry-result')).toHaveLength(2),
+    );
     // `[a, b]` formatted as a scalar would print verbatim; as an array it becomes rows.
-    expect(screen.getByTestId('redis-console-result').textContent).not.toContain('[a, b]');
+    expect(screen.getAllByTestId('redis-console-entry-result')[0].textContent).not.toContain(
+      '[a, b]',
+    );
     expect(screen.getByText('a')).toBeTruthy();
     expect(screen.getByText('b')).toBeTruthy();
   });
@@ -318,13 +331,13 @@ describe('per-command results (P0-3 / R-3.2)', () => {
     commandInvoke.mockResolvedValue({
       results: [{ command: 'HGETALL h', ok: true, value: '{a => 1}' }],
     });
-    render(<RedisConsole dbSessionId="sess-1" dbIndex={0} />);
+    render(<RedisConsole dbSessionId="sess-1" panelId={PANEL} dbIndex={0} />);
     const input = screen.getByTestId('redis-console-input') as HTMLTextAreaElement;
 
     typeInto(input, 'HGETALL h');
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(screen.getByTestId('redis-console-result')).toBeTruthy());
-    expect(screen.getByTestId('redis-console-result').textContent).toContain('a');
+    await waitFor(() => expect(screen.getByTestId('redis-console-entry-result')).toBeTruthy());
+    expect(screen.getByTestId('redis-console-entry-result').textContent).toContain('a');
   });
 });

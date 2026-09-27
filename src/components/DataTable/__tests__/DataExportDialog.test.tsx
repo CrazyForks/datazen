@@ -107,7 +107,7 @@ describe('DataExportDialog', () => {
   });
 
   it('exports xlsx as binary', async () => {
-    const { container, getByText } = render(
+    const { getByText } = render(
       <DataExportDialog
         open
         onClose={vi.fn()}
@@ -148,7 +148,7 @@ describe('DataExportDialog', () => {
 
   it('switches to selected scope', () => {
     const selected = new Set([0]);
-    const { container } = render(
+    render(
       <DataExportDialog
         open
         onClose={vi.fn()}

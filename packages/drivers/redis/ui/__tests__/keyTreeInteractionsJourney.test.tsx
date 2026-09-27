@@ -22,6 +22,7 @@ import {
   bindConnectionStore,
   bindSchemaStore,
   bindSettingsStore,
+  type ConfirmDialogOptions,
   type ConnectionBridgeState,
   type SchemaStoreState,
   type SettingsBridgeState,
@@ -89,13 +90,20 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
  * which is what every other journey in this file already assumed.
  */
 let confirmAnswer = true;
-const confirmSpy = vi.fn(async () => confirmAnswer);
+const confirmSpy = vi.fn(async (_options: ConfirmDialogOptions) => confirmAnswer);
 bindConfirmDialog(() => [confirmSpy, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    // Host-store fields this suite never exercises; bound to satisfy the bridge
+    // contract so the Redis tree only ever reads `databases` / `loading`.
+    pathItems: {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -133,6 +141,15 @@ function lastScan(): { pattern: string; cursor: number; opts: Record<string, unk
 
 function emptyState(): string | null {
   return screen.queryByTestId('redis-tree-empty')?.getAttribute('data-empty-state') ?? null;
+}
+
+/**
+ * Header actions render through `@datazen/ui` `Button`, i.e. a real `<button>`;
+ * testing-library only knows them as `HTMLElement`, and `disabled` is asserted
+ * on them. Narrowing here keeps the assertions on the real DOM property.
+ */
+function actionButton(testId: string): HTMLButtonElement {
+  return screen.getByTestId(testId) as HTMLButtonElement;
 }
 
 /** The page `data-empty-state` must show right now. */
@@ -562,7 +579,7 @@ describe('R1 the select-all button becomes the delete button over the selection'
       testId: 'redis-tree-select-all',
       labelKey: 'redis.tree.selectAll',
     });
-    expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(false);
+    expect(actionButton('redis-tree-select-all').disabled).toBe(false);
 
     // 2. Select all loaded — the very next paint is the delete action.
     fireEvent.click(screen.getByTestId('redis-tree-select-all'));
@@ -629,7 +646,7 @@ describe('R1 the select-all button becomes the delete button over the selection'
     // Identity `t` ⇒ the message equals its i18n key. The count is interpolated
     // into that string, so asserting on the key (not on prose) is what this
     // file's policy allows; `en.ts` owns whether `{count}` is in it.
-    const arg = confirmSpy.mock.calls[0][0] as { message: string; kind: string };
+    const arg: ConfirmDialogOptions = confirmSpy.mock.calls[0][0];
     expect(arg.message).toBe('redis.deleteSelectedConfirm');
     expect(arg.kind).toBe('warning');
 
@@ -653,15 +670,13 @@ describe('R1 the select-all button becomes the delete button over the selection'
         'value',
       ),
     );
-    const parked = screen.getByTestId('redis-tree-delete-selected');
+    const parked = actionButton('redis-tree-delete-selected');
     expect(parked.disabled).toBe(true);
     expect(deleteCalls()).toHaveLength(0);
 
     // Back in the key scope it is live again — the selection outlived the trip.
     fireEvent.click(screen.getByTestId('redis-search-mode-key'));
-    await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-delete-selected').disabled).toBe(false),
-    );
+    await waitFor(() => expect(actionButton('redis-tree-delete-selected').disabled).toBe(false));
   });
 });
 

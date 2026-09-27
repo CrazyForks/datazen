@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
-import React, { createRef } from 'react';
+import { createRef } from 'react';
 import { SqlEditor, type SqlEditorHandle } from '../SqlEditor';
 
 describe('SqlEditor Shortcuts', () => {

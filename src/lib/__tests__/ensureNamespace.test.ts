@@ -7,6 +7,7 @@ import {
   type EnsureDeps,
 } from '../ensureNamespace';
 import type { TableInfo } from '../../types';
+import type { SqlNamespace } from '../sqlNamespace';
 
 function makeDeps(overrides: Partial<EnsureDeps> = {}): EnsureDeps {
   const pathAliases: Record<string, string> = { ...(overrides.pathAliases ?? { presto: '558' }) };
@@ -218,7 +219,10 @@ describe('namespacePathLoaded', () => {
     expect(namespacePathLoaded(deps, ['app'])).toBe(true);
     const treeDeps = makeDeps({
       loadedPaths: new Set(),
-      namespaceTree: { other: { kind: 'branch', children: {} } },
+      // Only "the tree is non-empty" matters here: `namespaceHasChild` returns
+      // `true` for an empty segment list without inspecting the node, so the
+      // placeholder shape below is handed over untouched.
+      namespaceTree: { other: { kind: 'branch', children: {} } } as unknown as SqlNamespace,
     });
     expect(namespacePathLoaded(treeDeps, [])).toBe(true);
   });
@@ -240,8 +244,8 @@ describe('ensureNamespacePath — default-sql (mysql)', () => {
       databaseType: 'mysql',
       pathAliases: {},
       getTables: vi.fn().mockResolvedValue([
-        { name: 'users', schema: null, tableType: 'table', rowCount: null },
-        { name: 'v_users', schema: null, tableType: 'view', rowCount: null },
+        { name: 'users', schema: undefined, tableType: 'table', rowCount: null },
+        { name: 'v_users', schema: undefined, tableType: 'view', rowCount: null },
       ] satisfies TableInfo[]),
     });
 
@@ -261,7 +265,7 @@ describe('ensureNamespacePath — default-sql (mysql)', () => {
       getTables: vi
         .fn()
         .mockResolvedValue([
-          { name: 'users', schema: null, tableType: 'table', rowCount: null },
+          { name: 'users', schema: undefined, tableType: 'table', rowCount: null },
         ] satisfies TableInfo[]),
     });
     await ensureNamespacePath([], deps);

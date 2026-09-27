@@ -128,11 +128,15 @@ describe('tableClauseFingerprint', () => {
 });
 
 describe('inferDefaultSchema', () => {
-  const t = (name: string, schema: string | null): TableInfo => ({
+  /*
+   * `TableInfo.schema` models "no schema" as `undefined`; `isSchemaGroupingSchema`
+   * filters on `!= null`, so an absent schema is what these cases mean.
+   */
+  const t = (name: string, schema: string | undefined): TableInfo => ({
     name,
     tableType: 'table',
     schema,
-    rowCount: null,
+    rowCount: undefined,
   });
 
   it('prefers public when present', () => {
@@ -144,6 +148,6 @@ describe('inferDefaultSchema', () => {
   });
 
   it('ignores path-nav sentinels and missing schemas', () => {
-    expect(inferDefaultSchema([t('hive', 'CATALOG'), t('u', null)])).toBeUndefined();
+    expect(inferDefaultSchema([t('hive', 'CATALOG'), t('u', undefined)])).toBeUndefined();
   });
 });
