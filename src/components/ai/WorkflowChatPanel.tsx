@@ -15,6 +15,7 @@ import { Button } from '../ui/Button';
 import { AiInput } from './AiInput';
 import { AiEgressNotice } from './AiEgressNotice';
 import { Select } from '../ui/Select';
+import { connectionAllowsMultiDb } from '../../windows/workflow/WorkflowForm';
 import { useI18n } from '../../hooks/useI18n';
 import { useAiStore } from '../../stores/aiStore';
 import { useActiveConnectionStore } from '../../stores/activeConnectionStore';
@@ -119,7 +120,7 @@ export function WorkflowChatPanel({ connections, onSaved, onBack }: WorkflowChat
       setSaveError('');
       try {
         const parsed = parseWorkflowYaml(yaml);
-        const missing = validateWorkflowFields(parsed);
+        const missing = validateWorkflowFields(parsed, validationConnections);
         if (missing) {
           setSaveError(t('workflows.aiCreate.missingField', { field: missing }));
           setSaving(false);
@@ -157,6 +158,17 @@ export function WorkflowChatPanel({ connections, onSaved, onBack }: WorkflowChat
       </div>
     );
   }
+
+  // Hold AI-generated workflows to the same multi-db rule the form enforces:
+  // a step on a multi-db connection with no default must name a database.
+  const validationConnections = useMemo(
+    () =>
+      connections.map((c) => ({
+        id: c.id,
+        requiresExplicitDatabase: connectionAllowsMultiDb(c),
+      })),
+    [connections],
+  );
 
   const connectionOptions = [
     { value: '', label: t('workflows.aiCreate.noConnection') },

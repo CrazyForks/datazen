@@ -13,6 +13,21 @@ pub enum WorkflowError {
     #[error("Command step '{step_id}' requires a database connection")]
     MissingConnection { step_id: String },
 
+    /// Neither the step, the workflow, nor the connection names a database.
+    /// Without this the driver silently falls back to its own default
+    /// (PostgreSQL hardcodes `"postgres"`) and the failure surfaces much later
+    /// as a misleading `relation "..." does not exist`.
+    #[error(
+        "Query step '{step_id}' has no database: set `database` on the step, \
+         or a workflow-level `database`, or a default database on connection \
+         '{connection_id}' (otherwise the driver falls back to its built-in \
+         default and the SQL fails against the wrong database)"
+    )]
+    MissingDatabase {
+        step_id: String,
+        connection_id: String,
+    },
+
     #[error("Failed to connect '{connection_id}': {message}")]
     ConnectionFailed {
         connection_id: String,
@@ -106,5 +121,28 @@ mod tests {
         };
         assert!(err.to_string().contains("backup"));
         assert!(err.to_string().contains("cfg-1"));
+    }
+}
+
+#[cfg(test)]
+mod missing_database_tests {
+    use super::WorkflowError;
+
+    #[test]
+    fn message_names_step_connection_and_all_three_fixes() {
+        let err = WorkflowError::MissingDatabase {
+            step_id: "orders".into(),
+            connection_id: "PG-Local".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("'orders'"), "{msg}");
+        assert!(msg.contains("'PG-Local'"), "{msg}");
+        // The message must not read like a driver error, since the whole point
+        // is to replace the misleading `relation "..." does not exist`.
+        assert!(!msg.contains("does not exist"), "{msg}");
+        // It should tell the user all three places a database can be set.
+        assert!(msg.contains("on the step"), "{msg}");
+        assert!(msg.contains("workflow-level"), "{msg}");
+        assert!(msg.contains("on connection"), "{msg}");
     }
 }

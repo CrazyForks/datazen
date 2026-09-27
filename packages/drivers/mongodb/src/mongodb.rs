@@ -255,6 +255,10 @@ impl MongodbDriver {
 
 #[async_trait]
 impl DatabaseDriver for MongodbDriver {
+    fn has_multi_database(&self) -> bool {
+        true
+    }
+
     fn driver_type(&self) -> DatabaseType {
         "mongodb".to_string()
     }

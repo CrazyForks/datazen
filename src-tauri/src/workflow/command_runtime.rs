@@ -16,6 +16,38 @@ pub fn resolve_connection_id<'a>(
         })
 }
 
+/// Let a command step inherit the workflow-level default database.
+///
+/// A `Command` step has no `database` field of its own (`WorkflowStep::Command`
+/// in `model.rs`); its execution target travels inside `input.database`, which
+/// `command_runtime` later reads. So the workflow default has to be injected
+/// here to give command steps the same inheritance a query step already gets
+/// from `step_database.or(inherited_database)` in `executor.rs`.
+///
+/// Precedence mirrors the query branch: an explicit, non-blank
+/// `input.database` always wins; a blank one is treated as unset.
+pub fn inject_inherited_database(
+    mut input: serde_json::Value,
+    workflow_database: &str,
+) -> serde_json::Value {
+    let already_set = input
+        .get("database")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if already_set {
+        return input;
+    }
+    // `inject_sql_target_fields` already filters blank/empty values, so a
+    // whitespace-only workflow default is a no-op here.
+    crate::commands::driver_command::inject_sql_target_fields(
+        &mut input,
+        Some(workflow_database),
+        None,
+    );
+    input
+}
+
 pub async fn execute_command(
     app_state: &AppState,
     step: &WorkflowCommandStep,
@@ -236,5 +268,50 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("read-only"));
+    }
+}
+
+#[cfg(test)]
+mod inherit_tests {
+    use super::inject_inherited_database;
+    use serde_json::json;
+
+    #[test]
+    fn injects_workflow_database_when_step_omits_it() {
+        let out = inject_inherited_database(json!({ "limit": 10 }), "datazen_demo");
+        assert_eq!(out["database"], json!("datazen_demo"));
+        assert_eq!(out["limit"], json!(10));
+    }
+
+    #[test]
+    fn explicit_step_database_wins() {
+        let out = inject_inherited_database(json!({ "database": "other_db" }), "datazen_demo");
+        assert_eq!(out["database"], json!("other_db"));
+    }
+
+    #[test]
+    fn blank_step_database_is_treated_as_unset() {
+        let out = inject_inherited_database(json!({ "database": "   " }), "datazen_demo");
+        assert_eq!(out["database"], json!("datazen_demo"));
+    }
+
+    #[test]
+    fn blank_workflow_database_is_a_noop() {
+        let out = inject_inherited_database(json!({ "limit": 1 }), "   ");
+        assert!(out.get("database").is_none());
+    }
+
+    #[test]
+    fn workflow_database_is_trimmed() {
+        let out = inject_inherited_database(json!({}), "  datazen_demo  ");
+        assert_eq!(out["database"], json!("datazen_demo"));
+    }
+
+    #[test]
+    fn non_object_input_is_left_alone() {
+        // `inject_sql_target_fields` bails on non-objects; make sure we do not
+        // panic or corrupt the payload.
+        let out = inject_inherited_database(json!("just a string"), "datazen_demo");
+        assert_eq!(out, json!("just a string"));
     }
 }

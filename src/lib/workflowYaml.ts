@@ -36,11 +36,77 @@ export function parseWorkflowYaml(yaml: string): Record<string, unknown> {
 /**
  * Validate that a parsed workflow object has the required fields.
  * Returns the name of the first missing field, or null if valid.
+ *
+ * When `connections` is supplied, also enforces the database rule that the
+ * workflow form promises: for a multi-database connection that has no default
+ * database of its own, every data-operation step must resolve a database —
+ * from its own `database`, its `input.database`, or the workflow-level
+ * `database`. Without this the form showed a dropdown labelled "required"
+ * that nothing actually enforced, and the workflow failed at run time with a
+ * misleading `relation "..." does not exist`.
+ *
+ * `connections` is optional so the pure shape check stays usable by callers
+ * that have no connection context (and keeps existing callers working).
  */
-export function validateWorkflowFields(obj: Record<string, unknown>): string | null {
+export function validateWorkflowFields(
+  obj: Record<string, unknown>,
+  connections?: WorkflowValidationConnection[],
+): string | null {
   if (!obj.id || typeof obj.id !== 'string') return 'id';
   if (!obj.name || typeof obj.name !== 'string') return 'name';
   if (!Array.isArray(obj.steps) || obj.steps.length === 0) return 'steps';
+  const missing = findStepMissingDatabase(obj, connections);
+  if (missing) return missing;
+  return null;
+}
+
+/** Minimal connection shape the database rule needs. */
+export interface WorkflowValidationConnection {
+  id: string;
+  /** True when this driver is multi-db AND the connection pins no database of
+   *  its own, so a step must name one. Computed by the caller from
+   *  `DB_REGISTRY` (see `connectionAllowsMultiDb` in
+   *  `windows/workflow/WorkflowForm.tsx`) so this module stays free of
+   *  driver-metadata imports and stays cheap to unit test. */
+  requiresExplicitDatabase: boolean;
+}
+
+function findStepMissingDatabase(
+  obj: Record<string, unknown>,
+  connections: WorkflowValidationConnection[] | undefined,
+): string | null {
+  if (!connections || connections.length === 0) return null;
+  const byId = new Map(connections.map((c) => [c.id, c]));
+  const workflowDatabase = typeof obj.database === 'string' ? obj.database.trim() : '';
+  const steps = obj.steps as Record<string, unknown>[];
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (!step || typeof step !== 'object') continue;
+    const type = step.type;
+    if (type !== 'query' && type !== 'command') continue;
+
+    const connId =
+      (typeof step.connection === 'string' && step.connection) ||
+      (typeof obj.connection === 'string' && obj.connection) ||
+      '';
+    const conn = byId.get(connId);
+    if (!conn?.requiresExplicitDatabase) continue;
+
+    // A query step names its target in `database`; a command step carries it
+    // in `input.database`, since `WorkflowStep::Command` has no such field.
+    const stepDatabase =
+      type === 'query'
+        ? typeof step.database === 'string'
+          ? step.database.trim()
+          : ''
+        : typeof (step.input as Record<string, unknown> | undefined)?.database === 'string'
+          ? String((step.input as Record<string, unknown>).database).trim()
+          : '';
+
+    if (stepDatabase || workflowDatabase) continue;
+    return `steps[${i}].database`;
+  }
   return null;
 }
 
@@ -62,7 +128,9 @@ function isWorkflowStep(value: unknown): boolean {
  * Runtime guard: narrow a validated YAML object to WorkflowDefinition.
  * Throws when shape does not match the IPC contract.
  */
-export function parseValidatedWorkflowDefinition(obj: Record<string, unknown>): import('../types').WorkflowDefinition {
+export function parseValidatedWorkflowDefinition(
+  obj: Record<string, unknown>,
+): import('../types').WorkflowDefinition {
   const missing = validateWorkflowFields(obj);
   if (missing) {
     throw new Error(`Missing required workflow field: ${missing}`);
@@ -94,7 +162,9 @@ export function parseValidatedWorkflowDefinition(obj: Record<string, unknown>): 
     variables: (variables as import('../types').WorkflowVariable[] | undefined) ?? [],
     connection: typeof obj.connection === 'string' ? obj.connection : undefined,
     steps: steps as import('../types').WorkflowStep[],
-    output: isRecord(obj.output) ? (obj.output as unknown as import('../types').WorkflowOutput) : undefined,
+    output: isRecord(obj.output)
+      ? (obj.output as unknown as import('../types').WorkflowOutput)
+      : undefined,
     timeoutSecs: typeof obj.timeoutSecs === 'number' ? obj.timeoutSecs : undefined,
     errorHandling: isRecord(obj.errorHandling)
       ? (obj.errorHandling as unknown as import('../types').ErrorHandlingConfig)
@@ -103,6 +173,8 @@ export function parseValidatedWorkflowDefinition(obj: Record<string, unknown>): 
       ? (obj.schedule as unknown as import('../types').WorkflowSchedule)
       : undefined,
     visibility:
-      obj.visibility === 'user' || obj.visibility === 'dashboardHidden' ? obj.visibility : undefined,
+      obj.visibility === 'user' || obj.visibility === 'dashboardHidden'
+        ? obj.visibility
+        : undefined,
   };
 }

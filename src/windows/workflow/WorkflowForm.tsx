@@ -286,6 +286,22 @@ function CommandInputEditor({
   );
 }
 
+/**
+ * Pure multi-db rule: a step on this connection must name its own database
+ * (or inherit the workflow default) because the connection pins none.
+ *
+ * Exported so the YAML save path and the AI create panel enforce exactly the
+ * same rule the visual form does.
+ */
+export function connectionAllowsMultiDb(
+  conn: { databaseType: string; database?: string } | undefined,
+): boolean {
+  if (!conn) return false;
+  const meta = DB_REGISTRY[conn.databaseType as keyof typeof DB_REGISTRY];
+  if (!meta?.hasMultiDatabase) return false;
+  return !conn.database || meta.databaseFieldType === 'domain';
+}
+
 export function WorkflowForm({
   draft,
   editingId,
@@ -354,14 +370,10 @@ export function WorkflowForm({
    * drivers (e.g. Kiwi) store an instance domain separately and always stay
    * multi-db.
    */
-  const connectionAllowsMultiDb = useCallback(
+  const connectionAllowsMultiDbById = useCallback(
     (connId: string | undefined) => {
       if (!connId) return false;
-      const conn = connections.find((c) => c.id === connId);
-      if (!conn) return false;
-      const meta = DB_REGISTRY[conn.databaseType as keyof typeof DB_REGISTRY];
-      if (!meta?.hasMultiDatabase) return false;
-      return !conn.database || meta.databaseFieldType === 'domain';
+      return connectionAllowsMultiDb(connections.find((c) => c.id === connId));
     },
     [connections],
   );
@@ -379,9 +391,9 @@ export function WorkflowForm({
         .map(effectiveConnection),
     ];
     return Array.from(
-      new Set(candidates.filter((id): id is string => connectionAllowsMultiDb(id))),
+      new Set(candidates.filter((id): id is string => connectionAllowsMultiDbById(id))),
     );
-  }, [draft.connection, draft.steps, connections, connectionAllowsMultiDb]);
+  }, [draft.connection, draft.steps, connections, connectionAllowsMultiDbById]);
 
   useEffect(() => {
     let cancelled = false;
@@ -559,7 +571,7 @@ export function WorkflowForm({
           </div>
 
           {(() => {
-            const wfNeedsDatabase = connectionAllowsMultiDb(draft.connection);
+            const wfNeedsDatabase = connectionAllowsMultiDbById(draft.connection);
             if (!wfNeedsDatabase) return null;
             const wfDatabases = draft.connection ? (databasesByConn[draft.connection] ?? []) : [];
             const wfLoading = draft.connection
@@ -765,7 +777,7 @@ export function WorkflowForm({
                   if (step.type !== 'query' && step.type !== 'command') return null;
                   if (connections.length === 0) return null;
                   const connId = step.connection || draft.connection || '';
-                  const needsDatabase = connectionAllowsMultiDb(connId);
+                  const needsDatabase = connectionAllowsMultiDbById(connId);
                   const databases = connId ? (databasesByConn[connId] ?? []) : [];
                   const loadingDb = connId ? Boolean(loadingDatabases[connId]) : false;
                   return (

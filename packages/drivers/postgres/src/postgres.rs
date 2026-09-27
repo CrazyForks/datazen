@@ -180,6 +180,10 @@ impl DatabaseDriver for PostgresDriver {
         true
     }
 
+    fn has_multi_database(&self) -> bool {
+        true
+    }
+
     /// PostgreSQL resolves unqualified names in the first schema of
     /// `search_path`, which defaults to `public`.
     fn default_schema(&self) -> Option<&'static str> {
