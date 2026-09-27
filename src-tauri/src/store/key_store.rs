@@ -162,8 +162,8 @@ fn write_key_file(data_dir: &Path, key: &[u8; 32]) -> Result<(), StoreError> {
 /// - **Unix:** `chmod 600` (owner read/write only).
 /// - **Windows:** not implemented yet — no shared ACL helper in the repo and
 ///   `mcp/auth.rs` applies the same Unix-only `chmod` for `mcp.token`. The file
-///   inherits default user-profile ACLs; explicit DACL hardening is tracked as
-///   a follow-up (see coordination hub R-stage leftovers).
+///   inherits default user-profile ACLs; explicit DACL hardening is an open
+///   follow-up.
 fn restrict_key_file_permissions(path: &Path) {
     #[cfg(unix)]
     {
