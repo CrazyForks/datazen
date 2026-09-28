@@ -2,24 +2,26 @@
  * Counter-case for `dialogCloseLabelI18n.test.tsx`: `Dialog` only localizes its
  * close label when the shared registry actually HAS a `common.close` entry.
  *
- * This has to be its own file. The registry in `i18n.ts` is module-private with
- * no unregister API, and every file gets a fresh module registry — so "nothing
- * registered `common.close`" is only observable from a file that deliberately
- * registers nothing. `vi.resetModules()` cannot produce that state here: it
- * would hand the re-imported `Dialog` a *second* copy of React, and the old
- * `react-dom` renderer would then have no dispatcher for the new one
- * ("invalid hook call"), i.e. a test-environment artifact rather than a real
- * runtime state.
+ * This file registers no translations, and each test file gets its own module
+ * registry, so the registry it renders against is empty — the state a
+ * `@datazen/ui` consumer is in when it has loaded no dictionary, which is a real
+ * production state rather than a contrivance. The first case below asserts that
+ * emptiness for `common.close`, so a `registerTranslations` of that key added
+ * later turns this suite red instead of quietly voiding the contract.
+ *
+ * `registerTranslations` cannot reproduce that state. It merges with
+ * `Object.assign`, so registering `{'common.close': undefined}` still leaves an
+ * own property behind, and `getRegisteredTranslations` spreads the registry
+ * (`i18n.ts`) rather than dropping empties. What the cases below render against
+ * is the key being *absent*, not a key that resolves to `undefined`.
  *
  * The behavior being pinned is a genuine one: `@datazen/ui` has no host
  * fallback (`i18n.ts` header), so `t()` degrades to the raw key
  * `registry[locale] ?? registry['en'] ?? key`. Rendering that dotted key as an
  * accessible name would be a regression, so the pre-i18n literal `'Close'` is
- * deliberately kept for exactly this case — see `Dialog.tsx`.
- *
- * This file must never call `registerTranslations`: that is the whole setup.
- * It is asserted in the first case below, so a stray registration added later
- * turns the suite red rather than quietly voiding the contract.
+ * deliberately kept — `Dialog.tsx` applies it to this case and to a blank or
+ * whitespace-only value alike, and `dialogCloseLabelI18n.test.tsx` pins the
+ * other one.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';

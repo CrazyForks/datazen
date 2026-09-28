@@ -7,15 +7,15 @@
  * English-only assertion therefore cannot tell "the registry supplied the copy"
  * from "the component ignored the registry and hardcoded it". The fix in
  * `Dialog.tsx` has exactly zero English-language surface, so the probe below is
- * the only way to give this contract teeth:
+ * what gives this contract teeth:
  *
  *   - register `common.close` with wording that appears nowhere else, render a
  *     bare `<Dialog>` (no `closeLabel` prop) and require that wording;
  *   - require that *no* button carries the literal `'Close'` any more.
  *
  * The counter-case (registry has no entry at all ⇒ the literal is kept) lives in
- * `dialogCloseLabelUnregistered.test.tsx`, which needs a pristine module
- * registry to observe the empty-registry state.
+ * `dialogCloseLabelUnregistered.test.tsx`, which registers nothing and pins the
+ * empty-registry state.
  *
  * The probe is registered into the DEFAULT locale rather than selected with
  * `setLocale()`: boundary rule R2 in `scripts/check-driver-import-boundaries.mjs`
@@ -28,12 +28,18 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { Dialog } from '../Dialog';
 import { registerTranslations } from '../i18n';
 
+const CLOSE_LABEL_KEY = 'common.close';
 const PROBE_CLOSE = 'PROBE::DialogClose';
 const LITERAL_DEFAULT = 'Close';
 
-registerTranslations({ en: { 'common.close': PROBE_CLOSE } });
+registerTranslations({ en: { [CLOSE_LABEL_KEY]: PROBE_CLOSE } });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // The blank-value cases below re-register `common.close`; restoring the probe
+  // here keeps them order-independent instead of relying on running last.
+  registerTranslations({ en: { 'common.close': PROBE_CLOSE } });
+});
 
 /** The header X is the only button that carries an `aria-label` at all. */
 function headerCloseNames(): string[] {
@@ -96,5 +102,36 @@ describe('Dialog takes its close label from the shared i18n registry', () => {
 
     expect(screen.getByRole('button', { name: PROBE_CLOSE })).toBeInTheDocument();
     expect(headerCloseNames()).toEqual([PROBE_CLOSE]);
+  });
+
+  it('falls back to the literal when a dictionary registers a blank common.close', () => {
+    // The same invariant, arriving through the channel this track opened:
+    // `t()` hands a registered blank value back verbatim, and before the track
+    // the hardcoded literal made an empty `aria-label` unreachable. All ten
+    // shipped locales carry a populated `common.close`, so this cannot change any
+    // real rendering — it only closes a hole the registry lookup introduced.
+    registerTranslations({ en: { [CLOSE_LABEL_KEY]: '' } });
+    render(
+      <Dialog open title="PROBE::Title" onClose={() => {}}>
+        <p>body</p>
+      </Dialog>,
+    );
+
+    expect(headerCloseNames()).toEqual([LITERAL_DEFAULT]);
+    expect(screen.getByRole('button', { name: LITERAL_DEFAULT })).toBeInTheDocument();
+  });
+
+  it('treats a whitespace-only common.close as unusable too', () => {
+    // A padded value is no more usable as an accessible name than an empty one —
+    // the same `.trim()` rule `enCopy()` applies to the host dictionary (see
+    // `src/test/enCopy.ts`).
+    registerTranslations({ en: { [CLOSE_LABEL_KEY]: '   ' } });
+    render(
+      <Dialog open title="PROBE::Title" onClose={() => {}}>
+        <p>body</p>
+      </Dialog>,
+    );
+
+    expect(headerCloseNames()).toEqual([LITERAL_DEFAULT]);
   });
 });

@@ -4,8 +4,9 @@
  *
  * This file deliberately uses the REAL shared i18n engine (no `vi.mock('../i18n')`)
  * and registers a probe locale whose copy is unmistakable. That is what makes the
- * assertions wiring-proof: the library default `closeLabel = 'Close'` in Dialog.tsx
- * happens to equal the English `common.close`, so an English-only assertion cannot
+ * assertions wiring-proof: the pre-i18n `closeLabel = 'Close'` default that
+ * `Dialog.tsx` still falls back to when the registry holds no `common.close` is
+ * byte-identical to the English `common.close`, so an English-only assertion cannot
  * distinguish "passed the localized label through" from "fell back to the default".
  * The probe copy differs from every default, so a pass proves the wiring.
  */
@@ -183,8 +184,10 @@ describe('ResultMessageDialog', () => {
       render(<ResultMessageDialog open kind="error" message="boom" onClose={() => {}} />);
       const closeBtn = screen.getByRole('button', { name: PROBE['common.close'] });
       expect(closeBtn).toBeInTheDocument();
-      // Guards the specific regression: falling back to Dialog's `closeLabel = 'Close'`
-      // default would produce the same English string in production under `en`.
+      // Guards the specific regression: falling back to the pre-i18n
+      // `closeLabel = 'Close'` literal `Dialog.tsx` still keeps for an
+      // unregistered `common.close` would produce the same English string in
+      // production under `en`.
       expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
     });
   });
