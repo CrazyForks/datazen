@@ -1022,15 +1022,66 @@ webview 的环境里。因此设计系统必须是依赖图里的**叶子**：�
   `vi.mock()` 都会被检出，**注释**不会被误判。新增一类破坏方式时只改规则表，
   不需要改检测逻辑。
 
-分词器的固有取舍：**字符串正文里的裸字符串无法与模块说明符区分**，所以
-`export const HINT = 'See @tauri-apps/plugin-dialog'` 与
-`export const A = '../../../src/stores/settingsStore'` 同样会被判为违规。这是
-刻意的（少认一种 import 形式就等于放过一种绕过），代价是会误报纯数据里的示例
-文本。`scripts/__tests__/check-driver-import-boundaries.test.mjs` 里有一条用例把
-这个行为钉住了；真被误报时，唯一干净的出口是改写那行数据（拆成拼接字符串，或让
-示例不长得像模块说明符），而不是放宽分词器。规则豁免（`ALLOWLIST`）只存在于
-`check-driver-import-boundaries.mjs`，且它不适用于 R4 之外的规则语义，改它要先问
-「这是谁的代码」。
+**「扫全部字面量」不等于「扫到就算违规」**：两个守卫都是**前缀匹配**，且比较的是
+规范化后的值——`forbiddenPackage()` 取 `specifier.startsWith(prefix)`，
+`isForbidden()` 要求解析后的仓库相对路径等于禁用前缀或落在其之下。所以禁用名
+必须出现在**说明符的开头**：
+
+| 写法                                                   | 是否报                                          |
+| ------------------------------------------------------ | ----------------------------------------------- |
+| `import { open } from '@tauri-apps/plugin-dialog'`     | 报（`@tauri-apps/` 是字面量的头）               |
+| `const A = '../../../src/stores/settingsStore'`        | 报（`..` 开头才会被解析，解析后落在 `src/` 下） |
+| `const HINT = '@tauri-apps/plugin-dialog'`             | 报（仍是开头）                                  |
+| `const HINT = 'See @tauri-apps/plugin-dialog'`         | **不报**（`See ` 在前，`startsWith` 不成立）    |
+| `const A = 'prefix ../../../src/stores/settingsStore'` | **不报**（不以 `.` 开头，不解析）               |
+| `// A comment may name a plugin`                       | **不报**（注释被分词器抹掉）                    |
+
+最后三行不是漏洞而是设计：分词器无法区分「字符串正文」与「说明符」，若改成
+`includes`，那么任何提到过 `@tauri-apps/` 的文案、错误提示、迁移说明都会变成
+阻断项，守卫当天就会被人加豁免。**真实导入不可能把禁用前缀写在后面**，所以按
+前缀匹配既覆盖了全部绕过方式，又把散文留在门外。放进变量再引入仍然会被报，
+因为字面量本身还在开头（`const NAME = '@tauri-apps/plugin-dialog'` 报）。
+
+**看不见的形态有两种，性质不同：**
+
+1. **把说明符拆成多段拼接**——`const p = '@tauri-' + 'apps/plugin-dialog'` 不报
+   （两段都不以禁用前缀开头）。分词器逐个看字面量，看不到它们之间的关系。
+2. **带插值的模板字符串**——``const p = `${'@tauri-apps'}/plugin-dialog` `` 不报。
+   分词器把整个模板连同它的静态片段一起丢掉，所以连可比较的字符串都不产出。
+   注意**没有插值的模板仍然看得见**（``import(`@tauri-apps/plugin-dialog`)`` 两个
+   守卫都报），盲区是插值本身，不是反引号。
+
+钉住这两条形态的断言有**两条，都在分词器层**，都在
+`scripts/__tests__/check-driver-import-boundaries.test.mjs`：
+
+- ``skips `${}` templates (computed specifiers cannot be judged statically)``
+  ——第 2 条。断言分词后 `literals` 里只剩普通字符串 `'./keep'`，带插值的模板
+  连静态片段都不产出。
+- `collects single-quoted, double-quoted and static template literals with lines`
+  ——第 2 条的**另一半**，也就是「没有插值的模板仍然看得见」这半句。断言
+  ``import(`./c`)`` 会作为 `{ value: './c', line: 3 }` 进入 `literals`。两个守卫
+  走的是 `scripts/lib/scanSourceCode.mjs` 里同一个 `scanCode`，所以这条同时钉住
+  `check-module-layers.mjs` 读到的字面量。
+
+**但没有端到端钉住**：守卫套件里没有任何一条把反引号禁用说明符喂给规则，
+所以上面「两个守卫都报」这半句是在真实探针文件上实测的，不是用例保证的。
+
+第 1 条**没有任何用例钉住**，只能靠 code review。§9.2 的变异表是 6 行——静态
+import、动态 `import()`、`require()`、`vi.mock()`、相对路径爬进 `src/`、
+`@datazen/*` 兄弟包——**这 6 行里没有一行是拼接，也没有一行是模板**。
+
+这个行为有对应用例钉住，而且钉的是**反面**：
+`scripts/__tests__/check-driver-import-boundaries.test.mjs` 的
+`passes a design-system file that only depends on React and on itself` 断言
+`"const title = 'uses @tauri-apps/plugin-dialog only in prose';"` 得到
+`code === 0`、`err === ''`；
+`scripts/__tests__/check-module-layers.test.ts` 的
+`does not fire on the design system’s own imports (no false positives)` 里也写着
+`"const label = 'pick a @tauri-apps/plugin-dialog path';"` 并期望干净。
+改这个语义必须同时改那两条用例，且要先想清楚代价。
+
+规则豁免（`ALLOWLIST`）只存在于 `check-driver-import-boundaries.mjs`，它只压
+特定 `(rule, file, specifier)` 三元组，改之前先问「这是谁的代码」。
 
 规则逻辑本身仍是两份独立实现，**没有**「一个变弱另一个会拦住」的保证：删掉 R4，
 边界脚本会安静下来而 layer 脚本照常拦，反之亦然。防这件事的是

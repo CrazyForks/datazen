@@ -16,12 +16,35 @@
 import { spawn } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { lockIsStale, sweepStaleProbes, withProbeLockAt } from './boundaryMutation';
+import { dirname, join } from 'path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  LOCK_MAX_AGE_MS,
+  LOCK_OWNER_GRACE_MS,
+  LOCK_TIMEOUT_MS,
+  lockIsStale,
+  sweepStaleProbes,
+  withProbeLockAt,
+} from './boundaryMutation';
 
 /** A pid that is guaranteed not to be running: one past the kernel's max. */
 const DEAD_PID = 0x7fff_fffe;
+
+/**
+ * A holder that behaves like a real one caught in the write window: it wins the
+ * `mkdir`, announces itself, and then stays alive without ever writing
+ * `owner.json`. It exits on its own only if the lock disappears (another run
+ * took over) or after 30s, so a parent can kill it at a known state.
+ */
+const HOLDER_SCRIPT = `
+const { mkdirSync, writeFileSync, existsSync } = require('node:fs');
+const [lockDir, ready] = process.argv.slice(1);
+mkdirSync(lockDir);
+writeFileSync(ready, 'held');
+const pause = new Int32Array(new SharedArrayBuffer(4));
+const deadline = Date.now() + 30_000;
+while (existsSync(lockDir) && Date.now() < deadline) Atomics.wait(pause, 0, 0, 20);
+`;
 
 const sandboxes: string[] = [];
 
@@ -33,10 +56,18 @@ function sandbox() {
   return { lockDir: join(dir, 'probe.lock'), probeRoot: join(dir, 'probe') };
 }
 
-/** Plant a lock as if a previous run had been killed while holding it. */
-function plantLock(lockDir: string, ownerPid: number, ageMs = 0) {
+/**
+ * Plant a lock as if a previous run had been killed while holding it.
+ *
+ * `ownerPid: null` reproduces the one shape this fix originally missed: a lock
+ * whose holder died between winning the `mkdir` and writing `owner.json`, which
+ * is exactly what the pre-fix code left behind.
+ */
+function plantLock(lockDir: string, ownerPid: number | null, ageMs = 0) {
   mkdirSync(lockDir, { recursive: true });
-  writeFileSync(join(lockDir, 'owner.json'), JSON.stringify({ pid: ownerPid, at: Date.now() }));
+  if (ownerPid !== null) {
+    writeFileSync(join(lockDir, 'owner.json'), JSON.stringify({ pid: ownerPid, at: Date.now() }));
+  }
   if (ageMs > 0) {
     const when = new Date(Date.now() - ageMs);
     utimesSync(lockDir, when, when);
@@ -69,6 +100,128 @@ describe('withProbeLockAt · recovery from a killed run', () => {
     // The point of the whole change: not one 25ms sleep, let alone 60s.
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(existsSync(lockDir)).toBe(false);
+  });
+
+  it('takes over a lock with no owner file once the write window has passed', () => {
+    // The artifact of the very event this recovery was written for: the
+    // pre-fix code never wrote owner.json at all, so every lock it left was
+    // ownerless and unidentifiable. Age is the only signal, so the decision is
+    // a grace period — long enough not to steal a live holder mid-write,
+    // short enough to recover inside a run.
+    const { lockDir, probeRoot } = sandbox();
+    plantLock(lockDir, null);
+
+    expect(lockIsStale(lockDir)).toBe(false); // still inside the write window
+
+    const started = Date.now();
+    let entered = false;
+    withProbeLockAt(
+      lockDir,
+      probeRoot,
+      () => {
+        entered = true;
+      },
+      2_500,
+      150, // the shipped 2s is pinned by its own case; don't spend it here
+    );
+
+    expect(entered).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2_500);
+    expect(existsSync(lockDir)).toBe(false);
+  });
+
+  it('recovers an ownerless lock and the probes it left, exactly as the pre-fix run did', () => {
+    // End to end on the same shape, including the sweep: this is the state a
+    // SIGKILL during the pre-fix critical section produced.
+    const { lockDir, probeRoot } = sandbox();
+    plantLock(lockDir, null);
+    const leaked = plantProbe(probeRoot, 'src/__boundaryProbe__.ts');
+    const bystander = plantProbe(probeRoot, 'src/index.ts', 'export const real = 1;\n');
+
+    let leftovers: string[] = [];
+    withProbeLockAt(
+      lockDir,
+      probeRoot,
+      () => {
+        leftovers = [leaked, bystander].filter((p) => existsSync(p));
+      },
+      2_500,
+      150,
+    );
+
+    expect(leftovers).toEqual([bystander]);
+  });
+
+  it('waits for a live holder that has not written its owner yet, and takes over once it dies', async () => {
+    // The reason a grace period exists at all rather than "no owner ⇒ stale".
+    //
+    // A *real* holder drives this: a child process that wins the `mkdir` and then
+    // pauses — the state `withProbeLockAt` itself passes through between
+    // `mkdirSync` and `writeFileSync`. Both directions are pinned in one case
+    // because they are one decision about one lock:
+    //   · holder alive, no owner file → wait. Two processes in the critical
+    //     section would collide on the same probe file, which is what the lock
+    //     exists to prevent, and only the age can protect that window because
+    //     there is no pid to check yet.
+    //   · same lock, holder killed → take over. Otherwise a crashed run blocks
+    //     every later run, which is the original defect this lock had.
+    const { lockDir, probeRoot } = sandbox();
+    const ready = join(dirname(lockDir), 'holder-ready');
+    const child = spawn(process.execPath, ['-e', HOLDER_SCRIPT, lockDir, ready], {
+      stdio: 'ignore',
+    });
+    try {
+      await vi.waitFor(() => expect(existsSync(ready)).toBe(true), {
+        timeout: 5_000,
+        interval: 10,
+      });
+
+      // The precondition the earlier version of this case never checked: at the
+      // moment the verdict is taken the holder is running and really has no
+      // owner file, so this cannot quietly degrade into the live-holder case.
+      expect(existsSync(join(lockDir, 'owner.json'))).toBe(false);
+      expect(child.exitCode).toBe(null);
+      expect(lockIsStale(lockDir)).toBe(false);
+
+      let entered = false;
+      expect(() => withProbeLockAt(lockDir, probeRoot, () => (entered = true), 300)).toThrow(
+        /no owner\.json/,
+      );
+      expect(entered).toBe(false);
+      // Untouched: another run's recovery must not evict a live holder.
+      expect(existsSync(lockDir)).toBe(true);
+
+      // The other side, on the very same lock and with no manual cleanup in
+      // between. The holder dies without ever having written its owner, which is
+      // the artifact the pre-fix run left behind.
+      child.kill('SIGKILL');
+      let recovered = false;
+      withProbeLockAt(lockDir, probeRoot, () => (recovered = true), 2_500, 150);
+      expect(recovered).toBe(true);
+    } finally {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // Already gone.
+      }
+    }
+  });
+
+  it('takes over an unreadable owner file once it is too old to be a write window', () => {
+    // Garbage in owner.json is the same as no pid: age decides.
+    const { lockDir, probeRoot } = sandbox();
+    plantLock(lockDir, process.pid);
+    writeFileSync(join(lockDir, 'owner.json'), 'not json at all');
+    const when = new Date(Date.now() - 11 * 60_000);
+    utimesSync(lockDir, when, when);
+
+    expect(lockIsStale(lockDir)).toBe(true);
+
+    let entered = false;
+    withProbeLockAt(lockDir, probeRoot, () => {
+      entered = true;
+    });
+    expect(entered).toBe(true);
   });
 
   it('sweeps the probes the killed run left behind before running', () => {
@@ -149,6 +302,33 @@ describe('withProbeLockAt · recovery from a killed run', () => {
       ownerPid = JSON.parse(readFileSync(join(lockDir, 'owner.json'), 'utf8')).pid;
     });
     expect(ownerPid).toBe(process.pid);
+  });
+});
+
+describe('the shipped timing constants', () => {
+  it('keeps the owner grace above the write window and inside one test budget', () => {
+    // The windows are not interchangeable, and a value that reads reasonable in
+    // isolation breaks the run in a way nothing else catches.
+    //
+    // Upper: a grace at or above the 5s per-test limit turns a crashed run into
+    // a test timeout, so recovery stops being recovery. This is the assertion
+    // that catches a "make it more generous" edit.
+    expect(LOCK_OWNER_GRACE_MS).toBeLessThan(5_000);
+    //
+    // Lower: the one the design actually rests on. The grace only has to outlast
+    // the `mkdir`→`writeFileSync` gap, measured on this machine at p50 0.12ms,
+    // p99 0.33ms and a worst case of 17ms over two runs of 20k samples, plus
+    // whatever a loaded machine adds on top. 500ms is ~29x the worst
+    // observation, so a later "tighten it" edit cannot land inside the window,
+    // and the case above turns red well before the number could reach it.
+    expect(LOCK_OWNER_GRACE_MS).toBeGreaterThanOrEqual(500);
+    //
+    // The pid-reuse cap cannot be bounded by a run: `process.kill(pid, 0)`
+    // cannot tell "held" from "this pid now belongs to something else", so age
+    // is the only second signal. It must stay several times above the wait, or
+    // a slow-but-live holder is stolen while a waiter is still waiting, and a
+    // crashed run becomes reclaimable within one wait.
+    expect(LOCK_MAX_AGE_MS).toBeGreaterThanOrEqual(5 * LOCK_TIMEOUT_MS);
   });
 });
 

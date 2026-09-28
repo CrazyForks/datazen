@@ -572,6 +572,13 @@ describe('guard plumbing', () => {
     expect(report).toContain('R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25');
   });
 
+  // Deliberately not under `withProbeLock`, unlike the two cases above. The
+  // lock exists for cases whose verdict depends on the tree being *clean* or
+  // that mutate it: `runCli without --root` asserts `err === ''`, and the R4
+  // teeth case writes a probe. This one writes nothing, and an expired entry
+  // forces `code = 1` on its own (`blocked.length > 0 || expired.length > 0`),
+  // so a concurrent probe finding would be additive noise it cannot fail on.
+  // If its assertions ever tighten to a clean-tree claim, it needs the lock.
   it('detects an expired exemption against the real file system too', () => {
     const err = [];
     const code = checkDriverImportBoundaries({

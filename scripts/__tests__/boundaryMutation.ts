@@ -32,17 +32,67 @@ export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..
 /** Lives under `node_modules/` so it can never end up in `git status`. */
 const LOCK_DIR = join(REPO_ROOT, 'node_modules/.cache/dz-boundary-probe.lock');
 const LOCK_OWNER_FILE = join(LOCK_DIR, 'owner.json');
-const LOCK_TIMEOUT_MS = 60_000;
+export const LOCK_TIMEOUT_MS = 60_000;
 /**
- * Age at which a lock is taken over even if its recorded pid still looks alive.
+ * How long a lock with no readable owner file is given before it is taken over.
  *
- * Only a backstop for pid reuse, which is the one case `process.kill(pid, 0)`
- * cannot see: a killed holder's pid may already belong to an unrelated
- * process. It is set far above any real critical section (a guard walk is
- * ~1s) so it cannot fire against a live-but-slow holder, and far below the
- * 60s wait so recovery still happens inside a single test run.
+ * The owner file is written synchronously right after the `mkdir` wins, so a
+ * missing one means either a dead run (the common case: a kill between the two
+ * statements, or a write that failed) or the microsecond-wide window of a live
+ * holder that has not written it yet. Treating "no owner" as stale outright
+ * would let a second process into the critical section in exactly that window,
+ * which is the collision the lock exists to prevent, so a grace period is
+ * required rather than optional.
+ *
+ * It only has to outlast the mkdir-to-write gap, not a whole critical section
+ * (a full-tree boundaries scan measures ~0.32s in process and ~0.42s as a CLI
+ * here; ~3.4s was observed under concurrent load and is not reproducible solo),
+ * because the owner file is present for the entire rest of the run.
+ *
+ * That clause is a precondition, not a general truth, and the grace has to be
+ * sized against it rather than against the critical section. While a holder is
+ * inside the write window it has no owner file at all: `readLockOwnerPid`
+ * returns null, the pid check below is unreachable, and this grace is the only
+ * thing between that live holder and a second process. The gap measures p50
+ * 0.12ms and a worst case of 17ms over two runs of 20k samples, so the shipped
+ * 2s is ~118x the worst observation. (The *median* would make it look like
+ * four orders of magnitude, which is how this number used to be described; the
+ * median is not the statistic a safety margin should be sized on.) The 500ms
+ * floor the suite pins is the same measurement at ~29x. It is deliberately under
+ * the 5s per-test budget, so recovering from a killed run stays inside one test
+ * instead of turning into a test timeout.
+ *
+ * Scope, because the constant and the branches below are one unit: the ownerless
+ * branch in {@link lockIsStale} is what reads this value, and the fifth
+ * parameter of {@link withProbeLockAt} exists only so the cases can shrink it
+ * instead of spending 2s each. All of it is test infrastructure: no non-test
+ * file imports it, and neither guard CLI, `packages/ui` nor `src/` is touched
+ * by it, so nothing decided here can reach host product code. It does run as
+ * part of the host suite — `vitest.config.ts` includes the `.test.{ts,mjs}`
+ * files under `scripts/__tests__` — so these cases *are* host tests.
  */
-const LOCK_MAX_AGE_MS = 10 * 60_000;
+export const LOCK_OWNER_GRACE_MS = 2_000;
+/**
+ * Age at which a lock is taken over even though its recorded pid still looks
+ * alive. Two situations need it, and neither is visible to a pid check:
+ *
+ *   - pid reuse: a killed holder's pid may already belong to an unrelated
+ *     process, so `process.kill(pid, 0)` reports "alive" for a dead holder;
+ *   - an owner file that exists but cannot be read or parsed, where age is the
+ *     only signal there is.
+ *
+ * It is 10x *above* the 60s wait, not below it, and that is deliberate: pid
+ * reuse is measured in however long a pid takes to come back, which no
+ * single-run budget can bound. The consequence is exact — within one run the
+ * cap can only fire for a lock that was already older than the cap when the run
+ * started. Recovery *during* a run comes from the pid check and from
+ * {@link LOCK_OWNER_GRACE_MS}. It is far above any observed critical section
+ * (~0.42s as a CLI solo; ~3.4s was observed under concurrent load and is not
+ * reproducible solo), so it cannot fire
+ * against a live-but-slow holder; the 5x the suite requires is measured against
+ * the 60s wait, which is the window a waiter can actually observe.
+ */
+export const LOCK_MAX_AGE_MS = 10 * 60_000;
 /** How many stale locks to clear before falling back to waiting, as a loop guard. */
 const MAX_STALE_CLEARANCES = 16;
 
@@ -93,19 +143,24 @@ function readLockOwnerPid(lockDir) {
  * directory is under `node_modules/`, so `git status` never shows it. Recovery
  * therefore has to be the *next* run's job, which is what this decides.
  */
-export function lockIsStale(lockDir) {
-  const ownerPid = readLockOwnerPid(lockDir);
-  // Ours to keep: a re-entrant call must not steal its own lock.
-  if (ownerPid !== null && ownerPid !== process.pid && !isProcessAlive(ownerPid)) return true;
-
+export function lockIsStale(lockDir, ownerGraceMs = LOCK_OWNER_GRACE_MS) {
   let age;
   try {
     age = Date.now() - statSync(lockDir).mtimeMs;
   } catch {
     return true; // Vanished between the failed mkdir and here — retry will win.
   }
-  if (age > LOCK_MAX_AGE_MS) return true;
-  return false;
+
+  const ownerPid = readLockOwnerPid(lockDir);
+  if (ownerPid === null) {
+    // No usable owner: a kill between the mkdir and the write, a write that
+    // failed, an unreadable file — or a holder still inside that gap. Age is
+    // the only signal, so the grace period is the whole decision.
+    return age > ownerGraceMs;
+  }
+  // Ours to keep: a re-entrant call must not steal its own lock.
+  if (ownerPid !== process.pid && !isProcessAlive(ownerPid)) return true;
+  return age > LOCK_MAX_AGE_MS;
 }
 
 /**
@@ -170,9 +225,16 @@ export function withProbeLock(fn) {
  * @param {string} probeRoot
  * @param {() => T} fn
  * @param {number} [timeoutMs] how long to wait for a *live* holder before failing
+ * @param {number} [ownerGraceMs] how long an ownerless lock is left alone
  * @returns {T}
  */
-export function withProbeLockAt(lockDir, probeRoot, fn, timeoutMs = LOCK_TIMEOUT_MS) {
+export function withProbeLockAt(
+  lockDir,
+  probeRoot,
+  fn,
+  timeoutMs = LOCK_TIMEOUT_MS,
+  ownerGraceMs = LOCK_OWNER_GRACE_MS,
+) {
   mkdirSync(dirname(lockDir), { recursive: true });
   const deadline = Date.now() + timeoutMs;
   let cleared = 0;
@@ -182,15 +244,18 @@ export function withProbeLockAt(lockDir, probeRoot, fn, timeoutMs = LOCK_TIMEOUT
       break;
     } catch (err) {
       if (/** @type {NodeJS.ErrnoException} */ err.code !== 'EEXIST') throw err;
-      if (cleared < MAX_STALE_CLEARANCES && lockIsStale(lockDir)) {
+      if (cleared < MAX_STALE_CLEARANCES && lockIsStale(lockDir, ownerGraceMs)) {
         cleared += 1;
         rmSync(lockDir, { recursive: true, force: true });
         continue; // Retry immediately instead of sleeping on a dead holder.
       }
       if (Date.now() > deadline) {
+        const ownerPid = readLockOwnerPid(lockDir);
         throw new Error(
           `withProbeLock: timed out after ${timeoutMs}ms waiting for ${lockDir}` +
-            ` (owner pid ${readLockOwnerPid(lockDir) ?? 'unknown'} still alive?)`,
+            (ownerPid === null
+              ? ' (no owner.json: the holder wrote none before the wait started)'
+              : ` (owner pid ${ownerPid} is still running)`),
         );
       }
       sleepSync(25);
