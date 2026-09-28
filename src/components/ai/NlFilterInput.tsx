@@ -169,7 +169,10 @@ export function NlFilterInput({ panelId, dbSessionId, database, tableName }: NlF
         </button>
       </div>
 
-      {nlFilterError && <ErrorBanner className="pl-9 text-danger">{nlFilterError}</ErrorBanner>}
+      {/* `text-danger` was dropped: it is now identical to the `plain`
+          variant's own colour, so restating it could only re-introduce the
+          silent divergence the variant defaults exist to prevent. */}
+      {nlFilterError && <ErrorBanner className="pl-9">{nlFilterError}</ErrorBanner>}
 
       {/* Deliberately not an ErrorBanner: this is a validation *warning* (the
           input parsed but the draft is unusable), and it is announced as one.

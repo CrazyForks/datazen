@@ -287,12 +287,18 @@ export function StringEditor({
       {saveError && (
         <ErrorBanner
           variant="boxed"
-          // Every colour is re-stated, not just the text one: `boxed` defaults
-          // to native `red-500` tints, a *different* red from the `danger`
-          // token the sibling `decompError` box below uses. `text-base` restores
-          // the inherited size — `boxed` would shrink this from 16px to 12px.
-          // See ErrorBanner's JSDoc.
-          className="border-danger/20 bg-danger/10 px-2 py-1.5 text-base text-danger"
+          // Colour comes wholly from the `boxed` variant, which is on the
+          // `danger` token; only padding is restated, because the variant
+          // hard-codes `p-2`. Checked class-by-class against the
+          // `decompError` box a few lines below, the two agree on rounded-md /
+          // border / border-danger/20 / bg-danger/10 / text-danger / px-2 /
+          // py-1.5. The two remaining differences are both inert: this box
+          // also carries the variant's `p-2` (nothing here conflicts with it,
+          // and px-2/py-1.5 already cover both axes), and it carries `text-xs`
+          // explicitly where `decompError` inherits that same 12px from
+          // KeyEditors' root. The font equivalence is proved through the real
+          // tree in __tests__/stringEditorFontInheritance.test.tsx.
+          className="px-2 py-1.5"
           data-testid="redis-string-save-error"
           data-i18n-key="redis.detail.saveFailed"
         >

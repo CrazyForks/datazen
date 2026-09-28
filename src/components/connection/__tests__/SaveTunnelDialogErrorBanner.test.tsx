@@ -30,9 +30,11 @@ describe('SaveTunnelDialog error banner', () => {
     expect(banner.tagName).toBe('DIV');
     expect(banner).toHaveAttribute('role', 'alert');
     expect(banner.textContent).toBe('tunnel name already taken');
-    // Boxed surface plus the call site's own top margin.
-    expect(banner).toHaveClass('rounded-md', 'border', 'bg-red-500/10', 'mt-3');
-    expect(banner).toHaveClass('text-xs', 'text-red-400');
+    // Boxed surface on the `danger` token, plus the call site's own top margin.
+    // The call site restates no colour, so all of it comes from the variant.
+    expect(banner).toHaveClass('rounded-md', 'border', 'bg-danger/10', 'mt-3');
+    expect(banner).toHaveClass('text-xs', 'text-danger');
+    expect(banner.className).not.toMatch(/red-\d/);
   });
 
   it('is not rendered when the form has no error', () => {

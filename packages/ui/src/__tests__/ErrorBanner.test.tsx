@@ -42,14 +42,17 @@ describe('ErrorBanner', () => {
     const strip = classFor('strip');
 
     // plain is text only; boxed and strip add a tinted, bordered surface.
-    expect(plain).toContain('text-red-400');
-    expect(plain).not.toContain('bg-red-500');
-    expect(boxed).toContain('bg-red-500');
+    expect(plain).toContain('text-danger');
+    expect(plain).not.toContain('bg-danger/10');
+    expect(boxed).toContain('bg-danger/10');
     expect(boxed).toContain('rounded-md');
-    expect(strip).toContain('bg-red-500');
+    expect(strip).toContain('bg-danger/10');
     expect(strip).toContain('border-b');
     // The strip is flush with the page edges, so it has no rounded corners.
     expect(strip).not.toContain('rounded-md');
+    // No variant may hard-code a literal Tailwind shade: those read no
+    // `--c-*` token, so they would render identically under every theme.
+    for (const cls of [plain, boxed, strip]) expect(cls).not.toMatch(/red-\d/);
 
     // All three keep the same role and type ramp, so the a11y contract is
     // identical no matter which chrome a call site picks.
@@ -59,28 +62,27 @@ describe('ErrorBanner', () => {
   it('defaults to the plain variant', () => {
     render(<ErrorBanner data-testid="b-default">x</ErrorBanner>);
     const el = screen.getByTestId('b-default');
-    expect(el.className).not.toContain('bg-red-500');
-    expect(el).toHaveClass('text-xs', 'text-red-400');
+    expect(el.className).not.toContain('bg-danger/10');
+    expect(el).toHaveClass('text-xs', 'text-danger');
   });
 
   it('lets the call site override the variant on conflicting classes', () => {
     render(
-      <ErrorBanner variant="boxed" className="mt-3 px-2 text-danger" data-testid="b-override">
+      <ErrorBanner variant="boxed" className="mt-3 px-2 text-red-400" data-testid="b-override">
         x
       </ErrorBanner>,
     );
     const el = screen.getByTestId('b-override');
-    const cls = el.className;
-    expect(el).toHaveClass('mt-3', 'px-2', 'text-danger');
-    // A different colour replaces the variant's outright.
-    expect(el).not.toHaveClass('text-red-400');
-    // Axis padding is not removed by the shorthand; it is ordered after it, so
-    // the call site's `px-2` still wins for the x axis while `p-2` keeps
-    // governing y. This is what lets a call site retune the boxed padding
-    // without the component having to know about it.
-    expect(cls.indexOf('px-2')).toBeGreaterThan(cls.indexOf('p-2'));
-    // Non-conflicting variant classes are untouched.
-    expect(el).toHaveClass('rounded-md', 'border-red-500/20', 'bg-red-500/10', 'text-xs');
+    expect(el).toHaveClass('mt-3', 'px-2', 'text-red-400');
+    // A different colour replaces the variant's outright — this is the trap the
+    // component's JSDoc warns about: override the text colour alone and the
+    // background and border stay on the variant's.
+    expect(el).not.toHaveClass('text-danger');
+    // Non-conflicting variant classes are untouched, including `p-2`, which no
+    // class here conflicts with. (Whether `px-2` then wins on the x axis is a
+    // *cascade* fact — Tailwind emits longhands after the shorthand — and is
+    // not assertable here, where no stylesheet is loaded.)
+    expect(el).toHaveClass('rounded-md', 'border-danger/20', 'bg-danger/10', 'text-xs', 'p-2');
   });
 
   it('lays the message out as a row when an icon is supplied', () => {
@@ -116,20 +118,23 @@ describe('ErrorBanner', () => {
     );
 
     const button = screen.getByRole('button', { name: 'Close' });
-    // A native <button> is in the tab order without a tabindex override.
+    // A native <button> is in the tab order without a tabindex override. Any
+    // explicit `tabindex` — positive or negative — is caught by the attribute
+    // check. Do not *also* assert `button.tabIndex`: a disabled button still
+    // reports `tabIndex === 0` in jsdom, so that property proves nothing more.
     expect(button.tagName).toBe('BUTTON');
     expect(button).not.toHaveAttribute('tabindex');
-    // The resolved tab-order property, not just the attribute: a `disabled`
-    // button or a negative tabindex would pass the check above.
-    expect(button.tabIndex).toBe(0);
     // Must not submit an enclosing <form> by default.
     expect(button).toHaveAttribute('type', 'button');
     // The glyph must not add a second, noisier name for screen readers.
     expect(button.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+    // The dismiss control is styled inside the component, so it is just as
+    // theme-blind as the variant would be if it used a literal shade.
+    expect(button).toHaveClass('text-danger');
+    expect(button.className).not.toMatch(/red-\d/);
 
     fireEvent.click(button);
     expect(onDismiss).toHaveBeenCalledTimes(1);
-
     // jsdom does not synthesise a click from keyDown, and the component must
     // not add a handler that would double-fire in a real browser. Asserting
     // `toHaveBeenCalled()` here would be vacuous — the count is already 1.

@@ -774,7 +774,12 @@ export function WorkflowPage({
           {operationError && (
             <ErrorBanner
               variant="strip"
-              className="py-2 text-red-300"
+              // Was `text-red-300` in the pre-ErrorBanner inline bar. `red-300`
+              // is one step *brighter* than the old `red-400` default; brightness
+              // and alpha are different axes and `danger` is a single flat value,
+              // so there is no clean equivalent — this is an accepted visible
+              // change, not a bug.
+              className="py-2 text-danger"
               icon={<AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
               onDismiss={() => setOperationError(null)}
               dismissLabel={t('common.close')}

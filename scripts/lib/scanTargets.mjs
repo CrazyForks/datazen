@@ -1,3 +1,34 @@
+import { existsSync, readFileSync } from 'fs';
+
+/**
+ * Read a file a walk has just enumerated, tolerating exactly one race: the
+ * file being deleted by another process between the directory read and this
+ * read (a mutation probe, a branch switch, a build).
+ *
+ * A file that is already gone by the time we read it is not part of the tree
+ * being scanned, and a deleted file has no imports and no class names to
+ * check, so skipping it cannot hide a finding.
+ *
+ * This is deliberately **not** a blanket try/catch, which is what makes it
+ * safe rather than a way to mute the guard:
+ *   * ENOENT that does not reconcile — the path exists again when we look — is
+ *     rethrown, because then "the file is gone" is not what happened.
+ *   * Every other errno (EACCES, EISDIR, EIO) is rethrown, so a real I/O
+ *     fault fails the guard loudly instead of quietly shrinking its scan into
+ *     a false "clean".
+ *
+ * Shared by every guard that walks the tree, so they cannot drift apart on how
+ * a vanished file is treated.
+ */
+export function readScannedIfPresent(full) {
+  try {
+    return readFileSync(full, 'utf8');
+  } catch (e) {
+    if (e.code !== 'ENOENT' || existsSync(full)) throw e;
+    return null;
+  }
+}
+
 /**
  * What counts as scannable source, shared by every import-boundary guard.
  *

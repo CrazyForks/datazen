@@ -9,8 +9,10 @@
  * in `tailwind.config.ts`, nor a `--color-*` custom property in CSS.
  */
 import { describe, expect, it } from 'vitest';
+import type { Dirent } from 'node:fs';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { readScannedIfPresent } from '../lib/scanTargets.mjs';
 
 import tailwindConfig from '../../tailwind.config';
 
@@ -170,18 +172,49 @@ const NON_COLOUR_ARGUMENTS = new Set([
 const SCAN_ROOTS = ['src', 'packages', 'e2e'];
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.git', 'target', 'coverage']);
 
-function walk(dir: string, out: string[] = []): string[] {
-  let entries: string[];
+/** A source file plus its contents, captured in one pass. */
+type ScannedFile = { path: string; content: string };
+
+/**
+ * Enumerate source files **and read them in the same pass**.
+ *
+ * A previous revision returned paths and read them later, from the test body.
+ * That left a window between enumeration and use in which another process
+ * could create and delete a file, and the guard then died with ENOENT on
+ * roughly 1 run in 3 — a flaky gate that proves nothing on any given run.
+ * Reading here removes the window rather than hiding it: a file that was
+ * already gone is simply never enumerated, and one that vanishes mid-read
+ * fails loudly here, where the cause is obvious, instead of as a mystery
+ * inside a test assertion.
+ *
+ * The read is deliberately NOT wrapped in try/catch. Swallowing it would let
+ * a genuine I/O failure hide behind a guard that reports itself green.
+ */
+function walk(dir: string, out: ScannedFile[] = []): ScannedFile[] {
+  let entries: Dirent[];
   try {
-    entries = readdirSync(dir);
-  } catch {
-    return out;
+    // `withFileTypes` takes each entry's type from the same readdir syscall, so
+    // the former second `statSync` — a second create/delete window — is gone.
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    // A missing scan root is legitimate; anything else (permissions, I/O) is a
+    // real fault and must surface rather than quietly shrink the scan.
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return out;
+    throw e;
   }
   for (const entry of entries) {
-    if (SKIP_DIRS.has(entry)) continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.(ts|tsx|js|jsx|css)$/.test(entry)) out.push(full);
+    if (SKIP_DIRS.has(entry.name)) continue;
+    const full = join(dir, entry.name);
+    // Some filesystems report DT_UNKNOWN, which leaves both predicates false;
+    // fall back to a stat only in that case, so the common path stays windowless.
+    const isDir = entry.isDirectory() || (!entry.isFile() && statSync(full).isDirectory());
+    if (isDir) walk(full, out);
+    else if (/\.(ts|tsx|js|jsx|css)$/.test(entry.name)) {
+      const content = readScannedIfPresent(full);
+      // Deleted between the directory read and this one: not in the tree, so it
+      // has no class names for this guard to have an opinion about.
+      if (content !== null) out.push({ path: full, content });
+    }
   }
   return out;
 }
@@ -217,9 +250,9 @@ const files = SCAN_ROOTS.flatMap((root) => walk(root));
 /** Tokens declared straight in CSS (`--color-foo`) — a valid colour source. */
 function cssColourKeys(): Set<string> {
   const keys = new Set<string>();
-  for (const file of files) {
-    if (!file.endsWith('.css')) continue;
-    for (const m of readFileSync(file, 'utf8').matchAll(/--color-([a-z][a-z0-9-]*)\s*:/g)) {
+  for (const { path, content } of files) {
+    if (!path.endsWith('.css')) continue;
+    for (const m of content.matchAll(/--color-([a-z][a-z0-9-]*)\s*:/g)) {
       keys.add(m[1]);
     }
   }
@@ -263,11 +296,30 @@ const BACKTICK = String.fromCharCode(96);
  *    typography utility (`text-center`, `text-wrap`, `text-ellipsis`, …) and
  *    swamps the signal. This is how the dead `.text-destructive` in
  *    `e2e/specs/zz-screenshots.ts` survived: it was found by reading, not here.
- * 2. `'` — a single-quoted string, e.g. `'bg-ink-900'`. Measured: enabling it
- *    yields 15 findings and **0 real bugs** — `via-saved` / `via-proxy` /
- *    `via-ws` are MySQL connection-string keys and `from-a` is the English
- *    preposition, because `via` and `from` are gradient utilities this codebase
- *    also uses as ordinary words.
+ * 2. `'` — a single-quoted string, e.g. `'bg-ink-900'`. Enabling it was
+ *    measured by flipping this regex boundary to include `'` and running this
+ *    file. It yields exactly **15 findings**:
+ *
+ *      `via-saved` ×2, `via-proxy` ×1, `via-ws` ×1  MySQL connection-string
+ *                                                     keys (`?via=proxy`), not
+ *                                                     gradient utilities.
+ *      `from-a` ×5                                 the English preposition.
+ *      `from-db0` ×2                               a redis console transcript row.
+ *      `stroke-dasharray` ×2                       a real SVG/CSS attribute
+ *                                                     (`line.getAttribute(...)`).
+ *      `bg-ink-900` ×2                             **one genuinely dead class**
+ *                                                     (see below), counted twice
+ *                                                     because both occurrences sit
+ *                                                     on `ConnectionWorkspaceHomeKvSlot.test.tsx:15`.
+ *
+ *    So 14 are false positives and **1 is a real dead colour class** under this
+ *    guard's own definition: `bg-ink-900` reaches a real `cn()` through
+ *    `DbTypeBadge.tsx`, and `ink` is not a declared colour. It is confined to a
+ *    test fixture and never ships, so it is left in place — but "0 real bugs"
+ *    would be false, and 14-of-15 noise every run is not worth buying.
+ *
+ *    Reproduce: change the boundary below to `[\\s"'\` + BACKTICK + `]` and run
+ *    this file.
  *
  * So this guard covers class names in JSX/TSX `className` strings and double
  * quotes, **not** CSS selectors or single-quoted strings. Those two forms are
@@ -281,17 +333,15 @@ const COLOUR_PATTERN = new RegExp(
 
 function deadColourClasses(): string[] {
   const dead: string[] = [];
-  for (const file of files) {
-    if (file.endsWith('.css')) continue;
-    readFileSync(file, 'utf8')
-      .split('\n')
-      .forEach((line, index) => {
-        for (const m of line.matchAll(COLOUR_PATTERN)) {
-          if (!resolve(m[2])) {
-            dead.push(`${relative(process.cwd(), file)}:${index + 1} \`${m[1]}\``);
-          }
+  for (const { path, content } of files) {
+    if (path.endsWith('.css')) continue;
+    content.split('\n').forEach((line, index) => {
+      for (const m of line.matchAll(COLOUR_PATTERN)) {
+        if (!resolve(m[2])) {
+          dead.push(`${relative(process.cwd(), path)}:${index + 1} \`${m[1]}\``);
         }
-      });
+      }
+    });
   }
   return dead;
 }

@@ -21,31 +21,33 @@ export type ErrorBannerVariant = 'plain' | 'boxed' | 'strip';
 export type ErrorBannerElement = 'div' | 'p' | 'span';
 
 /**
- * WARNING — the variant tints below are the *native* Tailwind `red-500` /
- * `red-400` shades, not the project's `danger` token. They were chosen to
- * reproduce the error bars this component absorbed, and that is deliberate.
+ * The variants use the project's `danger` token — `text-danger` /
+ * `bg-danger/10` / `border-danger/20` all resolve to `var(--c-danger)`
+ * (`tailwind.config.ts` defines `danger: { DEFAULT: 'var(--c-danger)' }`,
+ * and `themes.css` re-points `--c-danger` per theme). Do not reintroduce
+ * literal Tailwind `red-*` shades here: those are theme-blind, so a variant
+ * built on them bypasses the theme mechanism entirely.
  *
- * The trap: these are baked into the variant, so a call site that was using
- * the `danger` token does **not** get it back by passing its own colour.
- * `className` only overrides what it names. Re-specifying the text colour
- * alone leaves the *background and border on the `red-500` shades* — two
- * visibly different reds for what the user reads as the same kind of failure
- * (measured ΔE76 ≈ 9.6 on the border: clearly visible).
+ * The same rule governs the dismiss button's own styling, further down:
+ * it was `text-red-200 hover:bg-red-500/20` and is now
+ * `text-danger hover:bg-danger/20`. **That is a deliberately visible change**,
+ * not a pure cleanup: a literal shade is a different, fixed colour, so moving
+ * it onto the token shifts the button's rendered colour (measured ΔL* −31.2
+ * light / −18.8 dark). It is accepted for the same reason the variants moved —
+ * the old value ignored the active theme — but it is not colour-preserving, and
+ * the per-variant recolouring of every call site is likewise a visible change
+ * rather than a no-op refactor.
  *
- * So a `danger`-token call site must restate **background and border as well
- * as text**. `StringEditor`'s save error is the worked example:
- * `className="border-danger/20 bg-danger/10 px-2 py-1.5 text-base text-danger"`.
- * `text-base` is there for the same reason — `boxed` carries `text-xs`, and
- * that call site inherited 16px.
- *
- * Migrating the variants themselves onto the `danger` token is a repo-wide
- * colour-system decision (200+ call sites) and is deliberately out of scope
- * here; until it happens, this contract has to be honoured per call site.
+ * The remaining trap is the same as for any `className` override: **the
+ * variant is baked in, and `className` only overrides the properties it
+ * names.** A call site that wants a different alpha or a different shade
+ * must restate **background and border as well as text** — restating only
+ * the text colour leaves the background and border on the variant's.
  */
 const variants: Record<ErrorBannerVariant, string> = {
-  plain: 'text-xs text-red-400',
-  boxed: 'rounded-md border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-400',
-  strip: 'border-b border-red-500/20 bg-red-500/10 px-3 py-1.5 text-xs text-red-400',
+  plain: 'text-xs text-danger',
+  boxed: 'rounded-md border border-danger/20 bg-danger/10 p-2 text-xs text-danger',
+  strip: 'border-b border-danger/20 bg-danger/10 px-3 py-1.5 text-xs text-danger',
 };
 
 type ErrorBannerBaseProps = {
@@ -119,7 +121,7 @@ export function ErrorBanner({
       {onDismiss && dismissLabel ? (
         <button
           type="button"
-          className="shrink-0 rounded px-1 text-red-200 hover:bg-red-500/20"
+          className="shrink-0 rounded px-1 text-danger hover:bg-danger/20"
           aria-label={dismissLabel}
           onClick={onDismiss}
         >

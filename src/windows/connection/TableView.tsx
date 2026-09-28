@@ -446,7 +446,7 @@ export function TableView({
         </div>
       </div>
       {quickFilterError && (
-        <ErrorBanner variant="strip" className="border-red-500/30 py-1">
+        <ErrorBanner variant="strip" className="border-danger/30 py-1">
           {quickFilterError}
         </ErrorBanner>
       )}

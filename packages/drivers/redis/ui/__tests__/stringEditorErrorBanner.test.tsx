@@ -86,17 +86,35 @@ describe('StringEditor save error', () => {
     fireEvent.click(await screen.findByTestId('redis-string-save'));
     const banner = await screen.findByTestId('redis-string-save-error');
 
-    // The variant supplies the *shape*; every colour and the font size is
-    // restated by the call site, because `boxed` defaults to native `red-500`
-    // tints and `text-xs`, and this box must render identically to the
-    // `decompError` box a few lines below it.
-    expect(banner).toHaveClass('rounded-md', 'border', 'bg-danger/10', 'border-danger/20');
-    expect(banner).toHaveClass('px-2', 'py-1.5', 'text-danger', 'text-base');
-    // No `red-500` tint may survive — that is the regression this pins.
-    expect(banner.className).not.toMatch(/red-500/);
-    expect(banner.className).not.toMatch(/text-xs/);
-    // `px-2` is ordered after the variant's `p-2`, so it wins on the x axis.
-    expect(banner.className.indexOf('px-2')).toBeGreaterThan(banner.className.indexOf('p-2'));
+    // The whole look comes from the `boxed` variant, which is on the `danger`
+    // token; the call site only restates padding. No literal Tailwind `red-*`
+    // may appear anywhere: those read no `--c-*` token, so one surviving here
+    // would mean the banner renders theme-blind.
+    expect(banner).toHaveClass(
+      'rounded-md',
+      'border',
+      'bg-danger/10',
+      'border-danger/20',
+      'text-danger',
+    );
+    expect(banner.className).not.toMatch(/red-\d/);
+    expect(banner).toHaveClass('px-2', 'py-1.5');
+    // The variant's `p-2` is unreachable by `className`: tw-merge can only
+    // override a group, and no class here conflicts with `p-2`. It is harmless
+    // because `px-2`/`py-1.5` cover both axes — but that is a *cascade* fact
+    // (longhand utilities are emitted after the shorthand in Tailwind v4), not
+    // a fact about the order of tokens in this string. Asserting the ordering
+    // would be a tautology, so pin the padding itself instead. There is no
+    // jsdom-applicable way to assert *computed* padding here: Tailwind is not
+    // loaded into the test document, so `getComputedStyle` returns the
+    // unstyled defaults and would pass no matter what the classes said.
+    expect(banner).toHaveClass('px-2', 'py-1.5');
+    // The variant carries `text-xs`; the bar this replaced carried none and
+    // inherited `text-xs` from KeyEditors' root. They agree, so the size is
+    // unchanged — proved through the real tree in
+    // stringEditorFontInheritance.test.tsx, which a render of StringEditor
+    // alone cannot do.
+    expect(banner).toHaveClass('text-xs');
   });
 
   it('is gone again once the write succeeds', async () => {
