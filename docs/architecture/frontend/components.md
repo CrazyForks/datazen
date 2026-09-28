@@ -1014,11 +1014,23 @@ webview 的环境里。因此设计系统必须是依赖图里的**叶子**：�
 - 共用 `scripts/lib/scanTargets.mjs` 的扫描面（`SCAN_EXTENSIONS` 六种后缀、
   `SKIP_DIR_NAMES` 跳过的 vendored/生成目录）。二者曾各写一份，结果是
   `packages/ui/dist/**` 只有一个脚本会报、`.mjs` 只有一个脚本会看；声明在同一处
-  之后，它们无法在「看哪些文件」这件事上漂移。
+  之后，它们无法在「看哪些文件」这件事上漂移。（范围仅限这两个 UI 边界守卫：
+  `scripts/check-id-terminology.mjs` 有自己的第三份声明，因为它要扫 `.rs`，那是
+  另一种差异面，不应被强行合并。）
 - 共用 `scripts/lib/scanSourceCode.mjs` 的分词器，扫描文件内的**全部字符串
   字面量**，因此普通 `import` / `export … from`、动态 `import()`、`require()`、
-  `vi.mock()` 都会被检出，注释与字符串正文不会被误判。新增一类破坏方式时只改
-  规则表，不需要改检测逻辑。
+  `vi.mock()` 都会被检出，**注释**不会被误判。新增一类破坏方式时只改规则表，
+  不需要改检测逻辑。
+
+分词器的固有取舍：**字符串正文里的裸字符串无法与模块说明符区分**，所以
+`export const HINT = 'See @tauri-apps/plugin-dialog'` 与
+`export const A = '../../../src/stores/settingsStore'` 同样会被判为违规。这是
+刻意的（少认一种 import 形式就等于放过一种绕过），代价是会误报纯数据里的示例
+文本。`scripts/__tests__/check-driver-import-boundaries.test.mjs` 里有一条用例把
+这个行为钉住了；真被误报时，唯一干净的出口是改写那行数据（拆成拼接字符串，或让
+示例不长得像模块说明符），而不是放宽分词器。规则豁免（`ALLOWLIST`）只存在于
+`check-driver-import-boundaries.mjs`，且它不适用于 R4 之外的规则语义，改它要先问
+「这是谁的代码」。
 
 规则逻辑本身仍是两份独立实现，**没有**「一个变弱另一个会拦住」的保证：删掉 R4，
 边界脚本会安静下来而 layer 脚本照常拦，反之亦然。防这件事的是
@@ -1032,6 +1044,21 @@ gitignored 文件里的 blocking 判定降级为 advisory（未跟踪的 codegen
 （`git ls-files --others --ignored --exclude-standard` 为空），差异是休眠的；没有
 补齐，是因为它服务的 git 驱动/Pro EP 树都在 `packages/drivers/` 下而不在
 `packages/ui/`，而补齐会让 layer 守卫开始依赖 `git` 在 PATH 上，换来零当前覆盖。
+
+### 9.3 测试 fixture 的子集断言收窄了什么
+
+连接表单相关的测试里，只实现一部分字段的 stub 一律写成
+`Pick<ConnectionFormState, …>` 具名子集 + `satisfies` + 末尾一次显式
+`as unknown as`（AGENTS.md「只实现子集就用精确断言」）。它相对裸 `as` 的收益是
+可验证的：Pick 列表里键名写错、字面量里键名写错、值类型写错三种都会报错，裸
+`as` 三种全部照单全收；clipboard 路径真正用到的字段改名也会在 fixture 处报错。
+
+但它**不是**闭合集，有两条已知静默：给 `ConnectionFormState` 新增一个这些 fixture
+不提供的必填字段时，诊断只落在真正用它的文件上，Pick 白名单本身不报；从 Pick
+列表里删掉一个键也不报（`...overrides: Partial<ConnectionFormState>` 让字面量里
+剩下的键都变成已知键，抑制了多余属性检查）。因此它是「收窄了检查面」，不是
+「关闭了检查面」——新增必填字段时，类型错误会出现在消费它的测试/实现里，而不是
+自动出现在每个 stub 上。
 
 ## 10. 开发阶段规划
 
