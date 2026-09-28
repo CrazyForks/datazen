@@ -153,8 +153,19 @@ export interface VirtualTreeProps<R extends TreeRowLevel> {
   overscan?: number;
   /** Scroll container class. */
   className?: string;
-  /** Extra props on the scroll container (drag handlers, data attributes). */
-  containerProps?: HTMLAttributes<HTMLDivElement>;
+  /**
+   * Extra props on the scroll container (drag handlers, data attributes).
+   *
+   * Pass a **function** when an attribute has to track the scroll position —
+   * the pinned-header depth a tree publishes as `data-sticky-depth`, say. The
+   * shell owns `scrollTop` (it has to, to place the overlay), so a consumer
+   * cannot read it any other way; handing the context back here is what keeps
+   * that state from having to be duplicated per tree. A function also switches
+   * scroll tracking on, exactly like {@link renderOverlay} does.
+   */
+  containerProps?:
+    | HTMLAttributes<HTMLDivElement>
+    | ((ctx: VirtualTreeOverlayContext) => HTMLAttributes<HTMLDivElement>);
   /**
    * Extra props on the `role="tree"` grid (e.g. `data-row-count`). The shell
    * owns `role` and the ARIA name and applies them after the spread.
@@ -231,7 +242,9 @@ export function VirtualTree<R extends TreeRowLevel>({
 }: VirtualTreeProps<R>) {
   const ownScrollRef = useRef<HTMLDivElement>(null);
   const scrollRef = externalScrollRef ?? ownScrollRef;
-  const tracksScroll = renderOverlay !== undefined;
+  // Tracking costs a re-render per scroll frame, so it is on only when
+  // something actually reads the offset.
+  const tracksScroll = renderOverlay !== undefined || typeof containerProps === 'function';
   const [scrollTop, setScrollTop] = useState(0);
 
   const virtualizer = useVirtualizer({
@@ -254,6 +267,30 @@ export function VirtualTree<R extends TreeRowLevel>({
     [tracksScroll],
   );
 
+  /*
+   * The shell owns `onScroll` and `onKeyDown` because it has to: both are
+   * where its mechanism lives. A consumer handler supplied through
+   * `containerProps` runs first and is never dropped — silently ignoring it
+   * would make `containerProps` a trap for anything that scrolls or listens
+   * for keys.
+   */
+  const stickyIndexes = useMemo(() => {
+    if (!tracksScroll) return EMPTY_INDEXES;
+    const top = firstVisibleTreeIndex(scrollTop, rows.length, rowHeight);
+    return ancestorIndexes(rows, top, isBranch);
+  }, [isBranch, rowHeight, rows, scrollTop, tracksScroll]);
+
+  const consumerContainerProps =
+    typeof containerProps === 'function'
+      ? containerProps({ stickyIndexes, scrollTop })
+      : containerProps;
+  const onScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      consumerContainerProps?.onScroll?.(event);
+      handleScroll(event);
+    },
+    [consumerContainerProps, handleScroll],
+  );
   const revealIndex = useCallback(
     (index: number) => {
       if (index < 0) return;
@@ -321,19 +358,21 @@ export function VirtualTree<R extends TreeRowLevel>({
     [isBranch, navigation, revealIndex, rows],
   );
 
-  const stickyIndexes = useMemo(() => {
-    if (!tracksScroll) return EMPTY_INDEXES;
-    const top = firstVisibleTreeIndex(scrollTop, rows.length, rowHeight);
-    return ancestorIndexes(rows, top, isBranch);
-  }, [isBranch, rowHeight, rows, scrollTop, tracksScroll]);
+  const onKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      consumerContainerProps?.onKeyDown?.(event);
+      handleKeyDown(event);
+    },
+    [consumerContainerProps, handleKeyDown],
+  );
 
   return (
     <div
-      {...containerProps}
+      {...consumerContainerProps}
       ref={scrollRef}
       className={cn(tracksScroll && 'relative', className)}
-      onKeyDown={handleKeyDown}
-      onScroll={handleScroll}
+      onKeyDown={onKeyDown}
+      onScroll={onScroll}
       data-testid={testId}
     >
       {renderOverlay ? renderOverlay({ stickyIndexes, scrollTop }) : null}
@@ -366,7 +405,8 @@ export function VirtualTree<R extends TreeRowLevel>({
                 isBranch: isBranch(row, virtualRow.index),
                 start: virtualRow.start,
                 size: virtualRow.size,
-                itemProps: custom === undefined ? { 'aria-level': ariaLevelOf(row) } : (custom ?? {}),
+                itemProps:
+                  custom === undefined ? { 'aria-level': ariaLevelOf(row) } : (custom ?? {}),
               })}
             </div>
           );

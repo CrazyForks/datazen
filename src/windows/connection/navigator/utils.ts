@@ -192,7 +192,13 @@ export function flattenNamespaceTree(
         const childEntries = Object.entries(child);
         const pathLoaded = loadedPaths.has(pathKey(segments));
         if (childEntries.length === 0 && !pathLoaded && !query) {
-          rows.push({ type: 'db-loading', ...levels(baseDepth + 1) });
+          // This spinner stands in for the namespace path still being ensured,
+          // so it is owned by that path — not by where it happens to sit.
+          rows.push({
+            type: 'db-loading',
+            ...levels(baseDepth + 1),
+            ownerKey: `ns:${pathKey(segments)}`,
+          });
         } else {
           flattenNamespaceTree(
             child,
@@ -212,7 +218,32 @@ export function flattenNamespaceTree(
   }
 }
 
-export function getUnifiedRowKey(row: UnifiedRow, index: number): string {
+/**
+ * Stable identity of a navigator row, for use as a React `<key>`.
+ *
+ * **No index parameter, on purpose.** A virtualizer only ever hands a renderer
+ * positions, and a position is not an identity: scroll one row out of the
+ * window and every row after it changes index. An index-derived key therefore
+ * remounts a suffix of the list on every scroll frame — losing focus,
+ * scroll-into-view and in-flight transitions — and, worse, *two different rows
+ * can share a key* whenever the list is filtered. Two of the cases below did
+ * exactly that:
+ *
+ * - `db-loading` keyed off its own list position, so the spinner that was
+ *   waiting for database A became the spinner for database B as soon as A's
+ *   row scrolled out of the window. It now names the row it stands in for
+ *   (`ownerKey`).
+ * - `empty-group` fell back to `index` whenever `groupName` was missing, which
+ *   made the hint row under a group rename itself whenever anything above it
+ *   appeared or disappeared. `groupName` is required now.
+ * - `object` rows keyed off `(catId, name)` alone, so two connections that each
+ *   hold a function called `fn_calc` produced one duplicate key. The row now
+ *   carries its owner tuple, the same as the `table` variant.
+ *
+ * Every branch is built from fields that identify *which object the row is*,
+ * so the key survives re-sorts, re-filters and window changes.
+ */
+export function getUnifiedRowKey(row: UnifiedRow): string {
   switch (row.type) {
     case 'section':
       return `sec:${row.section}`;
@@ -229,15 +260,15 @@ export function getUnifiedRowKey(row: UnifiedRow, index: number): string {
     case 'table':
       return `tbl:${row.connectionId}:${row.dbName}:${row.item.schema ?? ''}:${row.item.name}`;
     case 'object':
-      return `obj:${row.catId}:${row.obj.name}`;
+      return `obj:${row.connectionId}:${row.dbName}:${row.schemaName ?? ''}:${row.catId}:${row.obj.name}`;
     case 'kv-db':
       return `kv:${row.connectionId}:${row.dbName}`;
     case 'db-loading':
-      return `loading:${index}`;
+      return `loading:${row.ownerKey}`;
     case 'namespace-node':
       return `ns:${row.key}`;
     case 'empty-group':
-      return `empty:${row.groupName ?? index}`;
+      return `empty:${row.groupName}`;
     case 'no-connections':
       return 'no-connections';
   }

@@ -6,6 +6,16 @@ import type { TableContextInput, TableSqlActionKind } from '../../../lib/tableSq
 import type { TreeRowLevel } from '@datazen/ui';
 
 /**
+ * `TreeRowLevel` makes `levelDepth` optional so that a tree which never shifts
+ * its levels can leave it out. The navigator always shifts them — a search
+ * removes exactly one rung — so here it is required: a row that forgets to
+ * announce its level would silently fall back to its painted depth and
+ * over-nest by one under a search, which is the drift this contract exists to
+ * prevent. Building it from the shared type keeps the two in step.
+ */
+type Announced = Required<Pick<TreeRowLevel, 'depth' | 'levelDepth'>>;
+
+/**
  * Every row that sits inside a nesting ladder: where it is *painted*, and
  * optionally where it is *announced*.
  *
@@ -67,7 +77,16 @@ type DepthBearing =
       dbSessionId: string;
       dbName: string;
     }
-  | { type: 'object'; obj: DatabaseObject; depth: number; catId: string }
+  | {
+      type: 'object';
+      obj: DatabaseObject;
+      depth: number;
+      catId: string;
+      /** Owner tuple — without it two connections' identically named objects collide. */
+      connectionId: string;
+      dbName: string;
+      schemaName?: string;
+    }
   | {
       type: 'kv-db';
       connectionId: string;
@@ -77,7 +96,16 @@ type DepthBearing =
       isSelected: boolean;
       dbCountsCommand?: string;
     }
-  | { type: 'db-loading'; depth: number }
+  | {
+      type: 'db-loading';
+      depth: number;
+      /**
+       * Identity of the row this spinner stands in for (the connection, the
+       * session, or the database whose tables are loading). A placeholder keyed
+       * by its own list position renames itself the moment the window scrolls.
+       */
+      ownerKey: string;
+    }
   | {
       type: 'namespace-node';
       name: string;
@@ -98,16 +126,6 @@ type DepthBearing =
       dbSessionId: string;
     };
 
-/**
- * `TreeRowLevel` makes `levelDepth` optional so that a tree which never shifts
- * its levels can leave it out. The navigator always shifts them — a search
- * removes exactly one rung — so here it is required: a row that forgets to
- * announce its level would silently fall back to its painted depth and
- * over-nest by one under a search, which is the drift this contract exists to
- * prevent. Building it from the shared type keeps the two in step.
- */
-type Announced = Required<Pick<TreeRowLevel, 'depth' | 'levelDepth'>>;
-
 export type UnifiedRow =
   /**
    * A `section` and a `group` are the tree's roots: they have no parent to be
@@ -116,17 +134,31 @@ export type UnifiedRow =
    * `buildFlatRows` emits a `section` XOR a `group`, never one inside the
    * other.
    */
-  | {
+  | (Announced & {
       type: 'section';
       section: 'pinned' | 'recent';
       displayName: string;
       count: number;
       expanded: boolean;
-    }
-  | { type: 'group'; groupName: string; displayName: string; count: number; expanded: boolean }
+    })
+  | (Announced & {
+      type: 'group';
+      groupName: string;
+      displayName: string;
+      count: number;
+      expanded: boolean;
+    })
   | (DepthBearing & Announced)
-  | { type: 'empty-group'; groupName?: string }
-  | { type: 'no-connections' };
+  | (Announced & {
+      /**
+       * A hint row, not a tree item: the shared shell renders it with no ARIA
+       * at all. `groupName` is always present at the emit site, and keeping it
+       * optional is what allowed an index to leak into the key.
+       */
+      type: 'empty-group';
+      groupName: string;
+    })
+  | (Announced & { type: 'no-connections' });
 
 export interface ConnectionNavigatorTreeHandle {
   refreshAllConnections: () => Promise<void>;
