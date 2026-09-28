@@ -1,8 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Check, Copy, Sparkles, Terminal } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
+import { useCopyFeedback } from '../../../components/ui/useCopyFeedback';
 import { useI18n } from '../../../hooks/useI18n';
 import { formatMcpCliCommand, useAppExecutablePath } from '../../../lib/mcpAgentConfig';
+
+/** How long the "copied" label stays before reverting to the copy action. */
+const COPIED_FEEDBACK_MS = 2000;
 
 /**
  * Single-row MCP promo bar (compressed from the former full-height card):
@@ -10,16 +14,12 @@ import { formatMcpCliCommand, useAppExecutablePath } from '../../../lib/mcpAgent
  */
 export function McpPromoBar() {
   const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
 
   const appExecutablePath = useAppExecutablePath();
   const mcpCliCommand = useMemo(() => formatMcpCliCommand(appExecutablePath), [appExecutablePath]);
 
-  const handleCopy = () => {
-    void navigator.clipboard?.writeText(mcpCliCommand);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const handleCopy = () => copy(mcpCliCommand);
 
   return (
     <div

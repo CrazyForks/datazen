@@ -4,12 +4,16 @@ import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
 import { CopyableError } from '../ui/CopyableError';
+import { useCopyFeedback } from '../ui/useCopyFeedback';
 import { useI18n } from '../../hooks/useI18n';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { queryCommands } from '../../commands/query';
 import type { QueryHistoryEntry } from '../../types';
 import { cn } from '../../lib/cn';
 import { tid } from '../../lib/tid';
+
+/** How long the per-row "已复制" marker stays before reverting. */
+const COPIED_FEEDBACK_MS = 2000;
 
 export interface GlobalQueryHistoryDialogProps {
   open: boolean;
@@ -33,6 +37,7 @@ export function GlobalQueryHistoryDialog({
   const [selectedConn, setSelectedConn] = useState<string>(initialConnectionId ?? 'all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed'>('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
   const [confirmClear, setConfirmClear] = useState(false);
 
   const connectionMap = useMemo(() => {
@@ -83,10 +88,16 @@ export function GlobalQueryHistoryDialog({
   }, [history, selectedConn, statusFilter, search]);
 
   const handleCopy = (id: string, sql: string) => {
-    void navigator.clipboard?.writeText(sql);
+    copy(sql);
     setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
   };
+
+  /**
+   * `copied` is the shared, request-bound flag; `copiedId` says *which* row it
+   * belongs to. Gating the marker on both means a rolled-back write drops the
+   * marker even though `copiedId` still names the last attempted row.
+   */
+  const copiedRowId = copied ? copiedId : null;
 
   const handleClearHistory = async () => {
     try {
@@ -238,7 +249,7 @@ export function GlobalQueryHistoryDialog({
                         className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-fg-muted hover:bg-surface hover:text-accent transition-colors"
                         title="复制 SQL"
                       >
-                        {copiedId === item.id ? (
+                        {copiedRowId === item.id ? (
                           <>
                             <Check className="h-3 w-3 text-success" />
                             <span className="text-success">已复制</span>

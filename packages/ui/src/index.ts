@@ -50,6 +50,10 @@ export {
   stepIndex,
   type BranchProbe,
 } from './tree/navigation';
+// Shared "copy to clipboard" confirmation. Exported so the host, drivers and
+// extensions converge on the same optimistic-rollback semantics instead of
+// re-implementing a 1.5s `setCopied(true)` / `setTimeout` pair per call site.
+export { useCopyFeedback } from './useCopyFeedback';
 // The ONE i18n implementation shared by host, drivers and extensions.
 export {
   setLocale,

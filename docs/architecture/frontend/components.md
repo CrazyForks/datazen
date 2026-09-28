@@ -975,7 +975,124 @@ S 形绕行。同一套形态实测：**反向边 7/10 → 0/10，跨越 18 → 
 - 支持 `mode` 属性：`file` / `directory` / `save`
 - 已在所有需要路径输入的位置替换（SQLite 数据库路径、备份路径、上下文目录等）
 
-## 10. 开发阶段规划
+## 10. 复制反馈（useCopyFeedback）
+
+`packages/ui/src/useCopyFeedback.ts`（`@datazen/ui` 导出）— 统一的「已复制」确认：
+
+```ts
+const { copied, copy } = useCopyFeedback(feedbackMs); // feedbackMs 必填，无默认值
+```
+
+契约（不得随意更改）：
+
+- **乐观**：点击立刻置位，不等 `navigator.clipboard.writeText` 的 Promise。
+- **失败回滚**：写入以**任何**方式失败都回到「复制」态，`copy()` 本身永不抛。
+- **按请求绑定**：`copy()` 自增 `requestId`，迟到的失败既不会抹掉后续成功的标记，
+  也不会动后续调用的定时器。
+- **卸载清理**：组件卸载时 `clearTimeout` 掉未到期的窗口。
+
+第二条的关键在写法。直接写 `navigator.clipboard.writeText(text).catch(…)` 是**错的**：
+`navigator.clipboard` 缺失时 TypeError 在**同步**求值阶段就抛出，`.catch` 还没挂上——
+回滚永远不会执行，异常还会逃进 React 事件处理器，按钮则顶着「已复制」显示满整个窗口
+却什么都没复制。hook 用一个 IIFE 把「读属性 + 调用」整体包在 `try` 里，同步抛就转成
+一个 rejected promise 交给既有回滚体：
+
+```ts
+const write = ((): Promise<void> => {
+  try {
+    return navigator.clipboard.writeText(text);
+  } catch {
+    return Promise.reject(new Error('clipboard write unavailable'));
+  }
+})();
+
+void write.catch(() => {
+  /* requestId 守卫 + 清定时器 + setCopied(false)，原样不动 */
+});
+```
+
+**`writeText` 仍然是同步调用的**，这点是刻意的。改成
+`Promise.resolve().then(() => navigator.clipboard.writeText(text))`（把读属性推迟一个
+微任务）同样能成立，但会把 `writeText` 挪出点击那一轮——19 个文件、48 条既有断言
+观测的正是这个时序，而写入本身并不是要修的东西。
+
+回归覆盖三种「同步抛」形态（`packages/ui/src/__tests__/useCopyFeedback.test.tsx`）：
+`navigator.clipboard` 为 `undefined`、该属性被 `delete`、`writeText` 自身同步抛，
+三者都断言「不抛且回滚」。
+
+第三条、第四条是存在的原因：React 18 取消了「卸载后 setState」告警，泄漏的定时器**完全
+静默**，既不报错也不留痕。回归测试因此不比对源码，而是 `spyOn(window, 'setTimeout' /
+'clearTimeout')` 指认出这次点击排的句柄，再断言卸载时该句柄确实到达了
+`clearTimeout`（`src/test/copyFeedbackHarness.ts` 的 `spyOnWindowTimers()`）。
+直接比较 `getTimerCount()` 前后的差值并不可靠——挂载本身也可能排队定时器，卸载会把
+它们一并清掉，那个下降与复制窗口无关。
+
+**多行场景的组合方式**：hook 只返回一个布尔量，行/块 id 仍由调用方自己保存，渲染时
+两者同时成立才算命中（`const copiedRowId = copied ? copiedId : null`）。这样回滚会顺带
+丢掉过期标记，迟到失败不会把标记甩回旧行。
+
+### 收敛的 13 个站点
+
+**时长按站点传入，不改默认值**（hook 无默认值可改，`feedbackMs` 是必填位置参数）：
+1500ms（`AiCodeBlock`、`WorkflowChatPanel`、`ProgressLog`、`QueryErrorPanel`）、
+2000ms（`SqlPreview`、`Nl2SqlPanel`、`ExecutionSummaryCard`、`McpSettingsSection`、
+`McpPromoBar`、`GlobalQueryHistoryDialog`、`RecentQueriesList`、`ConnectionWorkspaceHome`）、
+1200ms（Redis `KeyHeaderRow`——它的 `data-copied` 是驱动专属按钮态，窗口本来就是
+1200ms，改了就是改用户可见行为）。
+
+收敛前的实际形态（逐站点核对基线得到，不是抽样）：
+
+| 类别 | 站点 |
+| --- | --- |
+| **卸载时定时器泄漏**（句柄直接丢弃） | `AiCodeBlock`、`WorkflowChatPanel`、`SqlPreview`、`GlobalQueryHistoryDialog`、`McpSettingsSection`、`McpPromoBar`、`RecentQueriesList`、`ConnectionWorkspaceHome`、`ExecutionSummaryCard`、`QueryErrorPanel`、`KeyHeaderRow`（11 处） |
+| **卸载时定时器泄漏**（句柄存进 ref，但只在再次点击时清，从不随卸载清） | `Nl2SqlPanel`（第 12 处） |
+| **本来就没有泄漏**（ref + 卸载清理俱全） | `ProgressLog` |
+| **悲观写入**（`await writeText()` 之后才置位） | `SqlPreview`、`McpSettingsSection`、`ProgressLog`、`KeyHeaderRow`（4 处） |
+
+即 13 个站点里 **12 个在卸载时泄漏定时器**，只有 `ProgressLog` 本来就是安全的。
+
+**用户可见的行为变化**只有三类，其余一律保持原样：
+
+1. **悲观 → 乐观**（上表 4 处）：慢剪贴板上按钮不再有反馈延迟。
+2. **失败回滚**：原先「写入被拒也永远显示已复制」的站点现在会回滚。
+3. **悲观 → 乐观的副作用**：写入被拒时按钮会**先闪一下「已复制」再回落**。基线在这条
+   失败路径上全程不显示。这只出现在失败路径，是乐观语义的必然代价（暴露窗口 = 一个
+   event-loop turn），不是新 bug。
+
+原先写作 `navigator.clipboard?.writeText` 的站点（`KeyHeaderRow`、
+`GlobalQueryHistoryDialog`、`ConnectionWorkspaceHome`、`McpPromoBar`、
+`RecentQueriesList`、`ExecutionSummaryCard`）不再静默跳过，而是走同一条回滚路径。
+
+**已知限制：本 hook 没有剪贴板降级链。** 它只走 `navigator.clipboard.writeText`，
+没有 Tauri `write_clipboard` invoke，也没有 `document.execCommand('copy')` 兜底。
+降级实现在 `src/lib/fetchRelationDdl.ts`（已提交测试 `fetchRelationDdl.test.ts` 证明
+WebKit 会抛 `NotAllowedError`），**搬不进 `packages/ui`**——它依赖 `@tauri-apps/api`，
+而设计系统禁止该导入，`check-module-layers` 会拦。需要降级的站点必须继续用那个 helper。
+
+### 尚未收敛的站点（待办，不是「已解决」）
+
+以下三处**理由成立、本轨未处理**，留作后续：
+
+1. **`CompareSummary`**（`src/windows/data-sync/CompareSummary.tsx`）——它其实**有**复制
+   反馈：`useState(false)` + 裸 `setTimeout(..., 2000)` + 渲染时切文案，是第 14 个手搓
+   且同样泄漏的站点。不套 hook 的真正原因是**写入在父组件**（`onCopyReport` 回调上抛），
+   hook 负责执行写入，硬套会写两次剪贴板。它需要的是**把写入下沉到组件内**，再套 hook，
+   而不是直接套 hook。
+2. **`SchemaDiffWindow`**（`src/windows/schema-diff/SchemaDiffWindow.tsx`）——
+   `ClipboardFeedback` 是三种 kind（`'summary' | 'sql' | 'config'`，`config` 是文件保存
+   确认而非剪贴板确认），共用一个状态槽；失败走 `setError(...)` 错误态
+   （`schemaDiff.clipboardFailed` / `exportConfigFailed`）。hook 的二值 `copied` +
+   单一回滚表达不了三态与错误面。
+3. **`DDLView`**（`src/windows/connection/DDLView.tsx`）——依赖上面那条三级降级链。
+   降级搬不进 `packages/ui`，所以这条不能在本轨解决；要么保持现状，要么另开一条
+   允许 `packages/ui` 触达 Tauri 的设计决策。
+
+另有一批调用点**本就没有复制反馈**（`DataTransferWindow`、`ErrorBoundary`（class 组件，
+用不了 hook）、`WorkflowPage`、`DataTable`、`ErDiagramView`、`QuerySidebarSection`、
+`DataSyncWindow`、Redis `ValueViewer` / `useKeyRowActions`）或用的是异类反馈
+（`SqlSnippetsCard` 走 toast）。给它们加反馈属于新增功能，不在收敛范围内。
+
+## 11. 开发阶段规划
 
 | 阶段 | 内容 | 输出 |
 |------|------|------|

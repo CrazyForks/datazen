@@ -12,6 +12,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { useCopyFeedback } from '../ui/useCopyFeedback';
 import { AiInput } from './AiInput';
 import { AiEgressNotice } from './AiEgressNotice';
 import { Select } from '../ui/Select';
@@ -37,6 +38,9 @@ interface WorkflowChatPanelProps {
   onSaved?: () => void;
   onBack?: () => void;
 }
+
+/** How long a copied YAML block keeps its check icon before reverting. */
+const COPIED_FEEDBACK_MS = 1500;
 
 export function WorkflowChatPanel({ connections, onSaved, onBack }: WorkflowChatPanelProps) {
   const { t } = useI18n();
@@ -319,16 +323,26 @@ function WorkflowChatBubble({
 }) {
   const isUser = message.role === 'user';
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [previewYaml, setPreviewYaml] = useState<string | null>(null);
 
   const yamlBlocks = !isUser && !isStreaming ? extractWorkflowYaml(message.content) : [];
 
-  const handleCopy = useCallback((code: string, idx: number) => {
-    void navigator.clipboard.writeText(code);
-    setCopiedIdx(idx);
-    setTimeout(() => setCopiedIdx(null), 1500);
-  }, []);
+  const handleCopy = useCallback(
+    (code: string, idx: number) => {
+      copy(code);
+      setCopiedIdx(idx);
+    },
+    [copy],
+  );
+
+  /**
+   * `copied` is the shared, request-bound flag and `copiedIdx` names the block
+   * it belongs to; gating on both keeps a rolled-back write from leaving a
+   * stale "copied" marker on the last attempted block.
+   */
+  const copiedBlockIdx = copied ? copiedIdx : null;
 
   return (
     <div className={cn('mb-3', isUser ? 'flex justify-end' : '')}>
@@ -393,7 +407,7 @@ function WorkflowChatBubble({
                     className="rounded bg-surface px-1.5 py-0.5 text-[10px] text-fg-muted hover:text-fg"
                     onClick={() => handleCopy(yaml, idx)}
                   >
-                    {copiedIdx === idx ? (
+                    {copiedBlockIdx === idx ? (
                       <Check className="inline h-2.5 w-2.5" />
                     ) : (
                       <Copy className="inline h-2.5 w-2.5" />
