@@ -991,14 +991,34 @@ const { copied, copy } = useCopyFeedback(feedbackMs); // feedbackMs 必填，无
   也不会动后续调用的定时器。
 - **卸载清理**：组件卸载时 `clearTimeout` 掉未到期的窗口。
 
-第二条的关键在写法：属性读取必须放在 Promise 链**内**
-（`Promise.resolve().then(() => navigator.clipboard.writeText(text)).catch(…)`）。
-若写成 `navigator.clipboard.writeText(text).catch(…)`，`navigator.clipboard` 缺失时
-TypeError 在**同步**求值阶段就抛出，`.catch` 还没挂上——回滚永远不会执行，按钮会顶着
-「已复制」显示满整个窗口却什么都没复制。挪进链里之后，任何同步抛都变成 rejection，
-回滚对所有失败模式成立（见 `packages/ui/src/__tests__/useCopyFeedback.test.tsx`：
-`navigator.clipboard` 为 undefined / 属性被 delete / `writeText` 自身同步抛，
-三种情形都断言「不抛且回滚」）。
+第二条的关键在写法。直接写 `navigator.clipboard.writeText(text).catch(…)` 是**错的**：
+`navigator.clipboard` 缺失时 TypeError 在**同步**求值阶段就抛出，`.catch` 还没挂上——
+回滚永远不会执行，异常还会逃进 React 事件处理器，按钮则顶着「已复制」显示满整个窗口
+却什么都没复制。hook 用一个 IIFE 把「读属性 + 调用」整体包在 `try` 里，同步抛就转成
+一个 rejected promise 交给既有回滚体：
+
+```ts
+const write = ((): Promise<void> => {
+  try {
+    return navigator.clipboard.writeText(text);
+  } catch {
+    return Promise.reject(new Error('clipboard write unavailable'));
+  }
+})();
+
+void write.catch(() => {
+  /* requestId 守卫 + 清定时器 + setCopied(false)，原样不动 */
+});
+```
+
+**`writeText` 仍然是同步调用的**，这点是刻意的。改成
+`Promise.resolve().then(() => navigator.clipboard.writeText(text))`（把读属性推迟一个
+微任务）同样能成立，但会把 `writeText` 挪出点击那一轮——19 个文件、48 条既有断言
+观测的正是这个时序，而写入本身并不是要修的东西。
+
+回归覆盖三种「同步抛」形态（`packages/ui/src/__tests__/useCopyFeedback.test.tsx`）：
+`navigator.clipboard` 为 `undefined`、该属性被 `delete`、`writeText` 自身同步抛，
+三者都断言「不抛且回滚」。
 
 第三条、第四条是存在的原因：React 18 取消了「卸载后 setState」告警，泄漏的定时器**完全
 静默**，既不报错也不留痕。回归测试因此不比对源码，而是 `spyOn(window, 'setTimeout' /
