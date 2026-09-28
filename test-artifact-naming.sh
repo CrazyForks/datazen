@@ -51,6 +51,22 @@ file_ext() {
 
 canonical_name() {
   local ext="$1"
+  # AppImage catalog convention: the file name must not contain "linux"
+  # (every AppImage is for Linux) and spells the arch x86_64/aarch64 —
+  # e.g. DataZen-1.2.3-x86_64.AppImage. Mirrors release.yml.
+  if [ "$ext" = "AppImage" ]; then
+    local appimage_arch="$ARCH"
+    case "$ARCH" in
+      x64)   appimage_arch="x86_64" ;;
+      arm64) appimage_arch="aarch64" ;;
+    esac
+    if [ -n "$VARIANT" ]; then
+      echo "DataZen-${VERSION}-${appimage_arch}-${VARIANT}.${ext}"
+    else
+      echo "DataZen-${VERSION}-${appimage_arch}.${ext}"
+    fi
+    return
+  fi
   if [ -n "$VARIANT" ]; then
     echo "DataZen-${VERSION}-${PLATFORM}-${ARCH}-${VARIANT}.${ext}"
   else
@@ -109,12 +125,14 @@ run_case "windows" "x64" "-akulaku" "DataZen-0.2.0-x86_64-pc-windows-msvc.exe"  
 
 echo ""
 echo "=== Linux x64 basic ==="
-run_case "linux" "x64" "" "DataZen-0.2.0-x86_64-unknown-linux-gnu.AppImage"      "DataZen-0.2.0-linux-x64.AppImage"
+# AppImage: no "linux" platform segment (AppImage catalog name check)
+run_case "linux" "x64" "" "DataZen-0.2.0-x86_64-unknown-linux-gnu.AppImage"      "DataZen-0.2.0-x86_64.AppImage"
 run_case "linux" "x64" "" "DataZen-0.2.0-x86_64-unknown-linux-gnu.deb"           "DataZen-0.2.0-linux-x64.deb"
 run_case "linux" "x64" "" "DataZen-0.2.0-x86_64-unknown-linux-gnu.rpm"           "DataZen-0.2.0-linux-x64.rpm"
 
 echo ""
 echo "=== Linux x64-all ==="
+run_case "linux" "x64" "-all" "DataZen-0.2.0-x86_64-unknown-linux-gnu.AppImage"  "DataZen-0.2.0-x86_64-all.AppImage"
 run_case "linux" "x64" "-all" "DataZen-0.2.0-x86_64-unknown-linux-gnu.deb"       "DataZen-0.2.0-linux-x64-all.deb"
 
 echo ""
@@ -126,7 +144,7 @@ sig_base="DataZen-0.2.0-x86_64-unknown-linux-gnu.AppImage.sig"
 sigstem="${sig_base%.sig}"
 sig_ext=$(file_ext "$sigstem")
 sig_name="$(canonical_name "$sig_ext").sig"
-assert_name "$sig_name" "DataZen-0.2.0-linux-x64.AppImage.sig"
+assert_name "$sig_name" "DataZen-0.2.0-x86_64.AppImage.sig"
 
 PLATFORM="macos"; ARCH="arm64"; VARIANT=""
 sig_base2="DataZen-0.2.0-aarch64-apple-darwin.tar.gz.sig"

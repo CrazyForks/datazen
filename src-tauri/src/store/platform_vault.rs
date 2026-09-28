@@ -30,11 +30,15 @@ pub mod macos_security {
         let status = std::process::Command::new("/usr/bin/security")
             .args([
                 "add-generic-password",
-                "-a", VAULT_ACCOUNT,
-                "-s", VAULT_SERVICE,
-                "-w", &b64,
+                "-a",
+                VAULT_ACCOUNT,
+                "-s",
+                VAULT_SERVICE,
+                "-w",
+                &b64,
                 "-U",
-                "-T", "/usr/bin/security",
+                "-T",
+                "/usr/bin/security",
             ])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
@@ -55,8 +59,10 @@ pub mod macos_security {
         let output = std::process::Command::new("/usr/bin/security")
             .args([
                 "find-generic-password",
-                "-a", VAULT_ACCOUNT,
-                "-s", VAULT_SERVICE,
+                "-a",
+                VAULT_ACCOUNT,
+                "-s",
+                VAULT_SERVICE,
                 "-w", // output only the password
             ])
             .stdout(std::process::Stdio::piped())
@@ -84,8 +90,10 @@ pub mod macos_security {
         let _ = std::process::Command::new("/usr/bin/security")
             .args([
                 "delete-generic-password",
-                "-a", VAULT_ACCOUNT,
-                "-s", VAULT_SERVICE,
+                "-a",
+                VAULT_ACCOUNT,
+                "-s",
+                VAULT_SERVICE,
             ])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -248,9 +256,7 @@ fn decode_key_b64(key_b64: &str) -> Result<[u8; 32], StoreError> {
         .decode(key_b64.trim())
         .map_err(|e| StoreError::EncryptionError(e.to_string()))?;
     if key_bytes.len() != 32 {
-        return Err(StoreError::EncryptionError(
-            "Invalid key length".into(),
-        ));
+        return Err(StoreError::EncryptionError("Invalid key length".into()));
     }
     let mut key = [0u8; 32];
     key.copy_from_slice(&key_bytes);

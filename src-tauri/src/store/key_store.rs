@@ -57,7 +57,8 @@ fn auto_detect_backend() -> KeyBackend {
     // macOS: unsigned/adhoc → platform vault; signed → keyring
     #[cfg(target_os = "macos")]
     {
-        if super::platform_vault::platform_vault_available() && macos_codesign_is_adhoc_or_unsigned()
+        if super::platform_vault::platform_vault_available()
+            && macos_codesign_is_adhoc_or_unsigned()
         {
             tracing::info!(
                 "Using platform vault (macOS security CLI) for encryption key; \
@@ -104,10 +105,7 @@ fn macos_codesign_is_adhoc_or_unsigned() -> bool {
     let Ok(out) = output else {
         return true;
     };
-    let text = format!(
-        "{}",
-        String::from_utf8_lossy(&out.stderr),
-    );
+    let text = format!("{}", String::from_utf8_lossy(&out.stderr),);
     if text.contains("code object is not signed") {
         return true;
     }

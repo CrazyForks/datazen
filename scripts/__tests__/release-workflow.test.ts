@@ -85,7 +85,7 @@ describe('Windows release packaging', () => {
     // Every Pro variant consumes that artifact rather than re-cloning the repo.
     expect(releaseWorkflow).toContain('actions/download-artifact@v4');
     expect(releaseWorkflow).toContain('name: pro-extension');
-    expect(releaseWorkflow).toContain('needs: [prepare-pro-extension, warm-driver-deps]');
+    expect(releaseWorkflow).toContain('needs: [prepare-pro-extension, union-typecheck]');
     // The .dzx is packed from the Pro source checkout, so it is produced once in
     // the prepare job too and downloaded by the one variant that ships it.
     expect(releaseWorkflow).toContain('Pack the signed Pro .dzx');
@@ -105,71 +105,100 @@ describe('Windows release packaging', () => {
 });
 
 describe('Release build time optimisation', () => {
-  const warmupJob = releaseWorkflow.slice(
-    releaseWorkflow.indexOf('  warm-driver-deps:'),
+  const typecheckJob = releaseWorkflow.slice(
+    releaseWorkflow.indexOf('  union-typecheck:'),
     releaseWorkflow.indexOf('  build:'),
   );
+  const buildJob = releaseWorkflow.slice(releaseWorkflow.indexOf('  build:'));
 
-  it('compiles the driver union once per target before the variant matrix', () => {
-    // all,kiwi,superset is the superset of basic / all / akulaku.
-    expect(warmupJob).toContain('--drivers=all,kiwi,superset');
-    expect(warmupJob).toContain('node scripts/ci-driver-warmup.mjs --target=${{ matrix.target }}');
-    // The union build is the lib only: no per-variant link, no Vite bundle.
-    const warmupScript = readFileSync(resolve(root, 'scripts/ci-driver-warmup.mjs'), 'utf-8');
-    expect(warmupScript).toContain("'-p', 'datazen', '--lib'");
+  it('no longer gates the matrix behind a driver warmup', () => {
+    // A `warm-driver-deps` job compiled the driver union once per target and
+    // ran it as a `needs:` barrier ahead of all 11 variant jobs. Measured
+    // (runs 36286459429 -> 36300831455) that cost 34:47 -> 56:12 of wall clock
+    // and +65 runner-minutes while the variant jobs' heavy steps moved
+    // 155:42 -> 156:37, i.e. nothing: all 11 already restored a warm closure
+    // from the previous run. See docs/development/ci-test-matrix.md §6.1.
+    expect(releaseWorkflow).not.toContain('warm-driver-deps');
+    expect(releaseWorkflow).not.toContain('ci-driver-warmup.mjs');
+    // Needs is the serialisation point, so it must name only the two jobs that
+    // still earn their place ahead of the matrix.
+    expect(releaseWorkflow).toContain('needs: [prepare-pro-extension, union-typecheck]');
+    // ...and the job must not exist as a `needs:` target of anything either.
+    expect(releaseWorkflow).not.toMatch(/^\s*needs:.*warm-driver-deps/m);
   });
 
-  it('warms the cache for exactly the targets the matrix builds', () => {
-    const warmTargets = [...warmupJob.matchAll(/target: (\S+)/g)].map((m) => m[1]);
-    expect(warmTargets).toEqual([
-      'x86_64-pc-windows-msvc',
-      'aarch64-apple-darwin',
-      'x86_64-apple-darwin',
-      'x86_64-unknown-linux-gnu',
-    ]);
-    // Every target the matrix builds must have a warmup leg, or it compiles
-    // the driver union cold.
-    const buildTargets = new Set(
-      [...releaseWorkflow.matchAll(/^\s+target: (\S+)$/gm)].map((m) => m[1]),
-    );
-    for (const target of buildTargets) {
-      expect(warmTargets).toContain(target);
-    }
+  it('still lets the variant jobs write the shared cargo cache', () => {
+    // The regression to guard: the warmup used to be the sole writer and every
+    // build job carried `save-if: false`. Dropping the warmup without dropping
+    // that would have left NO writer at all — the entry would go stale, be
+    // evicted after 7 idle days, and every later release would silently go back
+    // to a cold compile.
+    expect(buildJob).toContain('shared-key: ${{ matrix.target }}');
+    expect(buildJob).toContain('cache-workspace-crates: true');
+    expect(buildJob).not.toContain('save-if: false');
   });
 
-  it('makes the warmup job the only writer of the shared cargo cache', () => {
-    // Previously every variant on a target shared one key, so the cache stayed
-    // pinned to whichever job saved first (always the cheapest variant).
-    expect(warmupJob).toContain('shared-key: ${{ matrix.target }}');
-    expect(warmupJob).toContain('cache-workspace-crates: true');
-    // The build jobs restore read-only.
-    const buildJob = releaseWorkflow.slice(releaseWorkflow.indexOf('  build:'));
-    expect(buildJob).toContain('save-if: false');
-  });
-
-  it('runs the driver injection inside a clean tree in both jobs', () => {
+  it('runs the driver injection inside a clean tree', () => {
     // rust-cache hashes every workspace Cargo.toml, so the cache step must run
-    // before with-driver-inject rewrites them — otherwise the two jobs compute
-    // different keys and never share a cache.
-    const cacheIndex = warmupJob.indexOf('Cache Rust compilation');
-    const injectIndex = warmupJob.indexOf('with-driver-inject.mjs');
-    expect(cacheIndex).toBeGreaterThan(-1);
-    expect(injectIndex).toBeGreaterThan(cacheIndex);
-
-    const buildJob = releaseWorkflow.slice(releaseWorkflow.indexOf('  build:'));
+    // before with-driver-inject rewrites them.
     const buildCacheIndex = buildJob.indexOf('Cache Rust compilation');
     const buildInjectIndex = buildJob.indexOf('with-driver-inject.mjs');
     expect(buildCacheIndex).toBeGreaterThan(-1);
     expect(buildInjectIndex).toBeGreaterThan(buildCacheIndex);
   });
 
-  it('typechecks the union once instead of once per variant', () => {
+  it('typechecks the union once, in a job of its own', () => {
     expect(releaseWorkflow).toContain('DATAZEN_CI_TYPECHECK_ONCE:');
-    expect(warmupJob).toContain('--typecheck');
+    // Once over the union, and on a single runner: the check is target
+    // independent. Dropping this job would put `tsc` back inside all 11 variant
+    // jobs, which does not shorten the run (every leg grows by T_tsc and the
+    // longest leg sets the finish time) but costs 10x T_tsc of runner time and
+    // narrows coverage from the union down to per-variant.
+    expect(typecheckJob).toContain('union-typecheck:');
+    expect(typecheckJob).toContain('--drivers=all,kiwi,superset');
+    expect(typecheckJob).toContain('node scripts/ci-union-typecheck.mjs');
+    // It gates the build, or a broken union would ship untyped.
+    expect(releaseWorkflow).toContain('needs: [prepare-pro-extension, union-typecheck]');
+    // The union script must not compile anything — that is what the removed
+    // warmup did, and nothing needs it any more. Match code only: a prose
+    // comment may legitimately name cargo to explain why it is absent.
+    const unionScript = readFileSync(resolve(root, 'scripts/ci-union-typecheck.mjs'), 'utf-8');
+    const unionCode = unionScript
+      .split('\n')
+      .filter((line) => {
+        const t = line.trim();
+        return !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/*');
+      })
+      .join('\n');
+    expect(unionCode).not.toMatch(/\bcargo\b/);
+    expect(unionCode).not.toContain('--lib');
+    expect(unionCode).not.toContain('--target');
+    expect(unionCode).not.toContain("spawnSync('cargo'");
     // Local `pnpm build` must keep the typecheck.
     const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
     expect(pkg.scripts.build).toContain('tsc --noEmit');
     expect(pkg.scripts['build:bundle']).not.toContain('tsc --noEmit');
+  });
+
+  it('shares one copy of the private git driver SSH setup', () => {
+    // kiwi and superset are git drivers, so the union typecheck needs the deploy
+    // keys. An inline copy would drift — and a drifted insteadOf surfaces as
+    // "repository not found", not as a diff.
+    const setupScript = readFileSync(resolve(root, 'scripts/ci-setup-git-drivers.sh'), 'utf-8');
+    expect(setupScript).toContain('install_deploy_key KIWI_DEPLOY_KEY kiwi');
+    expect(setupScript).toContain('install_deploy_key SUPERSET_DEPLOY_KEY superset');
+    const sshStep = 'run: bash scripts/ci-setup-git-drivers.sh';
+    expect(typecheckJob).toContain(sshStep);
+    expect(typecheckJob).not.toContain('ssh-keyscan');
+  });
+
+  it('leaves the build job its own SSH setup, because Pro needs a third key', () => {
+    // Deliberately not folded into scripts/ci-setup-git-drivers.sh: that block
+    // also installs PRO_DEPLOY_KEY and re-adds insteadOf idempotently, so it is
+    // not the same work. Merging it is a Pro-extension change, not a build-time
+    // one — do it as its own commit with the Pro path tested.
+    expect(buildJob).toContain('PRO_DEPLOY_KEY:');
+    expect(buildJob).toContain('ssh-keyscan -t ed25519,rsa github.com');
   });
 
   it('builds the release profile and no longer selects a custom one', () => {
@@ -306,7 +335,8 @@ describe('Per-SKU updater channels', () => {
       'DataZen-0.2.2-windows-x64-portable.zip': 'keep',
       'DataZen-0.2.2-linux-x64.deb': 'keep',
       'DataZen-0.2.2-linux-x64.rpm': 'keep',
-      'DataZen-0.2.2-linux-x64.AppImage': 'keep',
+      // AppImages carry no platform segment (AppImage catalog naming).
+      'DataZen-0.2.2-x86_64.AppImage': 'keep',
       // Variants in either suffix position, including the portable zip.
       'DataZen-0.2.2-macos-arm64-all.tar.gz': 'skip',
       'DataZen-0.2.2-windows-x64-all.exe': 'skip',

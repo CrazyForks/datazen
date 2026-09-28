@@ -60,6 +60,18 @@ describe('upx-compress findTargetExecutables', () => {
     const exes = findTargetExecutables(tmpRoot, 'win32');
     expect(exes).toEqual([]);
   });
+
+  it('honours an explicit profile directory under the target triple', () => {
+    const root = mkdtempSync(join(tmpdir(), 'upx-profile-'));
+    const dir = join(root, 'target', 'x86_64-pc-windows-msvc', 'preview');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'DataZen.exe'), 'MZ');
+
+    // The default and an unrelated profile must not match it.
+    expect(findTargetExecutables(root, 'win32')).toEqual([]);
+    expect(findTargetExecutables(root, 'win32', 'release')).toEqual([]);
+    expect(findTargetExecutables(root, 'win32', 'preview')).toEqual([join(dir, 'DataZen.exe')]);
+  });
 });
 
 describe('upx-compress run', () => {
