@@ -11,6 +11,11 @@ DataZen 文档只保留两类长期有效内容：**当前功能使用文档**�
 | [development/](development/) | 开发、测试、发布、驱动开发流程 | 贡献者 |
 | [blogs/](blogs/) | 面向公开发布的架构文章 | 开发者 / 用户 |
 
+不在仓库内的目录：
+
+- `posts/` — 推广与发布文案（Product Hunt / V2EX / 头条 / 各版本发布说明）。已在 `.gitignore` 中，属一次性对外物料，不参与构建、不被 CI 校验。
+- 本地开发台账（子代理进度、缺陷清单）不落仓库：结论直接写进代码、测试与 `docs/` 正式文档。
+
 ## 功能文档
 
 - [Workflow](features/workflow-guide.zh-CN.md) / [English](features/workflow-guide.en.md)
@@ -18,6 +23,8 @@ DataZen 文档只保留两类长期有效内容：**当前功能使用文档**�
 - [Data Sync](features/data-sync-guide.zh-CN.md)
 - [Data Transfer](features/data-transfer-guide.zh-CN.md)
 - [Ops Dashboard](features/ops-dashboard-guide.zh-CN.md) / [English](features/ops-dashboard-guide.en.md)
+- [Tunnel](features/tunnel-guide.zh-CN.md)
+- [Query Builder](features/query-builder.md)（SQL Editor Pro 能力）
 
 功能文档描述当前 main 已实现的行为；如果某能力尚未实现，不在这里记录未来计划。
 
@@ -29,6 +36,7 @@ DataZen 文档只保留两类长期有效内容：**当前功能使用文档**�
 
 - [Drivers](architecture/backend/drivers.md)
 - [Services](architecture/backend/services.md)
+- [Tunnel](architecture/backend/tunnel.md)
 - [Commands](architecture/backend/commands.md)
 - [Cache](architecture/backend/cache.md)
 - [Store](architecture/backend/store.md)
@@ -72,11 +80,6 @@ DataZen 文档只保留两类长期有效内容：**当前功能使用文档**�
 - [Packaging](development/packaging.md)
 - [Updater](development/updater.md)
 - [GitHub Pages](development/github-pages.md)
-- [Subagent Dev Playbook](development/subagent-dev-playbook.md)（角色规程见 [subagent/](development/subagent/)）
-
-## 发布说明
-
-- [v0.2.0](release-notes/v0.2.0.md) / [GitHub](release-notes/v0.2.0-github.md) / [V2EX](release-notes/v0.2.0-v2ex.md)
 
 ## 公开架构文章
 
@@ -86,5 +89,7 @@ DataZen 文档只保留两类长期有效内容：**当前功能使用文档**�
 
 1. 文档中的文件路径、命令、IPC 名称和能力矩阵必须以 main 分支代码为准。
 2. 已实现功能写入 features；架构事实写入 architecture；开发流程写入 development。
-3. 临时实施计划、PRD、进度、Bug List 和评审记录不提交到长期文档索引。
-4. 删除或重构代码时，同步删除失效文档引用。
+3. 临时实施计划、PRD、设计稿、原型图、进度、Bug List 和评审记录不提交到长期文档索引。
+4. 设计提案不长期留在 `architecture/`：要么在 `architecture/` 落为「已实现」的事实文档，要么不入库。
+5. 对外发布文案写入本地 `posts/`，不提交。
+6. 删除或重构代码时，同步删除失效文档引用。

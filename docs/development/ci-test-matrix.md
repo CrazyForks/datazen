@@ -123,22 +123,63 @@ cargo test -p datazen-ai-api --lib
 - **All**：四平台 × 全部 path 驱动（**不进 PR CI** 的集成验证点）。
 - **Akulaku**：三平台（Windows / macOS）× 含 git 私有驱动；Secrets 在 GitHub Environment `release`。
 
-### 6.1 构建耗时优化：driver union 预热
+### 6.1 driver union 预热：已撤销（实测）
 
-11 个 variant job 共享 4 个 `(platform, target)` 组合，但**只有宿主 `datazen` lib 随
-driver feature 集变化**：driver crate 和第三方依赖在所有 variant 中源码与 features 完全一致。
-`warm-driver-deps` 因此在矩阵之前按 target 编译一次 **union**（`all,kiwi,superset`，
-即 basic / all / akulaku 的超集），把结果写进共享 cargo 缓存。
+**不要**在变体矩阵前加 `warm-driver-deps` 预热门。
 
-| 约定 | 说明 |
-| --- | --- |
-| 唯一写入者 | 只有 `warm-driver-deps` 写该缓存 key；`build` 全部 `save-if: false`。此前同 key 的 3 个 variant 竞争，只有最先结束（恒为最便宜的 basic）能落盘，缓存被永久钉死在 basic 上 |
-| 预热时机 | `rust-cache` 必须在 `with-driver-inject` **之前**（干净工作区），两个 job 的 key 才一致 |
-| 编译范围 | `--lib`：跳过每 variant 各不相同的 LTO 链接与 `generate_context!` 嵌入的 `dist/` |
-| Cargo profile | 统一 `ci-release`（`[profile.ci-release]`，thin LTO）；产物目录随之为 `target/<triple>/ci-release`，`upx-compress` 与 workflow 的路径读取同一 `DATAZEN_BUILD_PROFILE` |
-| 类型检查 | 预热 job 对 union 做一次 `tsc --noEmit`（是各 variant 的严格超集），variant job 以 `DATAZEN_CI_TYPECHECK_ONCE=1` 改用 `pnpm build:bundle`（codegen + Vite，不含 tsc） |
+曾存在这样一个 job：在 4 个 target 上各编一次 driver union（`all,kiwi,superset`）写进共享
+rust-cache，11 个 variant job 通过 `needs` 等它完成。技术前提是成立的——driver crate 和
+第三方依赖在所有 variant 中源码与 features 完全一致，只有宿主 `datazen` lib 随 driver
+feature 集变化。但实测证明它一分钱不省：
 
-本地 `pnpm build` / `pnpm tauri:build` 不受影响：仍用 `release` profile，仍做完整类型检查。
+| 指标 | 撤销前 `36286459429` | 撤销后 `36300831455` | 变化 |
+| --- | --- | --- | --- |
+| **总墙钟** | **34:47** | **56:12** | **+21:25 (+62%)** |
+| runner-minutes（所有 job 之和） | 186:50 | 251:54 | +65:04 (+35%) |
+| 11 个 build job 重活步骤合计 | 155:42 | 156:37 | +0:55 (+0.6%) |
+| build 阶段最长 leg | 33:45 | 31:52 | −1:53 |
+
+三条原因：
+
+1. **`needs` 是 job 级硬屏障。** 预热的 23:48 完全串行地加在关键路径上，没有任何东西与之
+   并行。`+23:48 − 1:53 = +21:55`，与实测的 `+21:25` 吻合：build 阶段本身的长度几乎没变，
+   预热是**净增**而非替换。
+2. **预热要暖的依赖闭包本来就是热的。** 两个 run 里 11 个 build job 的
+   `Cache Rust compilation` 恢复耗时**全部 > 5s**（命中；miss 约 1~2s）——`swatinem/rust-cache`
+   自 `9eb095728` 起已在工作。预热没有把任何一个 miss 变成 hit，因为没有 miss 可转。
+3. **真正占时间的部分预热在结构上碰不到。** 本地实测单个 variant 在热缓存之上的边际成本是
+   **lib codegen 5m29s + fat LTO 链接 12m07s ≈ 17m36s**。lib 按各自的 `--features driver-*`
+   编译；链接要把该 variant 的 `dist/` 嵌进二进制，且 fat LTO 要对所有 rlib 重跑一遍全程序
+   优化。两者都是 variant 特有的，预热只能命中「第三方依赖 + driver crate」这一段，而那一段
+   本就已经 100% 命中。
+
+> **教训**：评估任何缓存/预热优化之前，先量被优化那一侧在优化**之前**的 cache 恢复耗时。
+> 用「应该会 miss」代替「量一下是不是 miss」，会做出一个 21 分钟的负优化。
+
+撤销预热时必须**同时**去掉 build job 上的 `save-if: false`：预热曾是该 cache key 的唯一写入者，
+留着这行就变成无人写入，条目会在 7 天闲置后被 GitHub 逐出，之后每次发版都静默退回冷编译。
+
+### 6.2 union 类型检查：保留
+
+`union-typecheck` 是独立的一个 job，对 union（`all,kiwi,superset`，即 basic / all / akulaku
+的超集）做**一次** `tsc --noEmit`。11 个 variant job 通过 workflow 级
+`DATAZEN_CI_TYPECHECK_ONCE=1` 跳过自己的 tsc，改走 `pnpm build:bundle`（codegen + Vite）。
+
+单列一个 job 的理由是它与 target 无关：一条 runner 就能覆盖全部 4 个
+`(platform, target)` 组合，放在预热里则要么重复 4 次，要么落在最慢那条的关键路径上。
+
+**它不拖慢整条 run。** 把 tsc 放回 11 个 variant job 看似「去掉一个串行前缀」，但那样每个
+job 都长 `T_tsc`，而结束时间取最长那条 leg：墙钟同样 +`T_tsc`，runner 时间反而多
+`10 × T_tsc`，且覆盖面从 union 缩回各自的 variant。保留是严格更优。唯一前提是它必须继续
+`needs` 进 `build`——否则等于给发版摘掉了类型检查。
+
+### 6.3 不要用环境变量加回 thin LTO
+
+没有 `--profile` 不代表改不动：`tauri build` 会把环境传给它的 cargo 子进程，而 cargo 认
+`CARGO_PROFILE_RELEASE_LTO=thin` / `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`（已在隔离工程上
+验证 rustc 确实收到 `-C lto=thin`）。这是一条真实存在的逃生口，本仓库**主动选择不走**：
+`[profile.release]` 的 `opt-level = "z"` + fat LTO 是为压体积设的，thin LTO 会让发版二进制
+变大且幅度未实测。需要时先量体积。
 
 ## 7. 相关文档
 

@@ -8,7 +8,7 @@ Services 是 DataZen backend 中复用性的运行时服务层，不承担 Tauri
 
 | 服务 | 位置 | 职责 |
 |---|---|---|
-| ConnectionManager | `connection_manager.rs` | Driver 选择、连接建立、session 生命周期、引用计数、idle eviction、SSH tunnel |
+| ConnectionManager | `connection_manager.rs` | Driver 选择、连接建立、session 生命周期、引用计数、idle eviction、隧道解析（`resolve_tunnel_ref` / `maybe_start_tunnel`） |
 | QueryExecutor | `query_executor.rs` | 查询执行相关的参数、过滤、排序和执行辅助 |
 | DbTools | `db_tools.rs` | 数据库工具类复用能力 |
 | JobRegistry | `job_registry.rs` | 长任务/job 生命周期和取消注册 |
@@ -18,8 +18,8 @@ Services 是 DataZen backend 中复用性的运行时服务层，不承担 Tauri
 
 DataZen 明确区分：
 
-- `connectionId)：持久化连接配置 ID。
-- `dbSessionId)：运行时数据库 session ID。
+- `connectionId`：持久化连接配置 ID。
+- `dbSessionId`：运行时数据库 session ID。
 
 ```text
 connectionId
@@ -34,6 +34,8 @@ dbSessionId
 ```
 
 Schema Diff、Data Sync、Data Transfer 使用 dedicated session，避免共享主工作区的 database selection 或事务状态。
+
+连接建立时先解析隧道再创建 driver：配置若带 `tunnel_id`，`resolve_tunnel_ref` 会从 `tunnels.json` 还原为内联的 `tunnel_kind` + 各类隧道参数；随后 `maybe_start_tunnel` 在本机监听回环端口并把 driver 看到的 host/port 改写为该回环地址。四种隧道类型（直连 / SSH / HTTP CONNECT / WebSocket）的差异对 driver 不可见。详见 [tunnel.md](tunnel.md)。
 
 ## 3. Query execution
 

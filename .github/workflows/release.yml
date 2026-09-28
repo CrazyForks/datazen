@@ -10,7 +10,7 @@ on:
 permissions: {}
 
 # One release at a time. Two overlapping tag pushes would otherwise compile the
-# same driver union twice over the same runner pool.
+# same driver set twice over the same runner pool.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -21,7 +21,7 @@ concurrency:
 # be selected through `tauri build` at all.
 #
 # DATAZEN_CI_TYPECHECK_ONCE=1 drops `tsc --noEmit` from the per-variant frontend
-# build: warm-driver-deps typechecks the union driver set once, which is a
+# build: `union-typecheck` typechecks the union driver set once, which is a
 # strict superset of what each variant would have checked.
 env:
   DATAZEN_KEYRING: file
@@ -117,43 +117,24 @@ jobs:
           retention-days: 1
 
   # ── Driver union warmup: compile every driver ONCE per target ──
-  # The variant matrix is 11 jobs over 4 (platform, target) pairs, and each
-  # variant has its own Cargo feature set — but only the host `datazen` lib
-  # actually differs. The driver crates and every third-party dependency are
-  # identical across variants, so this job builds the union
-  # (all path drivers + the two git drivers the Akulaku SKU needs) and leaves it
-  # in the shared rust-cache. Each variant job then rebuilds only the host lib,
-  # links, builds its own Vite bundle and packages.
+  # The union typecheck, once, on a single runner.
   #
-  # This job is the ONLY writer of that cache key. Previously all variant jobs
-  # on a target shared one key, and since actions/cache keeps a single entry per
-  # key only the first job to finish could save — which is always the cheapest
-  # variant (`basic`, 4 drivers). The cache therefore stayed pinned at basic
-  # forever, and `-all` recompiled its 11 extra driver crates on every release.
-  # The build jobs below restore with `save-if: false` so the warmup stays the
-  # sole writer and the cache cannot regress.
-  warm-driver-deps:
-    runs-on: ${{ matrix.platform }}
-    # Deploy Keys for the private git drivers live in Environment "release".
+  # The build matrix skips `tsc --noEmit` via DATAZEN_CI_TYPECHECK_ONCE=1, so
+  # this is the only thing standing between a release and a driver set that does
+  # not typecheck — it gates `build` for that reason. It is target independent,
+  # so one runner covers all four (platform, target) pairs.
+  #
+  # Dropping this job would put `tsc` back inside all 11 variant jobs: the wall
+  # clock would not improve (every job would just be T_tsc slower, and the
+  # longest leg sets the run's finish time), but runner-minutes would go UP by
+  # 10x T_tsc and coverage would drop from the union down to per-variant.
+  union-typecheck:
+    runs-on: ubuntu-22.04
+    # Deploy Keys for the private git drivers live in Environment "release" —
+    # kiwi and superset are part of the union this job has to typecheck.
     environment: release
     permissions:
       contents: read
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows-latest
-            target: x86_64-pc-windows-msvc
-          - platform: macos-latest
-            target: aarch64-apple-darwin
-          - platform: macos-latest
-            target: x86_64-apple-darwin
-          - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - uses: actions/checkout@v5
@@ -169,100 +150,23 @@ jobs:
           node-version: 24
           cache: 'pnpm'
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install Linux system deps (Tauri / webkit2gtk)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            curl \
-            file \
-            libxdo-dev \
-            pkg-config \
-            libglib2.0-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            patchelf \
-            libfuse2
-
-      # Must stay byte-identical to the build job's cache step: same
-      # shared-key, and it runs on a clean (un-injected) tree so the
-      # Cargo.toml hash in the key matches.
-      - name: Cache Rust compilation
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-          shared-key: ${{ matrix.target }}
-          cache-workspace-crates: true
-          cache-on-failure: true
-
       - name: Setup SSH for private git drivers
         shell: bash
         env:
           KIWI_DEPLOY_KEY: ${{ secrets.KIWI_DEPLOY_KEY }}
           SUPERSET_DEPLOY_KEY: ${{ secrets.SUPERSET_DEPLOY_KEY }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
-          chmod 644 ~/.ssh/known_hosts
+        run: bash scripts/ci-setup-git-drivers.sh
 
-          touch ~/.ssh/config
-          chmod 600 ~/.ssh/config
-
-          if [ -n "${KIWI_DEPLOY_KEY:-}" ]; then
-            printf '%s\n' "$KIWI_DEPLOY_KEY" > ~/.ssh/datazen_kiwi
-            chmod 600 ~/.ssh/datazen_kiwi
-            printf '%s\n' \
-              'Host github.com-kiwi' \
-              '  HostName github.com' \
-              '  User git' \
-              '  IdentityFile ~/.ssh/datazen_kiwi' \
-              '  IdentitiesOnly yes' \
-              >> ~/.ssh/config
-            git config --global --add url."git@github.com-kiwi:flyxl/datazen-driver-kiwi.git".insteadOf "https://github.com/flyxl/datazen-driver-kiwi.git"
-            git config --global --add url."git@github.com-kiwi:flyxl/datazen-driver-kiwi.git".insteadOf "https://github.com/flyxl/datazen-driver-kiwi"
-          fi
-
-          if [ -n "${SUPERSET_DEPLOY_KEY:-}" ]; then
-            printf '%s\n' "$SUPERSET_DEPLOY_KEY" > ~/.ssh/datazen_superset
-            chmod 600 ~/.ssh/datazen_superset
-            printf '%s\n' \
-              'Host github.com-superset' \
-              '  HostName github.com' \
-              '  User git' \
-              '  IdentityFile ~/.ssh/datazen_superset' \
-              '  IdentitiesOnly yes' \
-              >> ~/.ssh/config
-            git config --global --add url."git@github.com-superset:flyxl/datazen-driver-superset.git".insteadOf "https://github.com/flyxl/datazen-driver-superset.git"
-            git config --global --add url."git@github.com-superset:flyxl/datazen-driver-superset.git".insteadOf "https://github.com/flyxl/datazen-driver-superset"
-          fi
-
-      # resolve-drivers imports the fflate chain from resolve-pro at module
-      # load, so node_modules is still required — but this job never runs a
-      # lifecycle script or a Vite build, so the install stays minimal.
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      # `all,kiwi,superset` is the superset of basic / all / akulaku.
-      # --typecheck replaces the 11 per-variant `tsc --noEmit` passes the
-      # build jobs skip via DATAZEN_CI_TYPECHECK_ONCE=1.
-      - name: Compile the driver union
-        run: node scripts/with-driver-inject.mjs --drivers=all,kiwi,superset -- node scripts/ci-driver-warmup.mjs --target=${{ matrix.target }} --typecheck
+      - name: Typecheck the driver union
+        run: node scripts/with-driver-inject.mjs --drivers=all,kiwi,superset -- node scripts/ci-union-typecheck.mjs
 
   build:
     # Secrets (Deploy Keys, Windows signing) live in Environment "release"
-    # — see docs/development/ci-private-plugins.md
-    needs: [prepare-pro-extension, warm-driver-deps]
+    # — see docs/development/ci-private-drivers.md
+    needs: [prepare-pro-extension, union-typecheck]
     environment: release
     permissions:
       contents: write
@@ -413,11 +317,13 @@ jobs:
           shared-key: ${{ matrix.target }}
           # Retain workspace driver artifacts alongside dependency artifacts.
           # Cargo checks fingerprints and rebuilds changed inputs/features.
-          # Read-only: warm-driver-deps owns this key. Letting every variant
-          # save is what pinned the cache to whichever job finished first.
+          # Every variant saves: actions/cache keeps one entry per key, so the
+          # job that finishes last wins and the others' save is a no-op. That is
+          # the same race a dedicated warmup used to lose deterministically, but
+          # the entry it produced was never read — all 11 build jobs already
+          # restored a warm closure from the previous run (see §6.1).
           cache-workspace-crates: true
           cache-on-failure: true
-          save-if: false
 
       # Git-driver & Pro extension SKUs: read-only Deploy Keys for private repos.
       # Public key exposure is harmless; private keys must stay in Environment secrets.
@@ -865,14 +771,24 @@ jobs:
         id: release-notes
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          NOTES_FILE="docs/release-notes/${TAG}-github.md"
-          if [ -f "$NOTES_FILE" ]; then
+          TAG="${GITHUB_REF_NAME}"            # e.g. v0.2.2
+          VERSION="${TAG#v}"                  # e.g. 0.2.2
+          NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
+          # Per-release prose is promotional material and is NOT committed (it lives
+          # in the local, gitignored `posts/`). The release body is therefore the
+          # matching CHANGELOG.md section — the only committed source of truth.
+          awk -v ver="${VERSION//./\\.}" '
+            $0 ~ "^## \\[" ver "\\]"  { found=1; next }
+            found && /^## \[/        { exit }
+            found                    { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+
+          if [ -s "$NOTES_FILE" ]; then
             echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
-            echo "✅ Found release notes: $NOTES_FILE"
+            echo "✅ Release body from CHANGELOG.md [$VERSION]"
           else
-            echo "⚠️ No release notes found at $NOTES_FILE, release body will be empty"
             echo "path=" >> "$GITHUB_OUTPUT"
+            echo "⚠️ No CHANGELOG.md section for [$VERSION], falling back to auto-generated notes"
           fi
 
       - name: Upload artifacts to release
@@ -883,6 +799,7 @@ jobs:
           draft: true
           files: artifacts/*
           body_path: ${{ steps.release-notes.outputs.path || '' }}
+          generate_release_notes: ${{ steps.release-notes.outputs.path == '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -1,10 +1,11 @@
 /**
  * [tester] Reference-integrity journeys for the tunnel source state machine.
  *
- * Independent verification of `design-plans/saved-tunnel-management.md` G3 / P1-8
- * and of the async-load race the Coder's own suite does not exercise: an existing
- * connection is hydrated with `tunnelId` while the app-wide tunnel-summary store
- * is still loading, has failed, or has since changed.
+ * Independent verification of the saved-tunnel reference invariants described in
+ * docs/architecture/backend/tunnel.md, and of the async-load race the happy-path
+ * suite does not exercise: an existing connection is hydrated with `tunnelId`
+ * while the app-wide tunnel-summary store is still loading, has failed, or has
+ * since changed.
  *
  * These tests run against the **real** `tunnelStore` (only the IPC layer is
  * mocked), so store/state-machine integration is exercised end to end.

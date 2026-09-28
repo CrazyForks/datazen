@@ -33,21 +33,22 @@ src/windows/connection/
 ├── SqlConnectionView.tsx       # SQL 连接 UI
 ├── DocumentConnectionView.tsx  # 文档型连接 UI
 └── schema-tree/
-    ├── SchemaTree.tsx
-    └── UnifiedSchemaTree.tsx
+    ├── schemaTreeCategories.ts  # 分类定义与驱动 → 分类映射
+    ├── schemaTreeDrag.ts        # 行拖拽编排
+    └── useExpandedDbCacheRefresh.ts # 展开库时的表缓存刷新
 ```
 
 ### 1.3 DB_REGISTRY 行为标志
 
-| 字段 | 用途 |
-|------|------|
-| `connectionView` | 路由到 `CONNECTION_VIEWS`（sql / keyvalue / document） |
-| `connectionForm` | 路由到连接表单 Fields 组件（standard / kiwi / file / index） |
-| `sqlDialect` | 路由到 `sqlDialects/` 策略 |
-| `hasMultiDatabase` | 驱动**能力**标志。`UnifiedSchemaTree` 内部通过 `isSingleDbMode` 切换单库/多库渲染 |
-| `databaseFieldType` | `name` / `path` / `index` / `domain`（Kiwi 实例域名） |
-| `defaultPageSize` | 覆盖默认分页（如 Kiwi 1000 行） |
-| `supportsBackup` | BackupWindow 过滤 + 方言备份选项 |
+| 字段                | 用途                                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------------- |
+| `connectionView`    | 路由到 `CONNECTION_VIEWS`（sql / keyvalue / document）                                              |
+| `connectionForm`    | 路由到连接表单 Fields 组件（standard / kiwi / file / index）                                        |
+| `sqlDialect`        | 路由到 `sqlDialects/` 策略                                                                          |
+| `hasMultiDatabase`  | 驱动**能力**标志。连接树通过 `navigator/utils.ts` 的 `shouldUseMultiDatabaseTree` 切换单库/多库渲染 |
+| `databaseFieldType` | `name` / `path` / `index` / `domain`（Kiwi 实例域名）                                               |
+| `defaultPageSize`   | 覆盖默认分页（如 Kiwi 1000 行）                                                                     |
+| `supportsBackup`    | BackupWindow 过滤 + 方言备份选项                                                                    |
 
 ### 1.4 添加新 DB 类型检查清单
 
@@ -65,10 +66,10 @@ src/windows/connection/
 
 主题包与数据库驱动**不共享**安装路径或注册表：
 
-| | 数据库驱动 | 主题包 |
-|---|---------|--------|
+|      | 数据库驱动                                                            | 主题包                                                                                      |
+| ---- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | 路径 | `packages/drivers/<id>/`（path 已提交；git 构建时 clone，gitignored） | Wapp 包内 `contributes.themes[]` 声明（运行时安装到 `{appData}/wapps/{publisher}.{name}/`） |
-| 注册 | `drivers-registry.json` + `DB_REGISTRY` | 文件系统 + `manifest.json` |
-| 扩展 | Rust crate + 前端 meta | CSS / JSON / SVG\|PNG\|WebP / 字体（无 JS） |
+| 注册 | `drivers-registry.json` + `DB_REGISTRY`                               | 文件系统 + `manifest.json`                                                                  |
+| 扩展 | Rust crate + 前端 meta                                                | CSS / JSON / SVG\|PNG\|WebP / 字体（无 JS）                                                 |
 
 驱动在无主题包（`packId: null`）下正常工作；主题包可覆盖 `db.<type>` 图标与 `--dt-*`（含 `--dt-binary`）DataTable 单元格色，但不改变驱动协议。Redis 深度 UI 位于 `packages/drivers/redis/ui/`（非 Host `src/windows/connection/`）。
