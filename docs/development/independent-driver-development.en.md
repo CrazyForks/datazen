@@ -188,7 +188,7 @@ Driver frontend code may **only** import:
 
 | Source | Provides |
 | --- | --- |
-| `@datazen/ui` | Base components (`Button` / `Input` / `Select` / `Dialog` / `Tabs` / `Badge` / `Label` / `Slider` / `TemporalValueInput` / `PathInput`), `cn`, the i18n runtime (`t` / `useI18n`, …) |
+| `@datazen/ui` | Base components (`Button` / `Input` / `Select` / `Dialog` / `Tabs` / `Badge` / `Label` / `Slider` / `TemporalValueInput` / `PathInput`), `cn`, the i18n runtime (`t` / `useI18n`, …). `PathInput` is a pure view: when you use it you **must** pass the host picker in — `onBrowse={form.pickPath}` — the control never opens a native dialog by itself |
 | `@datazen/driver-sdk` | Metadata/dialect contracts such as `DatabaseTypeMeta`, sunk-down shared types (`ConnectionFormState`, `KeyEntry`, `NativeMenuItemDef`, `ConnectionViewProps`, …), Command IPC wrappers (`driverCommands` / `fileCommands`), pure helpers, the context-menu API, and the injection bridges `useBound*` (see 6.2) |
 | `@datazen/extension-points` | EP contract types only; ordinary database drivers normally do not need it |
 | npm dependencies | Third-party packages declared by the driver repository itself (e.g. `react`) |

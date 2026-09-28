@@ -41,6 +41,17 @@
  *       than being papered over with new exemptions. Flip `blocking` in
  *       `RULES.R3` once that ruling lands.
  *
+ *   R4  The shared design system must stay host-free and runtime-free.
+ *       Scans **every string literal** in `packages/ui/**`: no
+ *       `@tauri-apps/*` plugin, no `zustand`, and no relative climb into the
+ *       host `src/**`, a driver package or a sibling DataZen package.
+ *       `@datazen/ui` is bundled by the host, by every driver and by every
+ *       extension, several of which run without a Tauri webview — a host
+ *       runtime imported from a primitive breaks all of them at once, and the
+ *       existing rules could not see it: R1 only covers `packages/drivers/**`,
+ *       R2 only looks for `setLocale()`, R3 only looks at `src/**`. This rule
+ *       is what the `PathInput` → `@tauri-apps/plugin-dialog` import tripped.
+ *
  * Exemptions live in `ALLOWLIST` below: exact `(rule, file, specifier)` triples
  * with a reason and the milestone that owns them — no directory or glob
  * wildcards. Entries that stop matching (file gone, or violation fixed) are
@@ -66,23 +77,10 @@ import { execFileSync } from 'child_process';
 import { readdirSync, existsSync, readFileSync } from 'fs';
 import { dirname, join, posix, relative, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
+import { scanCode } from './lib/scanSourceCode.mjs';
+import { SCAN_EXTENSIONS, SKIP_DIR_NAMES } from './lib/scanTargets.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-
-/** Source files the boundary rules speak to (never `.rs`, `.css`, `.md`, …). */
-export const SCAN_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
-
-/** Vendored / generated directories that are not authored source. */
-export const SKIP_DIR_NAMES = new Set([
-  'node_modules',
-  'dist',
-  'build',
-  'coverage',
-  'target',
-  '.git',
-  '.turbo',
-  '__snapshots__',
-]);
 
 /**
  * Gitignored codegen. `src/extensions/generated*.ts` is the *sanctioned* place
@@ -97,6 +95,38 @@ export const SKIPPED_CODEGEN_FILES = new Set([
 
 export const HOST_SRC_DIR = 'src';
 export const DRIVER_DIR = 'packages/drivers';
+/**
+ * Shared design system. Every driver, extension and the host itself bundle
+ * `@datazen/ui`, so a host-only runtime that leaks in here breaks *all*
+ * consumers at once (and the ones that run without a Tauri webview break
+ * hardest). R4 is what keeps that package a leaf: it may depend on React and
+ * on itself, on nothing else that the host owns.
+ */
+export const UI_DIR = 'packages/ui';
+/**
+ * Bare specifier prefixes that only make sense inside a Tauri webview, against
+ * a host-owned store, or above the design system in the dependency graph. They
+ * are matched as prefixes (not exact names) so a newly published
+ * `@tauri-apps/plugin-*` is covered the day it appears.
+ *
+ * Kept in sync with the `packages/ui` entry of `LAYER_RULES` in
+ * `check-module-layers.mjs`. "Kept in sync" is a statement about these two
+ * lists, not a safety net: the two guards are deliberately redundant, and
+ * neither is a fallback for the other. If R4 is deleted from this script, this
+ * one goes quiet while the other keeps working, and vice versa — the protection
+ * against that is the mutation tests in `scripts/__tests__/`, not the other
+ * script. What the two guards *do* share is the scan-target set
+ * (`scripts/lib/scanTargets.mjs`) and the tokenizer, so they cannot drift on
+ * *which files* or *how* they are read — only on rule logic, which the tests
+ * cover.
+ */
+export const R4_FORBIDDEN_PACKAGES = [
+  '@tauri-apps/',
+  'zustand',
+  '@datazen/driver-sdk',
+  '@datazen/wapp-sdk',
+  '@datazen/extension-points',
+];
 /**
  * Owner package of the single i18n runtime (§2.4.1). R2 exempts **only** the
  * definition file and that file's own unit test — never the rest of the
@@ -132,6 +162,12 @@ export const RULES = {
     blocking: false,
     doc: 'docs/development/driver-api-dependency-boundary.md §2.2',
   },
+  R4: {
+    id: 'R4',
+    name: 'shared design system must stay host-free and runtime-free',
+    blocking: true,
+    doc: 'docs/architecture/frontend/components.md §9',
+  },
 };
 
 /**
@@ -146,7 +182,8 @@ export const ALLOWLIST = [
     specifier: '../../../../../src/components/ui/WebContextMenu',
     reason:
       'driver↔host integration fixture: renders the real host WebContextMenuHost to prove showNativeContextMenu() lands in the host web menu',
-    milestone: 'Wave 4 import-guard (coordinator ruling); remove when the host menu mount is contributed via an SDK bridge',
+    milestone:
+      'Wave 4 import-guard (coordinator ruling); remove when the host menu mount is contributed via an SDK bridge',
   },
   {
     rule: 'R1',
@@ -154,186 +191,14 @@ export const ALLOWLIST = [
     specifier: '../../../../../src/stores/contextMenuStore',
     reason:
       'same fixture asserts against the host contextMenuStore (importing it is what triggers bindContextMenuBridge)',
-    milestone: 'Wave 4 import-guard (coordinator ruling); remove together with the WebContextMenuHost exemption above',
+    milestone:
+      'Wave 4 import-guard (coordinator ruling); remove together with the WebContextMenuHost exemption above',
   },
 ];
 
 /** POSIX-relative repo path for messages and allow-list matching. */
 function toPosix(p) {
   return p.split(sep).join('/');
-}
-
-const REGEX_ALLOWED_AFTER = new Set([
-  '',
-  '(',
-  ',',
-  '=',
-  ':',
-  ';',
-  '!',
-  '&',
-  '|',
-  '?',
-  '{',
-  '[',
-  '+',
-  '-',
-  '*',
-  '%',
-  '~',
-  '^',
-  '<',
-  '>',
-  '}',
-]);
-
-/**
- * Single-pass tokenizer used by every rule:
- *  - `code`: the source with comments **and string-literal bodies** blanked to
- *    spaces (line breaks preserved) → safe to lint call syntax line by line
- *    without tripping on prose or on a path inside a string;
- *  - `literals`: every static string/template literal with its start line →
- *    the complete import-specifier surface (R1/R3).
- *
- * Escapes, regex literals (`/["']/` must not open a string) and nested template
- * expressions are handled well enough for linting purposes: an ambiguous case
- * degrades to "treat as code", never to a swallowed region.
- *
- * @param {string} source
- * @returns {{ code: string, literals: Array<{ value: string, line: number }> }}
- */
-export function scanCode(source) {
-  const out = source.split('');
-  const literals = [];
-  const n = source.length;
-  let line = 1;
-  let i = 0;
-  let prev = ''; // last significant char outside strings/comments
-
-  const blank = (from, to) => {
-    for (let k = from; k < to && k < n; k += 1) if (out[k] !== '\n') out[k] = ' ';
-  };
-
-  while (i < n) {
-    const ch = source[i];
-    if (ch === '\n') {
-      line += 1;
-      i += 1;
-      continue;
-    }
-    if (ch === '/' && source[i + 1] === '/') {
-      const start = i;
-      while (i < n && source[i] !== '\n') i += 1;
-      blank(start, i);
-      continue;
-    }
-    if (ch === '/' && source[i + 1] === '*') {
-      const start = i;
-      i += 2;
-      while (i < n && !(source[i] === '*' && source[i + 1] === '/')) {
-        if (source[i] === '\n') line += 1;
-        i += 1;
-      }
-      i = Math.min(i + 2, n);
-      blank(start, i);
-      continue;
-    }
-    if (ch === '/' && REGEX_ALLOWED_AFTER.has(prev)) {
-      // Regex literal: consume it so quotes inside it are not read as strings.
-      i += 1;
-      let inClass = false;
-      while (i < n) {
-        const c = source[i];
-        if (c === '\n') break; // unterminated → bail, keep scanning as code
-        if (c === '\\') {
-          i += 2;
-          continue;
-        }
-        if (c === '[') inClass = true;
-        else if (c === ']') inClass = false;
-        else if (c === '/' && !inClass) {
-          i += 1;
-          break;
-        }
-        i += 1;
-      }
-      while (i < n && /[dgimsuvy]/.test(source[i])) i += 1;
-      prev = '/';
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      const start = i;
-      const startLine = line;
-      const quote = ch;
-      i += 1;
-      let value = '';
-      let terminated = false;
-      while (i < n) {
-        const c = source[i];
-        if (c === '\n') break; // JS strings do not span lines: treat as unterminated
-        if (c === '\\') {
-          value += c + (source[i + 1] ?? '');
-          i += 2;
-          continue;
-        }
-        if (c === quote) {
-          terminated = true;
-          i += 1;
-          break;
-        }
-        value += c;
-        i += 1;
-      }
-      if (terminated) {
-        literals.push({ value, line: startLine });
-        blank(start, i);
-      }
-      prev = quote;
-      continue;
-    }
-    if (ch === '`') {
-      const start = i;
-      const startLine = line;
-      i += 1;
-      let value = '';
-      let dynamic = false;
-      let terminated = false;
-      let depth = 0;
-      while (i < n) {
-        const c = source[i];
-        if (c === '\\') {
-          value += source[i + 1] ?? '';
-          i += 2;
-          continue;
-        }
-        if (depth === 0 && c === '`') {
-          terminated = true;
-          i += 1;
-          break;
-        }
-        if (c === '$' && source[i + 1] === '{') {
-          dynamic = true;
-          depth += 1;
-          i += 2;
-          continue;
-        }
-        if (c === '{' && depth > 0) depth += 1;
-        if (c === '}' && depth > 0) depth -= 1;
-        if (c === '\n') line += 1;
-        value += c;
-        i += 1;
-      }
-      // `${…}` templates carry computed specifiers: not statically checkable.
-      if (terminated && !dynamic) literals.push({ value, line: startLine });
-      blank(start, i);
-      prev = '`';
-      continue;
-    }
-    if (!/\s/.test(ch)) prev = ch;
-    i += 1;
-  }
-
-  return { code: out.join(''), literals };
 }
 
 /**
@@ -355,7 +220,36 @@ export function rulesForFile(rel) {
   if (rel.startsWith(`${DRIVER_DIR}/`)) rules.push(RULES.R1);
   if (rel.startsWith('packages/') && !R2_FILE_CARVEOUTS.has(rel)) rules.push(RULES.R2);
   if (rel.startsWith(`${HOST_SRC_DIR}/`)) rules.push(RULES.R3);
+  if (rel.startsWith(`${UI_DIR}/`)) rules.push(RULES.R4);
   return rules;
+}
+
+/**
+ * Does this specifier reach outside the design system?
+ *
+ *  - a bare prefix from {@link R4_FORBIDDEN_PACKAGES} (Tauri plugins, zustand);
+ *  - or a relative climb out of `packages/ui/` — into the host `src/`, into a
+ *    driver package, or into a sibling DataZen package. Sibling climbs are
+ *    included on purpose: the design system is the shared *leaf*, so even a
+ *    "harmless" `@datazen/driver-sdk` type import would invert the layering
+ *    every other package is built on.
+ *
+ * @param {string} rel repo-relative POSIX path of the importing file
+ * @param {string} specifier
+ * @returns {string|null} human-readable reason, or null when the specifier is fine
+ */
+export function uiPurityBreach(rel, specifier) {
+  const bare = R4_FORBIDDEN_PACKAGES.find((p) => specifier.startsWith(p));
+  if (bare) return `imports the host-only runtime package '${bare}…'`;
+  const target = resolveSpecifier(rel, specifier);
+  if (!target) return null;
+  if (target === HOST_SRC_DIR || target.startsWith(`${HOST_SRC_DIR}/`)) {
+    return `reaches into the host ${target}`;
+  }
+  if (target.startsWith('packages/') && !target.startsWith(`${UI_DIR}/`)) {
+    return `reaches outside the design system (${target})`;
+  }
+  return null;
 }
 
 /** Typed parameter list (`name:`) or `function setLocale(` ⇒ declaration, not a call. */
@@ -425,6 +319,24 @@ export function inspectSource(rel, source) {
           text: at(line),
           specifier: value,
           detail: `reaches into driver internals (${target})`,
+        });
+      }
+    }
+
+    if (rule === RULES.R4) {
+      // Same literal surface as R1/R3 — plain, dynamic, `require()` and
+      // `vi.mock()` shapes alike — so a Tauri import cannot hide behind the
+      // keyword in front of it.
+      for (const { value, line } of literals) {
+        const detail = uiPurityBreach(rel, value);
+        if (!detail) continue;
+        findings.push({
+          rule,
+          file: rel,
+          line,
+          text: at(line),
+          specifier: value,
+          detail,
         });
       }
     }
@@ -595,7 +507,9 @@ export function checkDriverImportBoundaries(opts = {}) {
   }
   for (const finding of advisory) {
     const note = finding.external ? ` · ${EXTERNAL_ADVISORY_NOTE}` : '';
-    log(`${tag} ${finding.rule.id} (advisory) ${finding.file}:${finding.line}: ${finding.detail}${note}`);
+    log(
+      `${tag} ${finding.rule.id} (advisory) ${finding.file}:${finding.line}: ${finding.detail}${note}`,
+    );
   }
   for (const { entry, fileMissing } of expired) {
     const why = fileMissing
@@ -610,7 +524,7 @@ export function checkDriverImportBoundaries(opts = {}) {
     error(
       `${tag} FAILED: ${blocked.length} violation(s)${expired.length ? ` + ${expired.length} expired exemption(s)` : ''} (${scanned}${advisoryNote})`,
     );
-    for (const ruleId of ['R1', 'R2']) {
+    for (const ruleId of ['R1', 'R2', 'R4']) {
       if (blocked.some((f) => f.rule.id === ruleId)) error(`    see ${RULES[ruleId].doc}`);
     }
     return 1;
