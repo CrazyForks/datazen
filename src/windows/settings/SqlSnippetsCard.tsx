@@ -227,7 +227,7 @@ export function SqlSnippetsCard({ settings, onUpdateSnippets }: Readonly<SqlSnip
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 w-7 p-0 text-destructive/80 hover:text-destructive"
+                    className="h-7 w-7 p-0 text-danger/80 hover:text-danger"
                     data-testid={`delete-snippet-${item.id}`}
                     onClick={() => handleDeleteSnippet(item)}
                     title={t('common.delete')}

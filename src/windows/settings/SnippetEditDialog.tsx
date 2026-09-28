@@ -106,14 +106,12 @@ export function SnippetEditDialog({
       }
     >
       <div className="space-y-4 py-2">
-        {error && (
-          <div className="rounded-md bg-destructive/15 p-2 text-xs text-destructive">{error}</div>
-        )}
+        {error && <div className="rounded-md bg-danger/15 p-2 text-xs text-danger">{error}</div>}
 
         <div className="space-y-1.5">
           <div className="text-xs font-medium text-fg-secondary">
             <label htmlFor="snippet-prefix">
-              {t('query.snippets.prefix')} <span className="text-destructive">*</span>
+              {t('query.snippets.prefix')} <span className="text-danger">*</span>
             </label>
             <SettingHint label={t('query.snippets.prefix')} text={t('query.snippets.prefixHint')} />
           </div>
@@ -146,7 +144,7 @@ export function SnippetEditDialog({
         <div className="space-y-1.5">
           <div className="text-xs font-medium text-fg-secondary">
             <label htmlFor="snippet-template">
-              {t('query.snippets.template')} <span className="text-destructive">*</span>
+              {t('query.snippets.template')} <span className="text-danger">*</span>
             </label>
             <SettingHint
               label={t('query.snippets.template')}

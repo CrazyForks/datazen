@@ -10,6 +10,7 @@ import {
   type WebSocketTunnelFieldsValue,
 } from '../../components/connection/tunnelFieldContracts';
 import { Button } from '../../components/ui/Button';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
 import { Dialog } from '../../components/ui/Dialog';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
@@ -290,14 +291,14 @@ export function TunnelEditDialog({ open, tunnelId, onClose, onSaved }: TunnelEdi
         )}
 
         {hint ? (
-          <p role="alert" className="text-xs text-red-400" data-testid="tunnel-edit-hint">
+          <ErrorBanner as="p" data-testid="tunnel-edit-hint">
             {hint}
-          </p>
+          </ErrorBanner>
         ) : null}
         {errorText ? (
-          <p role="alert" className="text-xs text-red-400" data-testid="tunnel-edit-error">
+          <ErrorBanner as="p" data-testid="tunnel-edit-error">
             {errorText}
-          </p>
+          </ErrorBanner>
         ) : null}
       </div>
     </Dialog>

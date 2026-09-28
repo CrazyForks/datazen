@@ -33,6 +33,7 @@ import { ChartView } from '../../components/chart/ChartView';
 import { WorkflowChatPanel } from '../../components/ai/WorkflowChatPanel';
 import { isChartableResult } from '../../lib/chart/fieldInference';
 import { Button } from '../../components/ui/Button';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
 import { Select } from '../../components/ui/Select';
 import { LocaleDomainLoading } from '../../components/LocaleDomainLoading';
 import { useResizable } from '../../hooks/useResizable';
@@ -771,21 +772,15 @@ export function WorkflowPage({
             </p>
           )}
           {operationError && (
-            <div
-              role="alert"
-              className="flex items-start gap-2 border-b border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300"
+            <ErrorBanner
+              variant="strip"
+              className="py-2 text-red-300"
+              icon={<AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+              onDismiss={() => setOperationError(null)}
+              dismissLabel={t('common.close')}
             >
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              <span className="select-text min-w-0 flex-1 break-words">{operationError}</span>
-              <button
-                type="button"
-                className="shrink-0 rounded px-1 text-red-200 hover:bg-red-500/20"
-                aria-label={t('common.close')}
-                onClick={() => setOperationError(null)}
-              >
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            </div>
+              {operationError}
+            </ErrorBanner>
           )}
 
           <div className="flex-1 overflow-y-auto">

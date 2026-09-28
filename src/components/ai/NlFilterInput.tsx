@@ -5,6 +5,7 @@ import { useAiKeyboard } from '../../hooks/useAiKeyboard';
 import { useAiStore } from '../../stores/aiStore';
 import { useTableDataStore } from '../../stores/tableDataStore';
 import { cn } from '../../lib/cn';
+import { ErrorBanner } from '../ui/ErrorBanner';
 
 interface NlFilterInputProps {
   /** Table/view panel whose filter state this input drives. */
@@ -168,12 +169,11 @@ export function NlFilterInput({ panelId, dbSessionId, database, tableName }: NlF
         </button>
       </div>
 
-      {nlFilterError && (
-        <div className="pl-9 text-xs text-danger" role="alert">
-          {nlFilterError}
-        </div>
-      )}
+      {nlFilterError && <ErrorBanner className="pl-9 text-danger">{nlFilterError}</ErrorBanner>}
 
+      {/* Deliberately not an ErrorBanner: this is a validation *warning* (the
+          input parsed but the draft is unusable), and it is announced as one.
+          Forcing it through the error component would mislabel it. */}
       {validationError && (
         <div className="pl-9 text-xs text-warning" role="alert">
           {validationError}

@@ -29,6 +29,14 @@ export { ToolbarShell, type ToolbarShellProps } from './ToolbarShell';
 export { ToolbarButton, type ToolbarButtonProps } from './ToolbarButton';
 export { ConfirmDialog, type ConfirmDialogProps } from './ConfirmDialog';
 export { CopyableError, type CopyableErrorProps } from './CopyableError';
+// The one error bar, so host pages, settings dialogs and driver UI stop
+// hand-rolling `role="alert"` plus a private shade of red at every call site.
+export {
+  ErrorBanner,
+  type ErrorBannerElement,
+  type ErrorBannerProps,
+  type ErrorBannerVariant,
+} from './ErrorBanner';
 export { ResultMessageDialog, type ResultMessageDialogProps } from './ResultMessageDialog';
 export { LimitationsDialog, type LimitationsDialogProps } from './LimitationsDialog';
 // Shared tree row contract + level/indent/navigation arithmetic. Pure: the
