@@ -6,12 +6,13 @@
  * discards `params` (so `{lines}` is asserted as a literal there, never a real
  * interpolation).
  *
- * Why a probe locale: `Dialog`'s own default is `closeLabel = 'Close'`, and the
- * English `common.close` is also `'Close'`. Any English-only assertion therefore
- * cannot tell "the component passed its localized label through" from "the
- * component dropped the prop and the default happened to match". Registering a
- * locale whose copy differs from every default makes the assertion wiring-proof,
- * and simultaneously proves the lookup really went through the shared registry
+ * Why a probe locale: the pre-i18n `closeLabel = 'Close'` literal `Dialog.tsx`
+ * still falls back to when the registry holds no `common.close` is also what the
+ * English `common.close` says, so any English-only assertion therefore cannot
+ * tell "the component passed its localized label through" from "the component
+ * dropped the prop and the fallback happened to match". Registering a locale
+ * whose copy differs from that fallback makes the assertion wiring-proof, and
+ * simultaneously proves the lookup really went through the shared registry
  * rather than a literal baked into the component.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

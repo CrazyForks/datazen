@@ -15,9 +15,9 @@
  * fix a user running the app in e.g. `ja` saw a localized title next to an
  * English "Close".
  *
- * `DraftLeaveDialog` is the subject here because it is the only one of the nine
+ * `DraftLeaveDialog` is the subject here because it is the only one of the eight
  * that mounts with no driver props, props bridges or store bindings — it is
- * driven purely by the `draftGuard` module singleton. The other eight are
+ * driven purely by the `draftGuard` module singleton. The other seven are
  * covered by the same single `Dialog` code path, and
  * `dialogCloseLabelInventory.test.ts` pins that there is no ninth.
  *

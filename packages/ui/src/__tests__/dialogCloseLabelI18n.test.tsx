@@ -28,12 +28,18 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { Dialog } from '../Dialog';
 import { registerTranslations } from '../i18n';
 
+const CLOSE_LABEL_KEY = 'common.close';
 const PROBE_CLOSE = 'PROBE::DialogClose';
 const LITERAL_DEFAULT = 'Close';
 
-registerTranslations({ en: { 'common.close': PROBE_CLOSE } });
+registerTranslations({ en: { [CLOSE_LABEL_KEY]: PROBE_CLOSE } });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // The blank-value cases below re-register `common.close`; restoring the probe
+  // here keeps them order-independent instead of relying on running last.
+  registerTranslations({ en: { 'common.close': PROBE_CLOSE } });
+});
 
 /** The header X is the only button that carries an `aria-label` at all. */
 function headerCloseNames(): string[] {
@@ -96,5 +102,36 @@ describe('Dialog takes its close label from the shared i18n registry', () => {
 
     expect(screen.getByRole('button', { name: PROBE_CLOSE })).toBeInTheDocument();
     expect(headerCloseNames()).toEqual([PROBE_CLOSE]);
+  });
+
+  it('falls back to the literal when a dictionary registers a blank common.close', () => {
+    // The same invariant, arriving through the channel this track opened:
+    // `t()` hands a registered blank value back verbatim, and before the track
+    // the hardcoded literal made an empty `aria-label` unreachable. All ten
+    // shipped locales carry a populated `common.close`, so this cannot change any
+    // real rendering — it only closes a hole the registry lookup introduced.
+    registerTranslations({ en: { [CLOSE_LABEL_KEY]: '' } });
+    render(
+      <Dialog open title="PROBE::Title" onClose={() => {}}>
+        <p>body</p>
+      </Dialog>,
+    );
+
+    expect(headerCloseNames()).toEqual([LITERAL_DEFAULT]);
+    expect(screen.getByRole('button', { name: LITERAL_DEFAULT })).toBeInTheDocument();
+  });
+
+  it('treats a whitespace-only common.close as unusable too', () => {
+    // A padded value is no more usable as an accessible name than an empty one —
+    // the same `.trim()` rule `enCopy()` applies to the host dictionary (see
+    // `src/test/enCopy.ts`).
+    registerTranslations({ en: { [CLOSE_LABEL_KEY]: '   ' } });
+    render(
+      <Dialog open title="PROBE::Title" onClose={() => {}}>
+        <p>body</p>
+      </Dialog>,
+    );
+
+    expect(headerCloseNames()).toEqual([LITERAL_DEFAULT]);
   });
 });
