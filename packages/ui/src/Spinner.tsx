@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import { cn } from './cn';
 
@@ -51,8 +52,22 @@ export interface SpinnerProps {
    * Leave it unset when the spinner sits beside real copy ("Saving…", a row
    * count) or inside a container that already carries `aria-busy` /
    * `role="status"`. Announcing twice is worse than not announcing at all, and
-   * a live region nested inside a `<button>` is an ARIA anti-pattern. Nearly
-   * every call site is exactly that case, which is why this is opt-in.
+   * nearly every call site in the app is exactly that case — which is why this
+   * is opt-in.
+   *
+   * **Never pass `label` from inside a `<button>`, `<a>` or `[role="button"]`.**
+   * Accessible-name computation walks into descendants, so the hidden text is
+   * concatenated into the control's own name:
+   *
+   * ```tsx
+   * <button><Spinner label="Thinking" /><span>Go</span></button>
+   * // announced as "ThinkingGo", not "Go"
+   * ```
+   *
+   * The live region is correct on its own; the placement is the bug, and no
+   * type can see it — so the component checks at runtime and warns. Either lift
+   * the live region out of the interactive element, or drop `label` and let the
+   * visible copy carry the meaning.
    */
   label?: string;
   /**
@@ -81,6 +96,27 @@ export function Spinner({
   className,
 }: SpinnerProps) {
   const box = SIZE_CLASS[size];
+  const statusRef = useRef<HTMLSpanElement>(null);
+
+  // `label` inside an interactive element is the one placement where the
+  // live region silently rewrites the control's accessible name instead of
+  // being read on its own. No prop type can express "not inside a button", so
+  // this is checked against the real DOM instead. Only runs when `label` is
+  // set — the decorative path never mounts the wrapper.
+  useLayoutEffect(() => {
+    if (label === undefined) return;
+    const interactive = statusRef.current?.closest('button, a[href], [role="button"]');
+    if (!interactive) return;
+    console.warn(
+      `[datazen/ui] <Spinner label="${label}"> is nested inside a <${interactive.tagName.toLowerCase()}>. ` +
+        "Its visually hidden label is folded into that element's accessible name, " +
+        'so the control is announced as "' +
+        label +
+        '<its real label>" instead of just its real label. ' +
+        'Move the live region outside the interactive element, or drop `label` ' +
+        'and rely on the visible copy beside the spinner.',
+    );
+  }, [label]);
 
   const glyph = (extra: string | undefined) =>
     variant === 'ring' ? (
@@ -104,7 +140,12 @@ export function Spinner({
   if (label === undefined) return glyph(className);
 
   return (
-    <span role="status" aria-busy="true" className={cn('inline-flex items-center', className)}>
+    <span
+      ref={statusRef}
+      role="status"
+      aria-busy="true"
+      className={cn('inline-flex items-center', className)}
+    >
       {glyph('')}
       <span className="sr-only">{label}</span>
     </span>

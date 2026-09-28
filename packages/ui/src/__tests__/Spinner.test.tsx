@@ -4,8 +4,15 @@
  * matters — the accessibility contract. The default spinner must stay
  * decorative (`aria-hidden`), and a spinner that is the *only* feedback on
  * screen must be able to promote itself into a live status region.
+ *
+ * Class assertions are exact SET comparisons, never substring matching. The
+ * whole point of the refactor is that `<Spinner size="lg" />` renders exactly
+ * what the hand-written `<Loader2 className="h-4 w-4 animate-spin" />` did, and
+ * `toContain('h-4 w-4')` happily passes a size map that renders
+ * `h-4 w-4 opacity-50` — the added class is precisely the render drift this is
+ * meant to catch. `cn()` reorders classes, so compare sets, not strings.
  */
-import { describe, expect, it, afterEach } from 'vitest';
+import { describe, expect, it, afterEach, vi } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import { Spinner } from '../Spinner';
 import type { SpinnerSize, SpinnerTone } from '../Spinner';
@@ -23,66 +30,74 @@ function glyphOf(container: HTMLElement): HTMLElement {
   return el as HTMLElement;
 }
 
-function classesOf(el: Element): string {
-  return el.getAttribute('class') ?? '';
+function classSetOf(el: Element): Set<string> {
+  return new Set((el.getAttribute('class') ?? '').split(/\s+/).filter(Boolean));
 }
 
-describe('Spinner size matrix', () => {
-  const CASES: ReadonlyArray<[SpinnerSize, string]> = [
-    ['xs', 'h-2.5 w-2.5'],
-    ['sm', 'h-3 w-3'],
-    ['md', 'h-3.5 w-3.5'],
-    ['lg', 'h-4 w-4'],
-    ['xl', 'h-5 w-5'],
-    ['2xl', 'h-6 w-6'],
-  ];
+/** Asserts the element carries exactly `expected` and not one class more. */
+function expectExactClasses(el: Element, expected: string): void {
+  const wanted = new Set(expected.split(/\s+/).filter(Boolean));
+  const actual = classSetOf(el);
+  const extra = [...actual].filter((c) => !wanted.has(c));
+  const missing = [...wanted].filter((c) => !actual.has(c));
+  expect({ extra, missing }).toEqual({ extra: [], missing: [] });
+}
 
-  it.each(CASES)('[tester] size=%s renders the %s box', (size, expected) => {
-    const { container } = render(<Spinner size={size} />);
-    const glyph = glyphOf(container);
-    expect(classesOf(glyph)).toContain(expected);
+/** lucide-react stamps its own base classes onto the glyph. */
+const ICON_BASE = 'lucide lucide-loader-circle';
+
+const SIZE_CLASS: ReadonlyArray<[SpinnerSize, string]> = [
+  ['xs', 'h-2.5 w-2.5'],
+  ['sm', 'h-3 w-3'],
+  ['md', 'h-3.5 w-3.5'],
+  ['lg', 'h-4 w-4'],
+  ['xl', 'h-5 w-5'],
+  ['2xl', 'h-6 w-6'],
+];
+const ICON_TONE_CLASS: ReadonlyArray<[SpinnerTone, string]> = [
+  ['current', ''],
+  ['accent', 'text-accent'],
+  ['muted', 'text-fg-muted'],
+];
+const RING_TONE_CLASS: ReadonlyArray<[SpinnerTone, string]> = [
+  ['current', 'border-current'],
+  ['accent', 'border-accent'],
+  ['muted', 'border-fg-muted'],
+];
+
+/** The full cross product: 6 sizes × 3 tones × 2 variants. */
+const MATRIX = SIZE_CLASS.flatMap(([size, box]) =>
+  (['icon', 'ring'] as const).flatMap((variant) =>
+    (variant === 'icon' ? ICON_TONE_CLASS : RING_TONE_CLASS).map(([tone, toneCls]) => ({
+      size,
+      variant,
+      box,
+      tone,
+      toneCls,
+    })),
+  ),
+);
+
+describe('Spinner renders exactly the hand-written box', () => {
+  it.each(MATRIX)(
+    '[tester] $variant size=$size tone=$tone renders exactly its class set',
+    ({ size, variant, box, tone, toneCls }) => {
+      const { container } = render(<Spinner size={size} variant={variant} tone={tone} />);
+      const expected =
+        variant === 'icon'
+          ? `${ICON_BASE} ${box} animate-spin ${toneCls}`
+          : `${box} animate-spin rounded-full border-2 ${toneCls} border-t-transparent`;
+      expectExactClasses(glyphOf(container), expected);
+    },
+  );
+
+  it('[tester] the matrix is the full 6x3x2 cross product', () => {
+    expect(MATRIX).toHaveLength(36);
   });
 
-  it('[tester] default size is md', () => {
+  it('[tester] default size is md, current tone, icon variant', () => {
     const { container } = render(<Spinner />);
-    expect(classesOf(glyphOf(container))).toContain('h-3.5 w-3.5');
-  });
-
-  it('[tester] every size still animates', () => {
-    for (const [size] of CASES) {
-      const { container, unmount } = render(<Spinner size={size} />);
-      expect(classesOf(glyphOf(container))).toContain('animate-spin');
-      unmount();
-    }
-  });
-});
-
-describe('Spinner tone matrix', () => {
-  const CASES: ReadonlyArray<[SpinnerTone, string | null]> = [
-    ['current', null],
-    ['accent', 'text-accent'],
-    ['muted', 'text-fg-muted'],
-  ];
-
-  it.each(CASES)('[tester] icon tone=%s applies %s', (tone, expected) => {
-    const { container } = render(<Spinner tone={tone} />);
-    const cls = classesOf(glyphOf(container));
-    if (expected === null) {
-      expect(cls).not.toContain('text-accent');
-      expect(cls).not.toContain('text-fg-muted');
-    } else {
-      expect(cls).toContain(expected);
-    }
-  });
-
-  it.each(CASES)('[tester] ring tone=%s paints the border with %s', (tone, expected) => {
-    const { container } = render(<Spinner variant="ring" tone={tone} />);
-    const cls = classesOf(glyphOf(container));
-    if (expected === null) {
-      expect(cls).toContain('border-current');
-    } else {
-      expect(cls).toContain(expected.replace('text-', 'border-'));
-    }
+    expectExactClasses(glyphOf(container), `${ICON_BASE} h-3.5 w-3.5 animate-spin`);
   });
 });
 
@@ -96,17 +111,10 @@ describe('Spinner variant', () => {
     const { container } = render(<Spinner variant="ring" />);
     const ring = glyphOf(container);
     expect(ring.tagName.toLowerCase()).toBe('span');
-    const cls = classesOf(ring);
-    expect(cls).toContain('rounded-full');
-    expect(cls).toContain('border-2');
-    expect(cls).toContain('border-t-transparent');
-  });
-
-  it('[tester] ring variant is available at every size', () => {
-    const { container } = render(<Spinner variant="ring" size="2xl" tone="accent" />);
-    const cls = classesOf(glyphOf(container));
-    expect(cls).toContain('h-6 w-6');
-    expect(cls).toContain('border-accent');
+    expectExactClasses(
+      ring,
+      'h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent',
+    );
   });
 });
 
@@ -131,7 +139,7 @@ describe('Spinner accessibility', () => {
 
   it('[tester] a labelled spinner carries the label as visually hidden text', () => {
     const { getByText } = render(<Spinner label="Loading rows" />);
-    expect(getByText('Loading rows').className).toContain('sr-only');
+    expectExactClasses(getByText('Loading rows'), 'sr-only');
   });
 
   it('[tester] the animated glyph inside a labelled spinner stays aria-hidden', () => {
@@ -152,30 +160,123 @@ describe('Spinner accessibility', () => {
     // Exactly one status region — the wrapper. The glyph must not add another.
     expect(getAllByRole('status')).toHaveLength(1);
   });
+
+  it('[tester] the status wrapper is inline-flex with nothing else on it', () => {
+    const { getByRole } = render(<Spinner label="Loading" />);
+    expectExactClasses(getByRole('status'), 'inline-flex items-center');
+  });
+});
+
+describe('Spinner label inside an interactive element', () => {
+  // Pinned, not aspirational: this is the exact failure the guard below exists
+  // to prevent. If a future change to the wrapper (say, moving the text into
+  // `aria-label` instead of visually hidden text) fixes it, this goes red and
+  // the JSDoc has to be updated to match.
+  it('[tester] the hidden label really does leak into the button name', () => {
+    const { getByRole, queryByRole } = render(
+      <button type="button">
+        <Spinner label="Thinking" />
+        <span>Go</span>
+      </button>,
+    );
+    expect(getByRole('button', { name: 'ThinkingGo' })).toBeTruthy();
+    expect(queryByRole('button', { name: 'Go' })).toBeNull();
+  });
+
+  it('[tester] warns when a label is nested inside a button', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(
+      <button type="button">
+        <Spinner label="Thinking" />
+      </button>,
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('<Spinner label="Thinking">');
+    warn.mockRestore();
+  });
+
+  it('[tester] warns when a label is nested inside an anchor', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(
+      <a href="#">
+        <Spinner label="Busy" />
+      </a>,
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('[tester] warns when a label is nested inside a role=button element', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(
+      <div role="button">
+        <Spinner label="Busy" />
+      </div>,
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('[tester] a live region nested in a button is still its own status region', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { getByRole } = render(
+      <button type="button">
+        <Spinner label="Busy" />
+      </button>,
+    );
+    // The region itself is well-formed; only the placement is wrong. That is
+    // why this needs a guard rather than a fix in the component.
+    expect(getByRole('status').getAttribute('aria-busy')).toBe('true');
+    warn.mockRestore();
+  });
+
+  it('[tester] stays silent for a label in ordinary flow content', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(
+      <div>
+        <Spinner label="Loading" />
+      </div>,
+    );
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('[tester] stays silent for a decorative spinner inside a button', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(
+      <button type="button">
+        <Spinner />
+        <span>Go</span>
+      </button>,
+    );
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
 });
 
 describe('Spinner className passthrough', () => {
   it('[tester] spacing classes land on the glyph when decorative', () => {
     const { container } = render(<Spinner className="mr-2 shrink-0" />);
-    const cls = classesOf(glyphOf(container));
-    expect(cls).toContain('mr-2');
-    expect(cls).toContain('shrink-0');
+    expectExactClasses(glyphOf(container), `${ICON_BASE} h-3.5 w-3.5 animate-spin mr-2 shrink-0`);
   });
 
   it('[tester] spacing classes land on the status wrapper when labelled', () => {
     const { getByRole } = render(<Spinner label="Loading" className="mr-2" />);
-    expect(classesOf(getByRole('status'))).toContain('mr-2');
+    expectExactClasses(getByRole('status'), 'inline-flex items-center mr-2');
   });
 
   it('[tester] inline stays available for in-text spinners', () => {
     const { container } = render(<Spinner size="xs" className="inline" />);
-    expect(classesOf(glyphOf(container))).toContain('inline');
+    expectExactClasses(glyphOf(container), `${ICON_BASE} h-2.5 w-2.5 animate-spin inline`);
   });
 
   it('[tester] a caller class wins over the size it collides with', () => {
     const { container } = render(<Spinner size="sm" className="h-8 w-8" />);
-    const cls = classesOf(glyphOf(container));
-    expect(cls).toContain('h-8 w-8');
-    expect(cls).not.toContain('h-3 w-3');
+    expectExactClasses(glyphOf(container), `${ICON_BASE} h-8 w-8 animate-spin`);
+  });
+
+  it('[tester] a caller colour class wins over the tone it collides with', () => {
+    const { container } = render(<Spinner tone="accent" className="text-red-500" />);
+    expectExactClasses(glyphOf(container), `${ICON_BASE} h-3.5 w-3.5 animate-spin text-red-500`);
   });
 });
