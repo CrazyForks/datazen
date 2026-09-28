@@ -12,4 +12,3 @@
  */
 export { RedisKvStatusBar } from './KvStatusBar';
 export { RedisKeyPropsSidebar } from './KeyPropsSidebar';
-export { RedisContextBar } from './RedisContextBar';

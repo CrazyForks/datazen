@@ -56,6 +56,19 @@ const localesDir = resolve(import.meta.dirname, '../../locales');
 const driverKeysOf = (locale: string): string[] =>
   Object.keys(getRegisteredTranslations(locale)).filter((key) => key.startsWith(PACK_PREFIX));
 
+/**
+ * Registered `mongo.*` keys as an order-independent set.
+ *
+ * The host ships its own `mongo.*` keys in `src/locales/<loc>/connection.ts`,
+ * and it registers before this pack. `registerTranslations()` merges with
+ * `Object.assign`, so on a key collision the *host* fixes the insertion slot
+ * while *this pack* supplies the final value. Registration order is therefore a
+ * merge artifact, not a contract — only the key set is. (The redis sibling
+ * suite sidesteps this by comparing lengths; comparing sets keeps the stronger
+ * "exactly these keys" guarantee without pinning an incidental order.)
+ */
+const driverKeySetOf = (locale: string): string[] => driverKeysOf(locale).sort();
+
 describe('[tester] mongodb locale pack self-registration via ui entry module', () => {
   it('registers the pack through the meta.ts side effect (t() resolves real strings)', () => {
     // Active locale is 'en': only the host wires setLocale, and it does not
@@ -71,7 +84,7 @@ describe('[tester] mongodb locale pack self-registration via ui entry module', (
     expect(t('mongo.noIdHint')).not.toBe('mongo.noIdHint');
     // An unregistered key would echo verbatim — guard against a false green.
     expect(t('mongo.definitelyNotAKey')).toBe('mongo.definitelyNotAKey');
-    expect(driverKeysOf('en')).toEqual(Object.keys(en));
+    expect(driverKeySetOf('en')).toEqual([...Object.keys(en)].sort());
   });
 
   it('keeps the registered locale-code literals in sync with locales/*.ts', () => {
@@ -97,9 +110,9 @@ describe('[tester] mongodb locale pack self-registration via ui entry module', (
   });
 
   it('registers each locale under its exact hyphenated code only', () => {
-    expect(driverKeysOf('pt-BR')).toEqual(Object.keys(ptBR));
-    expect(driverKeysOf('zh-CN')).toEqual(Object.keys(zhCN));
-    expect(driverKeysOf('zh-TW')).toEqual(Object.keys(zhTW));
+    expect(driverKeySetOf('pt-BR')).toEqual([...Object.keys(ptBR)].sort());
+    expect(driverKeySetOf('zh-CN')).toEqual([...Object.keys(zhCN)].sort());
+    expect(driverKeySetOf('zh-TW')).toEqual([...Object.keys(zhTW)].sort());
     expect(getRegisteredTranslations('pt_BR')).toEqual({});
     expect(getRegisteredTranslations('zh_cn')).toEqual({});
   });

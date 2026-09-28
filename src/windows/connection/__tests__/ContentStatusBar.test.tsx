@@ -45,14 +45,7 @@ describe('ContentStatusBar', () => {
 
   it('shows Mac modifier labels on macOS', () => {
     usePlatformMock.mockReturnValue('macos');
-    render(
-      <ContentStatusBar
-        currentDatabase={null}
-        tableName=""
-        columnCount={0}
-        totalRows={0}
-      />,
-    );
+    render(<ContentStatusBar currentDatabase={null} tableName="" columnCount={0} totalRows={0} />);
 
     const status = screen.getByRole('status');
     expect(status).toHaveTextContent('⌘N');
@@ -61,14 +54,7 @@ describe('ContentStatusBar', () => {
 
   it('shows Ctrl modifier labels on Windows and Linux', () => {
     usePlatformMock.mockReturnValue('windows');
-    render(
-      <ContentStatusBar
-        currentDatabase={null}
-        tableName=""
-        columnCount={0}
-        totalRows={0}
-      />,
-    );
+    render(<ContentStatusBar currentDatabase={null} tableName="" columnCount={0} totalRows={0} />);
 
     let status = screen.getByRole('status');
     expect(status).toHaveTextContent('Ctrl+N');
@@ -76,14 +62,7 @@ describe('ContentStatusBar', () => {
 
     cleanup();
     usePlatformMock.mockReturnValue('linux');
-    render(
-      <ContentStatusBar
-        currentDatabase={null}
-        tableName=""
-        columnCount={0}
-        totalRows={0}
-      />,
-    );
+    render(<ContentStatusBar currentDatabase={null} tableName="" columnCount={0} totalRows={0} />);
 
     status = screen.getByRole('status');
     expect(status).toHaveTextContent('Ctrl+N');
@@ -92,14 +71,7 @@ describe('ContentStatusBar', () => {
 
   it('[tester] shows Ctrl modifier labels when platform is unknown', () => {
     usePlatformMock.mockReturnValue('unknown');
-    render(
-      <ContentStatusBar
-        currentDatabase={null}
-        tableName=""
-        columnCount={0}
-        totalRows={0}
-      />,
-    );
+    render(<ContentStatusBar currentDatabase={null} tableName="" columnCount={0} totalRows={0} />);
 
     const status = screen.getByRole('status');
     expect(status).toHaveTextContent('Ctrl+N');
@@ -113,6 +85,22 @@ describe('ContentStatusBar', () => {
       selectKey: vi.fn(),
       getDirty: () => false,
       setDirty: vi.fn(),
+      // W3-A widened relay members: this case only pins the frozen KV props, so
+      // the rest of the atom stays at its documented neutral values.
+      getLoadedCount: () => 0,
+      setLoadedCount: vi.fn(),
+      getScanCursor: () => '0',
+      setScanCursor: vi.fn(),
+      isScanning: () => false,
+      setScanning: vi.fn(),
+      getScanBudgetUsed: () => 0,
+      getScanBudgetTotal: () => 0,
+      setScanBudget: vi.fn(),
+      getSelectionCount: () => 0,
+      setSelectionCount: vi.fn(),
+      getLastWriteCommand: () => null,
+      getLastWriteDurationMs: () => null,
+      recordWrite: vi.fn(),
     };
     const statusBarSlot: KvStatusBarBinding = {
       Component: FixtureStatusBar,

@@ -186,6 +186,10 @@ impl ClickHouseDriver {
 
 #[async_trait]
 impl DatabaseDriver for ClickHouseDriver {
+    fn has_multi_database(&self) -> bool {
+        true
+    }
+
     fn driver_type(&self) -> DatabaseType {
         "clickhouse".to_string()
     }

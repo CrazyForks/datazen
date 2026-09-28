@@ -1,18 +1,14 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import {
-  createExtensionPoint,
-  ExtensionRegistry,
-  extensionRegistry,
-  type ExtensionPoint,
-} from '../extensionPoints';
-import {
-  HostExtensionLoader,
-  registerExtensionPoint,
-  type ExtensionContext,
-  type ExtensionModule,
-} from '../lifecycle';
+import type { Extension } from '@codemirror/state';
+import { createExtensionPoint, ExtensionRegistry, extensionRegistry } from '../extensionPoints';
+import { HostExtensionLoader, registerExtensionPoint, type ExtensionModule } from '../lifecycle';
 import { SafeCompartmentWrapper } from '../safeCompartment';
-import { sqlEditorEnhancedEP, sqlEditorProEP } from '../sqlEditorEnhancedEP';
+import {
+  sqlEditorEnhancedEP,
+  sqlEditorProEP,
+  type SqlEditorEnhancedFeatures,
+} from '../sqlEditorEnhancedEP';
+import type { QueryBuilderContribution } from '../queryBuilder';
 
 interface DemoFeatures {
   label: string;
@@ -267,8 +263,8 @@ describe('EP hot-plug lifecycle (hotplug.test.ts)', () => {
 
   it('sqlEditorEnhancedEP fallback is used after hot-unregister of enhanced implementation', () => {
     const enhancedImpl = {
-      createStatementDecorations: () => [{ tag: 'enhanced-marker' }],
-    };
+      createStatementDecorations: () => [{ tag: 'enhanced-marker' }] as unknown as Extension[],
+    } satisfies SqlEditorEnhancedFeatures;
 
     const unsub = extensionRegistry.register(sqlEditorEnhancedEP, enhancedImpl);
     expect(extensionRegistry.isEnhanced(sqlEditorEnhancedEP)).toBe(true);
@@ -282,5 +278,27 @@ describe('EP hot-plug lifecycle (hotplug.test.ts)', () => {
     const fallbackImpl = extensionRegistry.get(sqlEditorEnhancedEP);
     expect(extensionRegistry.isEnhanced(sqlEditorEnhancedEP)).toBe(false);
     expect(fallbackImpl.createStatementDecorations?.()).toEqual([]);
+  });
+
+  it('keeps Query Builder absent in fallback and switches to the registered Pro contribution', () => {
+    const features = extensionRegistry.get(sqlEditorEnhancedEP);
+    expect(features.queryBuilder).toBeUndefined();
+
+    const panel = () => null;
+    const contribution: QueryBuilderContribution = {
+      getOpenPanelId: () => null,
+      subscribe: () => () => {},
+      openFor: () => {},
+      hideFor: () => {},
+      closeFor: () => {},
+      destroyFor: () => {},
+      Panel: panel,
+      dispose: () => {},
+    };
+    const unsub = extensionRegistry.register(sqlEditorEnhancedEP, { queryBuilder: contribution });
+
+    expect(extensionRegistry.get(sqlEditorEnhancedEP).queryBuilder).toBe(contribution);
+    unsub();
+    expect(extensionRegistry.get(sqlEditorEnhancedEP).queryBuilder).toBeUndefined();
   });
 });

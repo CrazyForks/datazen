@@ -6,7 +6,7 @@ import {
   invokeSetTtl,
   type PluginInvokeFn,
 } from '../value-editors/KeyEditors';
-import { invokeBatchDeletePattern, invokeDeleteKeys } from '../key-browser/BatchBar';
+import { invokeBatchDeletePattern, invokeDeleteKeys } from '../key-browser/batchInvokes';
 
 describe('redis editor invoke helpers', () => {
   const invoke = vi.fn<PluginInvokeFn>().mockResolvedValue(undefined);

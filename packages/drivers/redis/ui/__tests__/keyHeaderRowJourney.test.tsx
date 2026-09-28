@@ -13,14 +13,7 @@
  * 文案只断言 `data-i18n-key`；键名与剪贴板载荷是服务器数据，可以钉死。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { create } from 'zustand';
 import {
   bindConfirmDialog,
@@ -49,7 +42,7 @@ vi.mock('../value-editors/keyEditorsInvokes', async (importOriginal) => ({
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { KeyDetailEditor } from '../value-editors/KeyEditors';
 import { KeyHeaderRow } from '../value-editors/KeyHeaderRow';
-import { bytesToBase64 } from '../value-editors/valueView/codecs';
+import { bytesToBase64 } from '../__testing__/bytes';
 
 bindSettingsStore(
   create<SettingsBridgeState>(() => ({
@@ -104,9 +97,7 @@ function renderEditor(onRefresh = vi.fn(() => {})) {
   return { onRefresh, onRenamed, ...result };
 }
 
-function renderHeader(
-  overrides: Partial<Parameters<typeof KeyHeaderRow>[0]> = {},
-) {
+function renderHeader(overrides: Partial<Parameters<typeof KeyHeaderRow>[0]> = {}) {
   return render(
     <KeyHeaderRow
       keyName="user:1"
@@ -160,14 +151,10 @@ describe('Journey: 键头行与徽标行装配', () => {
     await waitFor(() => {
       expect(screen.getByTestId('redis-key-badge-size')).toBeTruthy();
     });
-    expect(
-      screen.getByTestId('redis-key-badge-type').getAttribute('data-key-type'),
-    ).toBe('string');
-    expect(
-      screen
-        .getByTestId('redis-key-badge-size')
-        .getAttribute('data-i18n-key'),
-    ).toBe('redis.detail.badge.size');
+    expect(screen.getByTestId('redis-key-badge-type').getAttribute('data-key-type')).toBe('string');
+    expect(screen.getByTestId('redis-key-badge-size').getAttribute('data-i18n-key')).toBe(
+      'redis.detail.badge.size',
+    );
     expect(badges.querySelector('[data-testid="redis-ttl-value"]')).not.toBeNull();
 
     // 旧的独立 rename 输入框（常驻第二输入框）已被键头行取代，只在进入改名时出现。
@@ -181,9 +168,7 @@ describe('Journey: 键头行与徽标行装配', () => {
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith('user:1');
     });
-    expect(
-      screen.getByTestId('redis-header-copy-key').getAttribute('data-copied'),
-    ).toBe('true');
+    expect(screen.getByTestId('redis-header-copy-key').getAttribute('data-copied')).toBe('true');
 
     // 语句由 detail 形状构造（string ⇒ SET），载荷是服务器数据。
     fireEvent.click(screen.getByTestId('redis-header-copy-insert'));
@@ -215,12 +200,8 @@ describe('Journey: 内联改名', () => {
 
     // 进入：输入框替换键名显示，预填当前键名；未改动 ⇒ 确认禁用（退出条件之一）。
     fireEvent.click(screen.getByTestId('redis-header-rename'));
-    expect(screen.getByTestId('redis-key-header').getAttribute('data-renaming')).toBe(
-      'true',
-    );
-    const input = screen.getByTestId(
-      'redis-header-rename-input',
-    ) as HTMLInputElement;
+    expect(screen.getByTestId('redis-key-header').getAttribute('data-renaming')).toBe('true');
+    const input = screen.getByTestId('redis-header-rename-input') as HTMLInputElement;
     expect(input.value).toBe('user:1');
     expect(screen.getByTestId('redis-header-rename-confirm')).toBeDisabled();
 
@@ -244,9 +225,7 @@ describe('Journey: 内联改名', () => {
       expect(onRefresh).toHaveBeenCalled();
     });
     // 成功退出：输入框收起。
-    expect(screen.getByTestId('redis-key-header').getAttribute('data-renaming')).toBe(
-      'false',
-    );
+    expect(screen.getByTestId('redis-key-header').getAttribute('data-renaming')).toBe('false');
   });
 
   it('cancel exits without touching the server', async () => {
@@ -258,9 +237,7 @@ describe('Journey: 内联改名', () => {
     });
     fireEvent.click(screen.getByTestId('redis-header-rename-cancel'));
 
-    expect(screen.getByTestId('redis-key-header').getAttribute('data-renaming')).toBe(
-      'false',
-    );
+    expect(screen.getByTestId('redis-key-header').getAttribute('data-renaming')).toBe('false');
     expect(renameKey).not.toHaveBeenCalled();
     expect(onRenamed).not.toHaveBeenCalled();
   });
@@ -277,14 +254,12 @@ describe('Journey: 内联改名', () => {
     fireEvent.click(screen.getByTestId('redis-header-rename-confirm'));
 
     await waitFor(() => {
-      expect(
-        screen.getByTestId('redis-key-header').getAttribute('data-renaming'),
-      ).toBe('true');
+      expect(screen.getByTestId('redis-key-header').getAttribute('data-renaming')).toBe('true');
     });
     // 输入还在，改动没有被吃掉。
-    expect(
-      (screen.getByTestId('redis-header-rename-input') as HTMLInputElement).value,
-    ).toBe('user:2');
+    expect((screen.getByTestId('redis-header-rename-input') as HTMLInputElement).value).toBe(
+      'user:2',
+    );
   });
 });
 
@@ -333,29 +308,29 @@ describe('Journey: 自动刷新分体按钮', () => {
     renderHeader({ onRefresh });
 
     // 进入前：关（0）。
-    expect(
-      screen.getByTestId('redis-key-header').getAttribute('data-refresh-interval-ms'),
-    ).toBe('0');
+    expect(screen.getByTestId('redis-key-header').getAttribute('data-refresh-interval-ms')).toBe(
+      '0',
+    );
 
     // 打开菜单：5 枚档位，各带 i18n key，选中态挂在当前档上。
     fireEvent.click(screen.getByTestId('redis-header-refresh-menu'));
     expect(screen.getAllByRole('menuitem')).toHaveLength(5);
-    expect(
-      screen.getByTestId('redis-refresh-interval-5000').getAttribute('data-i18n-key'),
-    ).toBe('redis.detail.refresh.interval');
-    expect(
-      screen.getByTestId('redis-refresh-interval-0').getAttribute('data-i18n-key'),
-    ).toBe('redis.detail.refresh.off');
-    expect(
-      screen.getByTestId('redis-refresh-interval-5000').getAttribute('data-selected'),
-    ).toBe('false');
+    expect(screen.getByTestId('redis-refresh-interval-5000').getAttribute('data-i18n-key')).toBe(
+      'redis.detail.refresh.interval',
+    );
+    expect(screen.getByTestId('redis-refresh-interval-0').getAttribute('data-i18n-key')).toBe(
+      'redis.detail.refresh.off',
+    );
+    expect(screen.getByTestId('redis-refresh-interval-5000').getAttribute('data-selected')).toBe(
+      'false',
+    );
 
     // 进入：选 5s ⇒ 菜单收起、容器记下间隔。
     fireEvent.click(screen.getByTestId('redis-refresh-interval-5000'));
     expect(screen.queryByTestId('redis-refresh-menu')).toBeNull();
-    expect(
-      screen.getByTestId('redis-key-header').getAttribute('data-refresh-interval-ms'),
-    ).toBe('5000');
+    expect(screen.getByTestId('redis-key-header').getAttribute('data-refresh-interval-ms')).toBe(
+      '5000',
+    );
 
     // 状态内：每 5000ms 拍一次，15000ms ⇒ 3 拍。
     await act(async () => {
@@ -369,13 +344,13 @@ describe('Journey: 自动刷新分体按钮', () => {
 
     // 退出跃迁：选关 ⇒ 立刻停拍。
     fireEvent.click(screen.getByTestId('redis-header-refresh-menu'));
-    expect(
-      screen.getByTestId('redis-refresh-interval-5000').getAttribute('data-selected'),
-    ).toBe('true');
+    expect(screen.getByTestId('redis-refresh-interval-5000').getAttribute('data-selected')).toBe(
+      'true',
+    );
     fireEvent.click(screen.getByTestId('redis-refresh-interval-0'));
-    expect(
-      screen.getByTestId('redis-key-header').getAttribute('data-refresh-interval-ms'),
-    ).toBe('0');
+    expect(screen.getByTestId('redis-key-header').getAttribute('data-refresh-interval-ms')).toBe(
+      '0',
+    );
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60000);
     });
@@ -388,18 +363,18 @@ describe('Journey: 自动刷新分体按钮', () => {
 
     fireEvent.click(screen.getByTestId('redis-header-refresh-menu'));
     fireEvent.click(screen.getByTestId('redis-refresh-interval-1000'));
-    expect(
-      screen.getByTestId('redis-key-header').getAttribute('data-refresh-interval-ms'),
-    ).toBe('1000');
+    expect(screen.getByTestId('redis-key-header').getAttribute('data-refresh-interval-ms')).toBe(
+      '1000',
+    );
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(onRefresh).toHaveBeenCalledTimes(1);
     // 退出跃迁：false ⇒ 自动落回关（E-5 草稿守卫的回答就是这个信号）。
-    expect(
-      screen.getByTestId('redis-key-header').getAttribute('data-refresh-interval-ms'),
-    ).toBe('0');
+    expect(screen.getByTestId('redis-key-header').getAttribute('data-refresh-interval-ms')).toBe(
+      '0',
+    );
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10000);

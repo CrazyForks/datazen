@@ -109,6 +109,47 @@ describe('runWithDriverInject nested ownership', () => {
     expect(calls).toEqual(['resolve:--drivers=basic', 'cmd:echo ok', 'restore']);
   });
 
+  it('forwards --variant to resolve-drivers instead of swallowing it', () => {
+    // The SKU has to reach resolve-drivers: it is baked into the frontend
+    // codegen, which is what the runtime updater gate reads. Dropping it here
+    // would leave a variant build claiming to be `custom` (no self-update) while
+    // ci-tauri-build compiled in that variant's endpoint.
+    const calls: string[] = [];
+    runWithDriverInject({
+      argv: ['--drivers=all', '--variant=all', '--', 'echo', 'ok'],
+      stashExistsFn: () => false,
+      env: {},
+      runResolve: (args) => {
+        calls.push(`resolve:${args}`);
+      },
+      runRestore: () => {
+        calls.push('restore');
+      },
+      runCommand: () => ({ status: 0 }),
+      log: () => {},
+    });
+
+    expect(calls).toContain('resolve:--drivers=all --variant=all');
+  });
+
+  it('passes DATAZEN_VARIANT through to the build command', () => {
+    const seen: Array<string | undefined> = [];
+    runWithDriverInject({
+      argv: ['--drivers=all', '--', 'echo', 'ok'],
+      stashExistsFn: () => false,
+      env: { DATAZEN_VARIANT: 'all' },
+      runResolve: () => {},
+      runRestore: () => {},
+      runCommand: (_cmd, _args, env) => {
+        seen.push(env.DATAZEN_VARIANT);
+        return { status: 0 };
+      },
+      log: () => {},
+    });
+
+    expect(seen).toEqual(['all']);
+  });
+
   it('orphan stash: restore then resolve/command/restore', () => {
     const calls: string[] = [];
     const logs: string[] = [];

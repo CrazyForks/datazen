@@ -88,7 +88,6 @@ vi.mock('../shared/redisInvoke', async (importOriginal) => ({
 }));
 
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
-import { KEY_TYPE_FILTERS, SEPARATOR_CHOICES } from '../key-browser/keyTree';
 import {
   EMPTY_LEVEL,
   anyLevelScanning,
@@ -108,9 +107,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -134,15 +138,6 @@ function childCalls(): { prefix: string; opts: Record<string, unknown> }[] {
   }));
 }
 
-/** Pick an option out of an open design-system Select by its own value list. */
-async function pickOption(testId: string, values: readonly string[], wanted: string) {
-  fireEvent.click(screen.getByTestId(testId));
-  const options = await screen.findAllByTestId('select-option');
-  const index = values.indexOf(wanted);
-  expect(index).toBeGreaterThanOrEqual(0);
-  fireEvent.mouseDown(options[index]!);
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
@@ -155,7 +150,10 @@ beforeEach(() => {
     memory: null,
   });
   redisCommand.mockResolvedValue(undefined);
-  dbSizes.mockResolvedValue([{ db: 0, keys: 2 }, { db: 1, keys: 0 }]);
+  dbSizes.mockResolvedValue([
+    { db: 0, keys: 2 },
+    { db: 1, keys: 0 },
+  ]);
 });
 
 afterEach(() => {
@@ -202,6 +200,30 @@ describe('[tester] treeLevels: a failed rescan must close the authoritative pass
 
 /* ── BUG-001 — the R2 pattern never reaches the tree rows ─────────────────── */
 
+/**
+ * The rows whose checkbox is currently ticked — the surviving observable for
+ * "what is selected", now that the header's selection-count badge and its
+ * clear-selection button are gone.
+ *
+ * Folders count too: a select-all over this fixture's two rows ticks the
+ * `app:` folder and the `root-plain` leaf, and a leaf-only count would read 1.
+ * The sticky twin carries its own `redis-tree-sticky-folder-*` testid, so it
+ * cannot double-count here. State comes from the input's `checked` property
+ * rather than a data attribute — only the leaf row mirrors it into
+ * `data-checked`, the folder checkbox carries no such attribute.
+ */
+function tickedRows(): string[] {
+  return Array.from(
+    document.querySelectorAll<HTMLInputElement>(
+      '[data-testid^="redis-tree-key-check-"], [data-testid^="redis-tree-folder-check-"]',
+    ),
+  )
+    .filter((el) => el.checked)
+    .map((el) =>
+      (el.getAttribute('data-testid') ?? '').replace(/^redis-tree-(?:key|folder)-check-/, ''),
+    );
+}
+
 describe('[tester] R2 search row: every filter reaches the tree, and no-match is reachable', () => {
   beforeEach(() => {
     // Flat scan honours the pattern — this is the half that works.
@@ -218,27 +240,6 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
       children: [folder('app:', 2), leaf('root-plain')],
       cursor: 0,
     });
-  });
-
-  it('the type chip reaches list_children (precondition, green)', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-folder-app:');
-    const typeValues = KEY_TYPE_FILTERS.map((item) => item.value);
-    await pickOption('redis-tree-type-filter', typeValues, 'hash');
-    await waitFor(() =>
-      expect(childCalls().some((call) => call.opts.keyType === 'hash')).toBe(true),
-    );
-  });
-
-  it('the separator reaches list_children (precondition, green)', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-folder-app:');
-    await pickOption(
-      'redis-tree-separator',
-      SEPARATOR_CHOICES as unknown as string[],
-      SEPARATOR_CHOICES[1],
-    );
-    await waitFor(() => expect(childCalls().some((call) => call.opts.sep === '.')).toBe(true));
   });
 
   it('keeps every filter surface on one side of the same fact (characterization, rewritten)', async () => {
@@ -258,11 +259,14 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
     expect(tree.getAttribute('data-row-count')).toBe('2');
 
     const input = screen.getByTestId('redis-search-input');
-    fireEvent.change(input, { target: { value: 'zzz' } });
+    // A typed literal resolves to a key *prefix* now, so the no-match case needs
+    // a head with nothing under it — `zzz` would go out as `zzz*` and this
+    // harness has no such key, but the point of the case is the empty set.
+    fireEvent.change(input, { target: { value: 'nope' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
     // The flat `scan_keys` set really is empty after the pattern applies …
-    await waitFor(() => expect(scanKeys.mock.calls.at(-1)?.[2]).toBe('zzz'));
+    await waitFor(() => expect(scanKeys.mock.calls.at(-1)?.[2]).toBe('nope*'));
     await waitFor(() => expect(count.getAttribute('data-loaded')).toBe('0'));
     // … and the tree column now says the same thing instead of painting the
     // pre-filter rows …
@@ -272,9 +276,9 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
     expect(empty.getAttribute('data-empty-state')).toBe('no-match');
     // … and 「全选已加载」 is disabled over an empty visible set rather than
     // selecting an off-screen one.
-    expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(true);
+    expect((screen.getByTestId('redis-tree-select-all') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(true);
+    expect(tickedRows()).toEqual([]);
 
     // Exit transition: `Esc` clears input *and* filter — the tree repopulates.
     fireEvent.keyDown(input, { key: 'Escape' });
@@ -282,16 +286,19 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
     await waitFor(() => expect(count.getAttribute('data-loaded')).toBe('2'));
     expect(screen.queryByTestId('redis-tree-empty')).toBeNull();
     fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(false),
-    );
+    // Select-all takes the *loaded* set, which is the flat scan's two keys —
+    // both of them live inside `app:`, so the folder reads all-checked. The
+    // `root-plain` row is painted from `list_children` but is not in the loaded
+    // set, so it stays unticked: selection tracks the scan, not the picture.
+    await waitFor(() => expect(tickedRows()).toEqual(['app:']));
   });
 
   it('FIXME(redis-tree-ui-BUG-001): applying a pattern narrows the rendered tree rows', async () => {
     // Un-skipped by coder round-1. The fix is two-halved, per the coordinator's
     // pure-client ruling (`list_children` keeps its contract): the applied pattern
-    // is routed into the root request as a *prefix* (`zzz` ⇒ scan `zzz*`), and it
-    // filters the loaded rows client-side in `keyTreeFilter.ts`.
+    // is routed into the root request as a *prefix* (a typed literal resolves to
+    // `nope*`, routed as `nope`), and it filters the loaded rows client-side in
+    // `keyTreeFilter.ts`.
     // Measured un-skipped on ef0d62d94 (this file: 2 failed / 5; the quote below is
     // the line vitest printed for this case):
     //   AssertionError: expected '2' to be '0'   // redis-key-tree[data-row-count]
@@ -304,11 +311,11 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
     expect(tree.getAttribute('data-row-count')).toBe('2');
 
     const input = screen.getByTestId('redis-search-input');
-    fireEvent.change(input, { target: { value: 'zzz' } });
+    fireEvent.change(input, { target: { value: 'nope' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
     // The flat scan really did narrow to the pattern …
-    await waitFor(() => expect(scanKeys.mock.calls.at(-1)?.[2]).toBe('zzz'));
+    await waitFor(() => expect(scanKeys.mock.calls.at(-1)?.[2]).toBe('nope*'));
     // … so the tree must reflect it. Primary symptom first: the rendered rows.
     await waitFor(() => expect(tree.getAttribute('data-row-count')).toBe('0'));
     // Secondary: whichever route the fix takes, the pattern has to be *in* the
@@ -316,7 +323,9 @@ describe('[tester] R2 search row: every filter reaches the tree, and no-match is
     expect(
       childCalls().some(
         (call) =>
-          call.opts.pattern === 'zzz' || call.opts.match === 'zzz' || call.prefix.startsWith('zzz'),
+          call.opts.pattern === 'nope*' ||
+          call.opts.match === 'nope*' ||
+          call.prefix.startsWith('nope'),
       ),
     ).toBe(true);
     // I-11: a finished scan plus an active filter is exactly the `no-match` fact.

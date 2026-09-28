@@ -5,7 +5,7 @@ import { Select } from '@datazen/ui';
 import { Dialog } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import { redisCommandInvoke } from '../shared/redisInvoke';
-import { invokeDeleteKeys } from './BatchBar';
+import { invokeDeleteKeys } from './batchInvokes';
 import { invokeCreateKey, invokeRename, invokeSetTtl } from '../value-editors/KeyEditors';
 import { useRedisGate } from '../shared/useRedisGate';
 

@@ -88,9 +88,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -160,7 +165,11 @@ const SCAN_KEYS_ANSWERS: Readonly<Record<string, readonly string[]>> = {
   '': KEYSPACE,
   '*nope': [],
   'zzz*': ['zzz-thing'],
-  zzz: [],
+  // The server pattern a typed literal now produces. `zzz` (no `*` ⇒ exact) is
+  // gone from this table on purpose: the search row can no longer emit it, since
+  // a literal without a metacharacter is wrapped as a prefix. The exact-match
+  // rule itself is still covered as a client-filter unit in `keyTreeFilter.test.ts`.
+  'app*': ['app:1', 'app:2'],
   'app:*': ['app:1', 'app:2'],
   '*:1': ['app:1'],
   '*thing': ['zzz-thing'],
@@ -191,6 +200,28 @@ function attr(testId: string, name: string): string | null {
   return screen.getByTestId(testId).getAttribute(name);
 }
 
+/** The select-all checkbox is a real `<button>`, so `disabled` lives on it. */
+function selectAllButton(): HTMLButtonElement {
+  return screen.getByTestId('redis-tree-select-all') as HTMLButtonElement;
+}
+
+/**
+ * The leaf keys whose checkbox is currently ticked.
+ *
+ * The header's selection-count badge went away with the batch action group, so
+ * "how much of the tree is selected" is read off the checkboxes themselves.
+ * That is a *stronger* observable: the badge was one number derived from this
+ * set, whereas this is the set. State comes from the input's `checked` property
+ * rather than the row's optional `data-checked` mirror.
+ */
+function tickedKeys(): string[] {
+  return Array.from(
+    document.querySelectorAll<HTMLInputElement>('[data-testid^="redis-tree-key-check-"]'),
+  )
+    .filter((el) => el.checked)
+    .map((el) => (el.getAttribute('data-testid') ?? '').replace('redis-tree-key-check-', ''));
+}
+
 async function applyPattern(value: string): Promise<void> {
   const input = await screen.findByTestId('redis-search-input');
   fireEvent.change(input, { target: { value } });
@@ -208,7 +239,10 @@ beforeEach(() => {
     children: childrenFor(prefix),
     cursor: 0,
   }));
-  dbSizes.mockResolvedValue([{ db: 0, keys: KEYSPACE.length }, { db: 1, keys: 0 }]);
+  dbSizes.mockResolvedValue([
+    { db: 0, keys: KEYSPACE.length },
+    { db: 1, keys: 0 },
+  ]);
   getKey.mockResolvedValue({
     key: 'app:1',
     keyType: 'string',
@@ -315,10 +349,60 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     expect(screen.queryByTestId('redis-tree-empty')).toBeNull();
   });
 
+  /*
+   * The reported defect, against the literal oracle rather than the client
+   * filter: typing `app` used to reach `SCAN … MATCH app`, which admits only the
+   * single key spelled `app` — so `app:1` and `app:2` were invisible and the
+   * whole `app` namespace read as "no matches". The oracle table is derived by
+   * hand from Redis' MATCH rules, so a regression here cannot hide behind the
+   * client implementation agreeing with itself.
+   */
+  it('a typed literal reaches the server as a prefix, not an exact key', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-tree-folder-app:');
+
+    await applyPattern('app');
+    // The scan asked for `app*`, which the oracle answers with both app keys.
+    await waitFor(() => expect(scanKeys.mock.calls.at(-1)?.[2]).toBe('app*'));
+    // R1 counts the key set the pattern admitted, so both app keys are in it —
+    // this is the number the user sees when they ask "did it find anything".
+    await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('2'));
+    // Something is on screen, and it is the app namespace rather than a
+    // no-match page. (The leaves sit under a collapsed `app:` folder, so the
+    // row count is 1 — tree geometry, not the question being asked here.)
+    expect(await screen.findByTestId('redis-tree-folder-app:')).toBeTruthy();
+    expect(screen.queryByTestId('redis-tree-empty')).toBeNull();
+    // The tree walk narrows to the namespace instead of walking everything.
+    expect(childPrefixes().some((prefix) => prefix === 'app')).toBe(true);
+  });
+
+  it('a typed literal and the prefix it stands for admit the same keys', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-tree-folder-app:');
+
+    await applyPattern('app:*');
+    await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('2'));
+    // `app:*` is the narrower pattern, so its two leaves can sit at the root.
+    expect(tree().getAttribute('data-row-count')).toBe('2');
+
+    // `app` now stands for `app*`, which is strictly *broader* (it would also
+    // admit `apple`), so the routed head stays `app` and the server folds it
+    // into one `app:` folder. Same keys, one row instead of two — that is the
+    // fold, not a disagreement, and the counter is what has to match.
+    await applyPattern('app');
+    await waitFor(() => expect(scanKeys.mock.calls.at(-1)?.[2]).toBe('app*'));
+    await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('2'));
+    expect(tree().getAttribute('data-row-count')).toBe('1');
+    expect(screen.getByTestId('redis-tree-folder-app:')).toBeTruthy();
+  });
+
   it('clearing the filter brings the rows back and the empty state goes', async () => {
     renderWorkbench();
     await screen.findByTestId('redis-tree-folder-app:');
-    await applyPattern('zzz');
+    // A typed literal is a *prefix* now, so the no-match case needs a head that
+    // genuinely has nothing under it: `zzz` would reach the server as `zzz*` and
+    // find `zzz-thing`. The empty state is the subject here, not the letter.
+    await applyPattern('nope');
     await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('0'));
     await screen.findByTestId('redis-tree-empty');
 
@@ -365,9 +449,7 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     const crumb = await screen.findByTestId('redis-tree-folder-app:');
     expect(crumb.getAttribute('data-breadcrumb')).toBe('true');
     // The surviving leaf is a real row.
-    expect(screen.getByTestId('redis-key-row-app:1').getAttribute('data-row-kind')).toBe(
-      'key',
-    );
+    expect(screen.getByTestId('redis-key-row-app:1').getAttribute('data-row-kind')).toBe('key');
     // Path context only: clicking the breadcrumb does not fold, and it cannot be
     // checked — there is no checkbox in that row at all.
     const before = childPrefixes().length;
@@ -395,21 +477,17 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('1'));
     // Select-all over the visible set takes exactly that one key.
     fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    await waitFor(() =>
-      expect(attr('redis-tree-batch-delete-count', 'data-count')).toBe('1'),
-    );
+    await waitFor(() => expect(tickedKeys()).toEqual(['zzz-thing']));
 
     // A pattern that keeps the two app keys: select-all takes exactly those,
     // never the `root-plain` key the same tree had before the filter.
     await applyPattern('app:*');
-    await waitFor(() => expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(false));
-    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    await waitFor(() =>
-      expect(attr('redis-tree-batch-delete-count', 'data-count')).toBe('2'),
+    await waitFor(() => expect(selectAllButton().disabled).toBe(false));
+    fireEvent.click(selectAllButton());
+    await waitFor(() => expect(tickedKeys().sort()).toEqual(['app:1', 'app:2']));
+    expect(screen.getByTestId('redis-tree-key-check-app:1').getAttribute('data-checked')).toBe(
+      'true',
     );
-    expect(
-      screen.getByTestId('redis-tree-key-check-app:1').getAttribute('data-checked'),
-    ).toBe('true');
     expect(screen.queryByTestId('redis-tree-key-check-root-plain')).toBeNull();
   });
 
@@ -427,7 +505,7 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     expect(childPrefixes().length).toBe(rootsBefore);
 
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('0'));
+    await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('1'));
   });
 
   it('R1 counts the pattern-visible set even when the flat scan ignored the glob', async () => {
@@ -452,7 +530,7 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
     await applyPattern('*nope');
     await waitFor(() => expect(tree().getAttribute('data-row-count')).toBe('0'));
     await waitFor(() => expect(attr('redis-tree-count', 'data-loaded')).toBe('0'));
-    expect(screen.getByTestId('redis-tree-select-all').disabled).toBe(true);
+    expect(selectAllButton().disabled).toBe(true);
     const empty = await screen.findByTestId('redis-tree-empty');
     expect(empty.getAttribute('data-empty-state')).toBe('no-match');
   });
@@ -496,9 +574,7 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
       // The pure client filter must agree with the (hand-written) server answer,
       // otherwise the two views can still disagree even though the widgets read
       // one source.
-      await waitFor(() =>
-        expect(filterKeysByPattern(KEYSPACE, pattern)).toEqual([...expected]),
-      );
+      await waitFor(() => expect(filterKeysByPattern(KEYSPACE, pattern)).toEqual([...expected]));
       // … and what R1 counts is that same set, so the flat list and the tree can
       // never show opposite facts for one pattern again. (The *row* count is not
       // asserted equal here: under a collapsed folder one row stands for many
@@ -553,5 +629,4 @@ describe('[redis-tree-ui-BUG-001] the applied pattern narrows the tree view', ()
       'redis.tree.filterUnloaded',
     );
   });
-
 });

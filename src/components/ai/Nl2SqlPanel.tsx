@@ -130,7 +130,7 @@ export function Nl2SqlPanel({
           {nl2sql.isGenerating ? (
             <Button variant="danger" className="h-7 gap-1 px-2 text-xs" onClick={handleStop}>
               <Square className="h-3 w-3" />
-              {t('common.stop') ?? 'Stop'}
+              {t('common.stop')}
             </Button>
           ) : (
             <>
@@ -172,9 +172,7 @@ export function Nl2SqlPanel({
         <div className="mx-2 mb-2 rounded border border-edge bg-surface overflow-hidden">
           <div className="flex items-center justify-between border-b border-edge bg-surface-alt px-2 py-1">
             <span className="text-[10px] text-fg-muted">
-              {nl2sql.isGenerating
-                ? (t('nl2sql.preview') ?? 'SQL Preview')
-                : (t('nl2sql.result') ?? 'Generated SQL')}
+              {nl2sql.isGenerating ? t('nl2sql.preview') : t('nl2sql.result')}
             </span>
             {nl2sql.isGenerating && <Loader2 className="h-3 w-3 animate-spin text-accent" />}
           </div>

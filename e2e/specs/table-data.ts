@@ -4,6 +4,7 @@ import {
   connectSeededPgInWorkspace,
   closeExtraWindows,
   executeSQL,
+  executeSQLChecked,
   openQueryTab,
   clickTableInSidebar,
   switchSubTab,
@@ -28,10 +29,12 @@ describe('表数据视图 (TD-001~TD-008)', () => {
     await waitForNewQueryButton(20000);
     await browser.pause(1500);
 
-    // Create test table with enough rows for pagination
+    // Create test table with enough rows for pagination. Checked DDL: a
+    // swallowed backend error (stale session bound to a replaced worker DB)
+    // used to surface only as a 20s `waitForTableInSidebar` timeout.
     await openQueryTab();
-    await executeSQL(`DROP TABLE IF EXISTS ${TEST_TABLE}`);
-    await executeSQL(`
+    await executeSQLChecked(`DROP TABLE IF EXISTS ${TEST_TABLE}`);
+    await executeSQLChecked(`
       CREATE TABLE ${TEST_TABLE} (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -40,7 +43,7 @@ describe('表数据视图 (TD-001~TD-008)', () => {
       )
     `);
     // Insert 60 rows to test pagination (default page size is 25)
-    await executeSQL(`
+    await executeSQLChecked(`
       INSERT INTO ${TEST_TABLE} (name, score)
       SELECT 'user_' || i, (i * 7) % 100
       FROM generate_series(1, 60) AS s(i)

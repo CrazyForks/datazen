@@ -18,12 +18,12 @@ const pack = {
   'backup.progressObject': 'Дамп {name} ({current}/{total})',
   'backup.progressWriting': 'Запись файла резервной копии…',
   'backup.restoreOverwriteConfirm':
-    'Целевая база данных "{database}" уже содержит {count} объектов. При продолжении существующие таблицы/представления будут удалены, а затем применена резервная копия. Перезаписать?',
+    'Целевая база данных «{database}» уже содержит {count} объектов. При продолжении существующие таблицы/представления будут удалены, а затем применена резервная копия. Перезаписать?',
   'backup.restorePreparing': 'Чтение файла резервной копии…',
   'backup.restoreProgress': 'Восстановление {name} ({current}/{total})',
   'backup.progressLog': 'Журнал выполнения',
   'backup.copyLog': 'Копировать журнал',
-  'backup.logCopied': 'Copied',
+  'backup.logCopied': 'Скопировано',
   'backup.logOmitted': '… {count} строк пропущено (журнал сокращён для экономии памяти)',
 } as const;
 export default pack;

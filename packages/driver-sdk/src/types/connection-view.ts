@@ -44,6 +44,13 @@ export interface ConnectionViewActions {
   openCreateSchema?: () => void;
   openCreateUser?: () => void;
   openErDiagram: (focusTable?: string, database?: string) => void;
+  /**
+   * Open a table's structure. The navigator's table context menu needs this to
+   * offer 打开结构 — `buildSchemaTreeContextMenuItems` drops the item unless
+   * `showOpenStructure` is set, and the navigator has no other way to know the
+   * host exposes a structure action.
+   */
+  openTableStructure?: (tableName: string) => void;
   refresh: () => void;
   openObject?: (
     kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',
@@ -58,6 +65,38 @@ export interface ConnectionViewActions {
 }
 
 export interface ConnectionViewProps {
+  /**
+   * Identity of the tab this view is rendered into.
+   *
+   * **Opaque.** It is a key and nothing else: do not parse it, do not assume a
+   * format or a counter, do not infer anything from it beyond "this string is
+   * the one and only identity of my tab". Its format is host-internal and may
+   * change at any time; only its uniqueness and stability matter.
+   *
+   * Unique per tab and stable for the tab's whole life. Unlike `dbSessionId` it
+   * does NOT repeat across tabs: two tabs on the same database of one connection
+   * share a `dbSessionId` but never share a `panelId`. Use it to key any state
+   * that must stay with this tab without leaking into a sibling.
+   *
+   * Session-scoped, like the tab itself. The host does not persist it, so do not
+   * persist anything keyed by it either.
+   */
+  panelId: string;
+  /**
+   * Register a callback for when the host closes this tab, and get an
+   * unsubscribe back. The callback fires at most once, after the tab is gone.
+   *
+   * Use it to drop per-tab caches. It is the ONLY reliable disposal signal:
+   *
+   * - Do **not** clean up on unmount. The host renders only the active tab, so
+   *   switching tabs unmounts this view too — and the state must survive that.
+   * - Do clean up here, because a tab can be closed while it is unmounted, and
+   *   only the host knows it is gone.
+   *
+   * The host keeps the registration alive across unmounts, so registering once
+   * is enough; re-registering on every mount is harmless but pointless.
+   */
+  onPanelClosed: (handler: () => void) => () => void;
   /** Live database session id used for every query/IPC this view issues. */
   dbSessionId: string;
   /** Persistent saved-connection ID (stable across restarts). */

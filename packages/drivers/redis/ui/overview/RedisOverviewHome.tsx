@@ -8,7 +8,6 @@ import {
   SLOWLOG_LIMIT,
   buildBannerPills,
   buildBigKeyRows,
-  buildKeySpaceModel,
   buildMemoryModel,
   buildServerRows,
   buildSlowlogRows,
@@ -21,33 +20,24 @@ import {
   type OverviewJumpTarget,
 } from './overviewNavigation';
 import { RedisOverviewBanner } from './RedisOverviewBanner';
-import { ServerInfoCard } from './ServerInfoCard';
-import { MemoryCard } from './MemoryCard';
-import { KeySpaceCard } from './KeySpaceCard';
-import { SlowlogCard } from './SlowlogCard';
-import { QuickActionsCard } from './QuickActionsCard';
-import { RecentKeysCard } from './RecentKeysCard';
+import { InstanceCard } from './InstanceCard';
+import { PerformanceCard } from './PerformanceCard';
+import { NavigationCard } from './NavigationCard';
 import { clearBrowseHistory, pushBrowseEntry, readBrowseHistory } from '../lib/redisBrowseHistory';
+
+/**概览屏 Recent Keys 最多显示条数（适配一屏布局）。 */
+const RECENT_KEYS_LIMIT = 3;
 
 /**
  * 屏 A — Redis 连接总览（`kvSlots.connectionHome` 的驱动贡献）。
  *
- * Composition root only: it owns the jump intent + the pending-jump fallback and
- * hands each block its slice of the model. Seven blocks per PRD §3.1 — banner +
- * 卡 1 Server 概览 + 卡 2 内存 + 卡 3 Key Space + 卡 4 慢查询 + KV 快捷动作 +
- * 最近浏览键 — all fed by the four commands in `useOverviewData`, zero SCAN.
+ * Two-row layout that fits a single viewport without scrollbars:
+ *  Row 1: InstanceCard (Server + Memory side-by-side, full width)
+ *  Row 2: PerformanceCard (Slowlog + Big Keys) ‖ NavigationCard (Quick Actions + Recent Keys)
  *
- * The host wrapper (`ConnectionWorkspaceHome.tsx`) owns the scroll container and
- * the `data-slot="kv-connection-home"` marker; this component owns its layout.
+ * All fed by the commands in `useOverviewData`, zero SCAN.
  */
 export interface RedisOverviewHomeProps extends ConnectionHomeSlotProps {
-  /**
-   * Host bridge that opens a db panel / selects a key (屏 A → 屏 B).
-   *
-   * NOT part of the frozen `ConnectionHomeSlotProps` contract yet, so the host
-   * never passes it today: every jump then degrades to a named hint instead of
-   * pretending to work. See `overviewNavigation.ts` + the track ledger.
-   */
   onOpenTarget?: OverviewJumpHandler;
 }
 
@@ -74,7 +64,6 @@ export function RedisOverviewHome({
     () => buildBigKeyRows(data.memory.data, BIG_KEY_LIMIT),
     [data.memory.data],
   );
-  const keySpace = useMemo(() => buildKeySpaceModel(data.dbSizes.data), [data.dbSizes.data]);
   const slowlogRows = useMemo(
     () => buildSlowlogRows(data.slowlog.data, SLOWLOG_LIMIT),
     [data.slowlog.data],
@@ -86,7 +75,6 @@ export function RedisOverviewHome({
       const outcome = requestOverviewJump(target, onOpenTarget);
       if (outcome.handled) {
         setHintKey(null);
-        // PRD 最近浏览键 = 真正到过的键；只有桥接成功的 key 跳转才入历史。
         if (target.kind === 'key') {
           setRecent(
             pushBrowseEntry(connectionId, {
@@ -114,11 +102,10 @@ export function RedisOverviewHome({
         connectionName={connectionName}
         pills={pills}
         loading={data.info.status === 'loading'}
-        onJump={handleJump}
-        jumpHandler={onOpenTarget}
+        onRefresh={data.refresh}
       />
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 overflow-hidden p-3">
         {hintKey ? (
           <div
             role="status"
@@ -139,42 +126,36 @@ export function RedisOverviewHome({
           </div>
         ) : null}
 
-        <div data-overview-grid className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <ServerInfoCard
+        <div data-overview-grid className="grid min-h-0 grid-rows-[auto_1fr] gap-2">
+          {/* 1. Instance: Server + Memory side-by-side, full width */}
+          <InstanceCard
             status={data.info.status}
-            rows={serverRows}
+            serverRows={serverRows}
+            memoryModel={memoryModel}
             onRetry={data.refresh}
           />
-          <MemoryCard
-            infoStatus={data.info.status}
-            memoryStatus={data.memory.status}
-            model={memoryModel}
-            bigKeys={bigKeys}
-            sampledDbIndex={dbIndex}
-            truncated={data.memory.data?.truncated === true}
-            onRetry={data.refresh}
-            onJump={handleJump}
-            jumpHandler={onOpenTarget}
-          />
-          <KeySpaceCard
-            status={data.dbSizes.status}
-            model={keySpace}
-            onRetry={data.refresh}
-            onJump={handleJump}
-            jumpHandler={onOpenTarget}
-          />
-          <SlowlogCard status={data.slowlog.status} rows={slowlogRows} onRetry={data.refresh} />
-          <QuickActionsCard
-            defaultDbIndex={dbIndex}
-            onJump={handleJump}
-            jumpHandler={onOpenTarget}
-          />
-          <RecentKeysCard
-            entries={recent}
-            onJump={handleJump}
-            onClear={handleClearRecent}
-            jumpHandler={onOpenTarget}
-          />
+
+          {/* 2+3. Performance + Navigation side-by-side */}
+          <div className="grid min-h-0 grid-cols-2 gap-2">
+            <PerformanceCard
+              slowlogStatus={data.slowlog.status}
+              slowlogRows={slowlogRows}
+              memoryStatus={data.memory.status}
+              bigKeys={bigKeys}
+              sampledDbIndex={dbIndex}
+              truncated={data.memory.data?.truncated === true}
+              onRetry={data.refresh}
+              onJump={handleJump}
+              jumpHandler={onOpenTarget}
+            />
+            <NavigationCard
+              defaultDbIndex={dbIndex}
+              recentEntries={recent.slice(0, RECENT_KEYS_LIMIT)}
+              onJump={handleJump}
+              onClearRecent={handleClearRecent}
+              jumpHandler={onOpenTarget}
+            />
+          </div>
         </div>
       </div>
     </div>

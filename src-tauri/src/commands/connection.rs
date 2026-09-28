@@ -475,6 +475,7 @@ mod tests {
                 "postgres",
                 test.mock.clone(),
                 crate::db::DriverCapabilities {
+                    has_multi_database: false,
                     supports_cancel_query: true,
                     supports_query_execution_cancel: true,
                     supports_explain: true,

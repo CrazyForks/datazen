@@ -366,6 +366,10 @@ impl MysqlDriver {
 
 #[async_trait]
 impl DatabaseDriver for MysqlDriver {
+    fn has_multi_database(&self) -> bool {
+        true
+    }
+
     fn migration_renderer(
         &self,
     ) -> Option<std::sync::Arc<dyn datazen_driver_api::MigrationRenderer>> {

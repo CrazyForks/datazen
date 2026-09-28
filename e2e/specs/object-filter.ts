@@ -14,7 +14,9 @@ import {
   connectSeededPgInWorkspace,
   E2E_PG_CONN_NAME,
   executeSQL,
+  executeSQLChecked,
   openQueryTab,
+  waitForTableInSidebar,
   withSafeModeOff,
   clickNavigatorRefresh,
 } from '../helpers.js';
@@ -139,6 +141,38 @@ async function visibleTableNames(): Promise<string[]> {
   });
 }
 
+/**
+ * 反复展开 schema 树并读取可见表/视图名，直到谓词满足。
+ *
+ * 树是虚拟化 + 异步加载的：在固定 pause 后做一次性读取必然偶发空数组
+ * （OPS-FILTER-003/005 曾以 `received []` 失败）。改为条件化轮询；超时
+ * 抛出带最后一次读取内容的错误，便于定位是过滤配置问题还是加载时序问题。
+ */
+async function waitVisibleTableNames(
+  predicate: (names: string[]) => boolean,
+  timeoutMsg: string,
+  timeout = 20000,
+): Promise<string[]> {
+  let last: string[] = [];
+  try {
+    await browser.waitUntil(
+      async () => {
+        try {
+          await expandSchemaTables();
+          last = await visibleTableNames();
+          return predicate(last);
+        } catch {
+          return false;
+        }
+      },
+      { timeout, interval: 1000, timeoutMsg },
+    );
+  } catch {
+    throw new Error(`${timeoutMsg}；最后一次可见节点=${JSON.stringify(last)}`);
+  }
+  return last;
+}
+
 /** 展开连接 → 其下某 schema（默认 public）以加载表节点。 */
 async function expandSchemaTables(schemaFilter = 'public', connName = E2E_PG_CONN_NAME) {
   await browser.execute((name: string) => {
@@ -234,20 +268,41 @@ describe('运维 §5.4: 对象过滤器 (OPS-FILTER)', () => {
     // 用 seeded PG 建测试表
     await connectSeededPgInWorkspace();
     await openQueryTab();
+    // Checked DDL: `executeSQL` swallows backend errors, so a stale session
+    // bound to a replaced worker DB used to make every CREATE silently fail
+    // and OPS-FILTER-003 then read `[]` from the tree.
     await withSafeModeOff(async () => {
-      await executeSQL(`DROP TABLE IF EXISTS public.${FT1}`);
-      await executeSQL(`DROP TABLE IF EXISTS public.${FT2}`);
-      await executeSQL(`DROP TABLE IF EXISTS public.${PLAIN}`);
-      await executeSQL(`CREATE TABLE public.${FT1} (id int PRIMARY KEY)`);
-      await executeSQL(`CREATE TABLE public.${FT2} (id int PRIMARY KEY)`);
-      await executeSQL(`CREATE TABLE public.${PLAIN} (id int PRIMARY KEY)`);
+      await executeSQLChecked(`DROP TABLE IF EXISTS public.${FT1}`);
+      await executeSQLChecked(`DROP TABLE IF EXISTS public.${FT2}`);
+      await executeSQLChecked(`DROP TABLE IF EXISTS public.${PLAIN}`);
+      await executeSQLChecked(`CREATE TABLE public.${FT1} (id int PRIMARY KEY)`);
+      await executeSQLChecked(`CREATE TABLE public.${FT2} (id int PRIMARY KEY)`);
+      await executeSQLChecked(`CREATE TABLE public.${PLAIN} (id int PRIMARY KEY)`);
     });
+    // Closed-loop gate: the tables must exist and the navigator must know
+    // about them before the filter assertions below.
+    await clickNavigatorRefresh();
+    await waitForTableInSidebar(FT1);
+    await waitForTableInSidebar(FT2);
+    await waitForTableInSidebar(PLAIN);
     await closeExtraWindows(mainWindow);
   });
 
   after(async () => {
+    // 先无条件清空 include 过滤：app-settings 级过滤器跨用例文件持久化
+    // （cleanupAppDataViaIpc 不重置 settings），残留的 `e2e_*` 会把后续
+    // 兄弟用例的 `_e2e_*` 表全部从树里隐藏，污染整个 E2E 运行。
     try {
       await connectSeededPgInWorkspace();
+      await openObjectFilterDialog();
+      await setInputByPlaceholder(t('objectFilter.includePlaceholder'), '');
+      await clickDialogSave();
+      await browser.pause(500);
+    } catch {
+      /* best effort */
+    }
+    // 独立 try：即使过滤对话框打开失败也要执行 DROP 清理。
+    try {
       await openQueryTab();
       await withSafeModeOff(async () => {
         await executeSQL(`DROP TABLE IF EXISTS public.${FT1}`);
@@ -308,8 +363,11 @@ describe('运维 §5.4: 对象过滤器 (OPS-FILTER)', () => {
     await browser.pause(1500);
     await clickNavigatorRefresh();
     await browser.pause(1500);
-    await expandSchemaTables();
-    const names = await visibleTableNames();
+    // 条件化轮询（虚拟化树异步加载，固定 pause 后一次性读取会偶发 []）
+    const names = await waitVisibleTableNames(
+      (n) => n.includes(FT1) && n.includes(FT2) && !n.includes(PLAIN),
+      '等待过滤后的 schema 树显示 e2e_ft_* 且排除 plain_table',
+    );
     expect(names).toContain(FT1);
     expect(names).toContain(FT2);
     expect(names).not.toContain(PLAIN);
@@ -345,8 +403,11 @@ describe('运维 §5.4: 对象过滤器 (OPS-FILTER)', () => {
     await browser.pause(1500);
     await clickNavigatorRefresh();
     await browser.pause(1500);
-    await expandSchemaTables();
-    const names = await visibleTableNames();
+    // 条件化轮询（同 003：一次性读取会偶发 []）
+    const names = await waitVisibleTableNames(
+      (n) => n.includes(PLAIN),
+      '等待清空 include 后 plain_table 恢复显示',
+    );
     expect(names).toContain(PLAIN);
   });
 });

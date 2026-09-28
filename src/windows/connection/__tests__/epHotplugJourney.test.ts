@@ -31,13 +31,25 @@ import {
   createPasteExtensions,
   createLinterExtensions,
   reconfigureProCompartments,
+  type ProCompartmentPayload,
 } from '../../../components/sql-editor/editorExtensions';
-import { signEpPackage } from '../../../../scripts/sign-ep.mjs';
+// @ts-expect-error - `scripts/sign-ep.mjs` is untyped Node ESM (no .d.ts).
+import { signEpPackage as signEpPackageUntyped } from '../../../../scripts/sign-ep.mjs';
 import {
-  stagePackageTree,
-  createDzxArchive,
-  REQUIRED_PACKAGE_PATHS,
+  stagePackageTree as stagePackageTreeUntyped,
+  createDzxArchive as createDzxArchiveUntyped,
+  REQUIRED_PACKAGE_PATHS as requiredPackagePathsUntyped,
+  // `scripts/pack-ep.mjs` is untyped Node ESM (no .d.ts). Must sit immediately
+  // above the module-specifier line: for a multi-line import TS anchors TS7016
+  // to `} from '...'`, not to the `import {` line, so a directive placed above
+  // `import {` silently fails to suppress.
+  // @ts-expect-error
 } from '../../../../scripts/pack-ep.mjs';
+
+const signEpPackage = signEpPackageUntyped as (opts: { packageDir: string }) => { sigDoc: unknown };
+const stagePackageTree = stagePackageTreeUntyped as (sourceDir: string, targetDir: string) => void;
+const createDzxArchive = createDzxArchiveUntyped as (packageDir: string, outFile: string) => void;
+const REQUIRED_PACKAGE_PATHS: readonly string[] = requiredPackagePathsUntyped;
 import { unzipSync } from 'fflate';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -115,25 +127,25 @@ describe('EP Hot-plugging Full Journey (R-Phase)', () => {
       createPasteAsInContextMenuItems: vi.fn(() => null),
       createLinterExtensions: vi.fn(() => []),
       createSignatureHelpExtensions: vi.fn(() => []),
-      useStatementNavigation: vi.fn(),
-      useStatementGutter: vi.fn(),
       useBindParameters: vi.fn(),
-      useHoverTooltip: vi.fn(),
-      useSignatureHelp: vi.fn(),
-      useJoinCompletion: vi.fn(),
-      useSqlIntentions: vi.fn(),
-      usePasteAsIn: vi.fn(),
     };
 
     extensionRegistry.register(sqlEditorEnhancedEP, mockEnhancedFeatures);
     expect(extensionRegistry.isEnhanced(sqlEditorEnhancedEP)).toBe(true);
 
+    // The payload is the resolved per-compartment extension set, i.e. exactly
+    // the extensions the compartments above were built with.
+    const proPayload: ProCompartmentPayload = {
+      statement: statementExts,
+      completion: completionExts,
+      intention: intentionExts,
+      hover: hoverExts,
+      paste: pasteExts,
+      linter: linterExts,
+    };
+
     // Reconfigure compartments without destroying view
-    reconfigureProCompartments(view, {
-      opts: { databaseType: 'postgresql' },
-      refs: { modelRef, metadataSnapshotRef },
-      statementOpts: { enabled: true },
-    });
+    reconfigureProCompartments(view, proPayload);
 
     // Assert: Document and cursor selection completely preserved
     expect(view.state.doc.toString()).toBe(textBeforeHotplug);
@@ -143,11 +155,7 @@ describe('EP Hot-plugging Full Journey (R-Phase)', () => {
     extensionRegistry.unregister(sqlEditorEnhancedEP);
     expect(extensionRegistry.isEnhanced(sqlEditorEnhancedEP)).toBe(false);
 
-    reconfigureProCompartments(view, {
-      opts: { databaseType: 'postgresql' },
-      refs: { modelRef, metadataSnapshotRef },
-      statementOpts: { enabled: true },
-    });
+    reconfigureProCompartments(view, proPayload);
 
     // Assert: View state intact, smoothly downgraded to fallback
     expect(view.state.doc.toString()).toBe(textBeforeHotplug);

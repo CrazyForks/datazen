@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import type { TableInfo } from '../../types';
 
 vi.mock('../../commands/database', () => ({
   databaseCommands: {
@@ -673,7 +674,9 @@ describe('schemaStore namespace merge APIs', () => {
   });
 
   it('cachePathItems stores get_tables rows by fetch path', async () => {
-    const items = [{ name: '558/hive', tableType: 'table', schema: 'CATALOG', rowCount: null }];
+    const items: TableInfo[] = [
+      { name: '558/hive', tableType: 'table', schema: 'CATALOG', rowCount: null },
+    ];
     useSchemaStore.getState().cachePathItems('558', items);
     expect(useSchemaStore.getState().pathItems['558']).toEqual(items);
   });
@@ -745,7 +748,7 @@ describe('schemaStore namespace merge APIs', () => {
     useSchemaStore.setState({ isMultiDatabase: true });
     useSchemaStore.getState().setLoadedTables('app', [
       { name: 'users', tableType: 'table', schema: null, rowCount: null },
-      { name: 'orders', tableType: 'table', schema: null, rowCount: null },
+      { name: 'orders', tableType: 'table' },
     ]);
     useSchemaStore
       .getState()
@@ -760,7 +763,7 @@ describe('schemaStore namespace merge APIs', () => {
     useSchemaStore.setState({ isMultiDatabase: true });
     useSchemaStore.getState().setLoadedTables('app', [
       { name: 'users', tableType: 'table', schema: null, rowCount: null },
-      { name: 'orders', tableType: 'table', schema: null, rowCount: null },
+      { name: 'orders', tableType: 'table' },
     ]);
     useSchemaStore.getState().removeRelation('orders');
     expect(useSchemaStore.getState().tables.map((t) => t.name)).toEqual(['users']);
@@ -783,9 +786,7 @@ describe('schemaStore.ensureNamespacePath ensuringCount', () => {
   });
 
   it('increments while a namespace fetch is in flight', async () => {
-    let release!: (
-      value: { name: string; tableType: string; schema: string; rowCount: null }[],
-    ) => void;
+    let release!: (value: TableInfo[]) => void;
     vi.mocked(databaseCommands.getTables).mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -852,9 +853,9 @@ describe('schemaStore keyed multi-connection', () => {
     });
     vi.mocked(databaseCommands.getTables).mockImplementation(async (_conn, db) => {
       if (db === 'db_a') {
-        return [{ name: 'users_a', tableType: 'TABLE', schema: null, rowCount: null }];
+        return [{ name: 'users_a', tableType: 'table' }];
       }
-      return [{ name: 'users_b', tableType: 'TABLE', schema: null, rowCount: null }];
+      return [{ name: 'users_b', tableType: 'table' }];
     });
 
     await useSchemaStore.getState().loadForConnection('conn-a', {
@@ -912,7 +913,7 @@ describe('schemaStore keyed multi-connection', () => {
       return ['db_b'];
     });
     vi.mocked(databaseCommands.getTables).mockImplementation(async (_conn, db) => [
-      { name: `t_${db}`, tableType: 'TABLE', schema: null, rowCount: null },
+      { name: `t_${db}`, tableType: 'table' },
     ]);
 
     await useSchemaStore.getState().loadForConnection('conn-a', {
@@ -935,16 +936,10 @@ describe('schemaStore keyed multi-connection', () => {
 
   it('ensureColumns uses per-connection columnInflight', async () => {
     useSchemaStore.setState({ dbSessionId: 'conn-a', columnMap: {} });
-    useSchemaStore
-      .getState()
-      .setLoadedTables('db', [{ name: 'users', tableType: 'table', schema: null, rowCount: null }]);
+    useSchemaStore.getState().setLoadedTables('db', [{ name: 'users', tableType: 'table' }]);
 
     useSchemaStore.setState({ dbSessionId: 'conn-b', columnMap: {} });
-    useSchemaStore
-      .getState()
-      .setLoadedTables('db', [
-        { name: 'orders', tableType: 'table', schema: null, rowCount: null },
-      ]);
+    useSchemaStore.getState().setLoadedTables('db', [{ name: 'orders', tableType: 'table' }]);
 
     vi.mocked(databaseCommands.getColumns).mockClear();
     await useSchemaStore.getState().ensureColumns(['users'], 'conn-a', 'db');

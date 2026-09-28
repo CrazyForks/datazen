@@ -16,15 +16,14 @@ describe('StructureView', () => {
     vi.mocked(schemaCache.getCachedTableSchema).mockResolvedValue({
       tableName: 'er_customers',
       columns: [
-        { name: 'id', dataType: 'integer', nullable: false, defaultValue: null, comment: null },
+        { name: 'id', dataType: 'integer', nullable: false, defaultValue: null },
         {
           name: 'order_no',
           dataType: 'varchar(64)',
           nullable: false,
           defaultValue: null,
-          comment: null,
         },
-        { name: 'city', dataType: 'text', nullable: true, defaultValue: null, comment: null },
+        { name: 'city', dataType: 'text', nullable: true, defaultValue: null },
       ],
       primaryKeys: ['id'],
       indexes: [],
@@ -34,7 +33,14 @@ describe('StructureView', () => {
     const scrollIntoViewMock = vi.fn();
     window.HTMLElement.prototype.scrollIntoView = scrollIntoViewMock;
 
-    render(<StructureView dbSessionId="sess-1" tableName="er_customers" targetColumn="order_no" />);
+    render(
+      <StructureView
+        dbSessionId="sess-1"
+        tableName="er_customers"
+        database="appdb"
+        targetColumn="order_no"
+      />,
+    );
 
     await waitFor(() => {
       expect(screen.getByText('er_customers')).toBeInTheDocument();
@@ -53,9 +59,7 @@ describe('StructureView', () => {
   it('passes database to getCachedTableSchema when provided', async () => {
     vi.mocked(schemaCache.getCachedTableSchema).mockResolvedValue({
       tableName: 'users',
-      columns: [
-        { name: 'id', dataType: 'integer', nullable: false, defaultValue: null, comment: null },
-      ],
+      columns: [{ name: 'id', dataType: 'integer', nullable: false, defaultValue: null }],
       primaryKeys: ['id'],
       indexes: [],
       foreignKeys: [],

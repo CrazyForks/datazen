@@ -1,0 +1,843 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Redis DB Panel — 原型图 (Prototype v2)</title>
+    <style>
+      :root {
+        --bg: #1a1b26;
+        --bg-alt: #24253a;
+        --bg-surface: #1f2033;
+        --bg-hover: #2a2b3d;
+        --border: #3b3d56;
+        --fg: #c0caf5;
+        --fg-muted: #565f89;
+        --fg-dim: #737aa2;
+        --accent: #7aa2f7;
+        --success: #9ece6a;
+        --danger: #f7768e;
+        --zset: #ff9e64;
+        --string: #7aa2f7;
+        --hash: #9ece6a;
+        --list: #e0af68;
+        --set: #bb9af7;
+        --stream: #7dcfff;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        height: 100vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .header-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 40px;
+        padding: 0 12px;
+        background: var(--bg-alt);
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--fg-dim);
+      }
+      .header-bar .btn-icon {
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        border: none;
+        background: none;
+        color: var(--fg-dim);
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .header-bar .btn-icon:hover {
+        background: var(--bg-hover);
+        color: var(--fg);
+      }
+      .header-bar .sep {
+        width: 1px;
+        height: 18px;
+        background: var(--border);
+      }
+      .main {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      .sidebar {
+        width: 220px;
+        min-width: 180px;
+        background: var(--bg-alt);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+      }
+      .sidebar-search {
+        padding: 8px;
+      }
+      .sidebar-search input {
+        width: 100%;
+        height: 28px;
+        padding: 0 8px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--bg-surface);
+        color: var(--fg);
+        font-size: 12px;
+        outline: none;
+      }
+      .sidebar-search input::placeholder {
+        color: var(--fg-muted);
+      }
+      .sidebar-search input:focus {
+        border-color: var(--accent);
+      }
+      .sidebar-tree {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0 4px;
+      }
+      .tree-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        cursor: pointer;
+        color: var(--fg-dim);
+      }
+      .tree-item:hover {
+        background: var(--bg-hover);
+      }
+      .tree-item.active {
+        background: var(--accent);
+        color: var(--bg);
+      }
+      .tree-item .icon {
+        width: 16px;
+        text-align: center;
+        font-size: 11px;
+      }
+      .tree-item .count {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--fg-muted);
+      }
+      .tree-item.active .count {
+        color: var(--bg);
+        opacity: 0.7;
+      }
+      .tree-children {
+        padding-left: 16px;
+      }
+      .panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        background: var(--bg);
+      }
+      .panel-tab-bar {
+        display: flex;
+        align-items: center;
+        height: 40px;
+        background: var(--bg-alt);
+        border-bottom: 1px solid var(--border);
+        padding: 0 4px;
+      }
+      .panel-tab {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 32px;
+        padding: 0 12px;
+        border-radius: 6px 6px 0 0;
+        font-size: 12px;
+        cursor: pointer;
+        color: var(--fg-dim);
+        border: 1px solid transparent;
+        border-bottom: none;
+        background: transparent;
+      }
+      .panel-tab.active {
+        background: var(--bg);
+        color: var(--fg);
+        border-color: var(--border);
+      }
+      .panel-tab .tab-icon {
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .panel-tab .tab-icon img {
+        width: 16px;
+        height: 16px;
+      }
+      .panel-tab .close-btn {
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 3px;
+        font-size: 11px;
+        color: var(--fg-muted);
+        opacity: 0;
+        transition: opacity 0.15s;
+      }
+      .panel-tab:hover .close-btn {
+        opacity: 1;
+      }
+      .panel-tab .close-btn:hover {
+        background: var(--danger);
+        color: white;
+      }
+      .panel-content {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+
+      /* Key browser */
+      .key-browser {
+        width: 480px;
+        min-width: 320px;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--border);
+        background: var(--bg);
+      }
+      .kb-row1 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      .view-modes {
+        display: flex;
+        gap: 0;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .view-mode-btn {
+        height: 24px;
+        padding: 0 10px;
+        border: none;
+        background: transparent;
+        color: var(--fg-dim);
+        font-size: 11px;
+        cursor: pointer;
+        border-right: 1px solid var(--border);
+      }
+      .view-mode-btn:last-child {
+        border-right: none;
+      }
+      .view-mode-btn:hover {
+        background: var(--bg-hover);
+        color: var(--fg);
+      }
+      .view-mode-btn.active {
+        background: var(--accent);
+        color: var(--bg);
+      }
+      .kb-row1 .spacer {
+        flex: 1;
+      }
+      .kb-row1 .key-count {
+        font-size: 12px;
+        color: var(--fg-muted);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .kb-row1 .key-count .num {
+        color: var(--fg);
+        font-weight: 500;
+      }
+      .kb-row1 .btn-text {
+        border: none;
+        background: none;
+        color: var(--accent);
+        font-size: 12px;
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-weight: 500;
+      }
+      .kb-row1 .btn-text:hover {
+        background: var(--bg-hover);
+      }
+      .kb-row1 .icon-btn {
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 3px;
+        border: none;
+        background: none;
+        color: var(--fg-muted);
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .kb-row1 .icon-btn:hover {
+        background: var(--bg-hover);
+        color: var(--fg);
+      }
+
+      .kb-row2 {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+      }
+      .search-wrapper {
+        flex: 1;
+        position: relative;
+      }
+      .search-wrapper .search-icon {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 13px;
+        color: var(--fg-muted);
+        pointer-events: none;
+      }
+      .search-wrapper input {
+        width: 100%;
+        height: 30px;
+        padding: 0 10px 0 32px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--bg-surface);
+        color: var(--fg);
+        font-size: 12px;
+        outline: none;
+      }
+      .search-wrapper input::placeholder {
+        color: var(--fg-muted);
+      }
+      .search-wrapper input:focus {
+        border-color: var(--accent);
+      }
+      .toggle-group {
+        display: flex;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+      .toggle-btn {
+        height: 28px;
+        padding: 0 10px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--fg-dim);
+        font-size: 11px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        white-space: nowrap;
+      }
+      .toggle-btn:hover {
+        border-color: var(--fg-muted);
+        color: var(--fg);
+      }
+      .toggle-btn.active {
+        border-color: var(--accent);
+        color: var(--accent);
+        background: rgba(122, 162, 247, 0.08);
+      }
+
+      .kb-tree {
+        flex: 1;
+        overflow-y: auto;
+        padding: 2px 4px;
+      }
+      .key-folder-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        cursor: pointer;
+        color: var(--fg-dim);
+      }
+      .key-folder-header:hover {
+        background: var(--bg-hover);
+      }
+      .key-folder-header .arrow {
+        width: 12px;
+        text-align: center;
+        font-size: 10px;
+        color: var(--fg-muted);
+      }
+      .key-folder-header .folder-icon {
+        color: var(--accent);
+        font-size: 13px;
+      }
+      .key-folder-header .folder-name {
+        font-weight: 500;
+      }
+      .key-folder-header .folder-count {
+        margin-left: 4px;
+        font-size: 11px;
+        color: var(--fg-muted);
+        font-weight: normal;
+      }
+      .key-leaf {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 8px 3px 28px;
+        border-radius: 4px;
+        font-size: 12px;
+        cursor: pointer;
+        color: var(--fg-dim);
+      }
+      .key-leaf:hover {
+        background: var(--bg-hover);
+      }
+      .key-leaf.selected {
+        background: var(--accent);
+        color: var(--bg);
+      }
+      .key-leaf .key-name {
+        flex: 1;
+        font-family: 'SF Mono', 'Cascadia Code', monospace;
+        font-size: 12px;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .key-leaf.selected .key-name {
+        color: var(--bg);
+      }
+      .key-leaf .key-type {
+        font-size: 10px;
+        padding: 1px 6px;
+        border-radius: 3px;
+        border: 1px solid;
+        white-space: nowrap;
+        font-weight: 500;
+      }
+      .key-leaf .key-ttl {
+        font-size: 10px;
+        color: var(--fg-muted);
+        white-space: nowrap;
+      }
+      .type-string {
+        color: var(--string);
+        border-color: rgba(122, 162, 247, 0.3);
+      }
+      .type-hash {
+        color: var(--hash);
+        border-color: rgba(158, 206, 106, 0.3);
+      }
+      .type-zset {
+        color: var(--zset);
+        border-color: rgba(255, 158, 100, 0.3);
+      }
+
+      .detail-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .detail-tab-bar {
+        display: flex;
+        align-items: center;
+        height: 36px;
+        padding: 0 12px;
+        gap: 0;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-surface);
+      }
+      .detail-tab {
+        height: 100%;
+        padding: 0 14px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 12px;
+        color: var(--fg-muted);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
+      }
+      .detail-tab:hover {
+        color: var(--fg);
+      }
+      .detail-tab.active {
+        color: var(--fg);
+        border-bottom-color: var(--accent);
+        font-weight: 500;
+      }
+      .detail-tab .tab-emoji {
+        font-size: 13px;
+      }
+      .detail-content {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .detail-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        color: var(--fg-muted);
+      }
+      .detail-empty .empty-icon {
+        font-size: 32px;
+        opacity: 0.3;
+      }
+      .detail-empty .empty-text {
+        font-size: 13px;
+      }
+
+      .resize-handle {
+        width: 4px;
+        cursor: col-resize;
+        background: transparent;
+        flex-shrink: 0;
+      }
+      .resize-handle:hover {
+        background: var(--accent);
+      }
+      ::-webkit-scrollbar {
+        width: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header-bar">
+      <button class="btn-icon">↓↑</button>
+      <span class="sep"></span>
+      <button class="btn-icon">+</button>
+      <button class="btn-icon">📄</button>
+      <button class="btn-icon">⇄</button>
+      <button class="btn-icon">↻</button>
+      <span class="sep"></span>
+      <span style="flex: 1"></span>
+    </div>
+
+    <div class="main">
+      <div class="sidebar">
+        <div class="sidebar-search"><input type="text" placeholder="搜索连接..." /></div>
+        <div class="sidebar-tree">
+          <div class="tree-item"><span class="icon">📁</span><span>RECENT (2)</span></div>
+          <div class="tree-children">
+            <div class="tree-item active">
+              <span class="icon" style="color: var(--danger)">🔴</span><span>Redis-Local</span
+              ><span class="count" style="color: var(--success)">●</span>
+            </div>
+            <div class="tree-children">
+              <div class="tree-item" style="padding-left: 8px">
+                <span class="icon" style="font-size: 10px">🗄️</span><span>db0</span
+                ><span class="count">(52)</span>
+              </div>
+              <div class="tree-item" style="padding-left: 8px">
+                <span class="icon" style="font-size: 10px">🗄️</span><span>db1</span
+                ><span class="count">(3)</span>
+              </div>
+              <div class="tree-item" style="padding-left: 8px; color: var(--fg-muted)">
+                <span class="icon" style="font-size: 10px">🗄️</span><span>db2</span
+                ><span class="count">(0)</span>
+              </div>
+            </div>
+          </div>
+          <div class="tree-item" style="margin-top: 4px">
+            <span class="icon">🗄️</span><span>MySQL-Local</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-tab-bar">
+          <div class="panel-tab active">
+            <span class="tab-icon"
+              ><img src="../packages/drivers/redis/ui/icons/redis.svg" alt="R"
+            /></span>
+            <span>Redis-Local@db0</span>
+            <span class="close-btn">×</span>
+          </div>
+        </div>
+        <div class="panel-content">
+          <div class="key-browser">
+            <!-- Row 1: 键/值/全部 | count | 全选 ↻ + -->
+            <div class="kb-row1">
+              <div class="view-modes">
+                <button class="view-mode-btn active" onclick="setViewMode(this)">键</button>
+                <button class="view-mode-btn" onclick="setViewMode(this)">值</button>
+                <button class="view-mode-btn" onclick="setViewMode(this)">全部</button>
+              </div>
+              <span class="spacer"></span>
+              <span class="key-count"
+                >已加载 <span class="num">52</span> / 共 <span class="num">52</span> 个 key</span
+              >
+              <button class="btn-text">全选</button>
+              <button class="icon-btn" title="刷新">↻</button>
+              <button class="icon-btn" title="新建 Key">+</button>
+            </div>
+            <!-- Row 2: search + toggles -->
+            <div class="kb-row2">
+              <div class="search-wrapper">
+                <span class="search-icon">🔍</span>
+                <input type="text" placeholder="匹配模式 (如 user:*)" />
+              </div>
+              <div class="toggle-group">
+                <button class="toggle-btn active">* 模糊</button>
+                <button class="toggle-btn">⏱ 仅无过期</button>
+              </div>
+            </div>
+            <!-- Tree -->
+            <div class="kb-tree">
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▾</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">app</span><span class="folder-count">(6)</span>
+                </div>
+                <div class="key-leaf" onclick="selectKey(this,'app:config')">
+                  <span class="key-name">config</span><span class="key-type type-hash">hash</span
+                  ><span class="key-ttl">永不过期</span>
+                </div>
+                <div class="key-leaf" onclick="selectKey(this,'app:version')">
+                  <span class="key-name">version</span
+                  ><span class="key-type type-string">string</span
+                  ><span class="key-ttl">86400s</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▾</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">big</span><span class="folder-count">(4)</span>
+                </div>
+                <div class="key-leaf" onclick="selectKey(this,'big:blob1')">
+                  <span class="key-name">blob1</span><span class="key-type type-string">string</span
+                  ><span class="key-ttl">永不过期</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">cache</span><span class="folder-count">(2)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">config</span><span class="folder-count">(3)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">counter</span><span class="folder-count">(2)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">features</span><span class="folder-count">(1)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">leaderboard</span><span class="folder-count">(1)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">logs</span><span class="folder-count">(4)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">order</span><span class="folder-count">(1)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">product</span><span class="folder-count">(5)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">queue</span><span class="folder-count">(2)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">stream</span><span class="folder-count">(2)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">tags</span><span class="folder-count">(3)</span>
+                </div>
+              </div>
+              <div class="key-folder">
+                <div class="key-folder-header" onclick="toggleFolder(this)">
+                  <span class="arrow">▸</span><span class="folder-icon">📁</span
+                  ><span class="folder-name">user</span><span class="folder-count">(5)</span>
+                </div>
+              </div>
+              <div class="key-leaf" onclick="selectKey(this,'leaderboard')">
+                <span class="key-name">leaderboard</span><span class="key-type type-zset">zset</span
+                ><span class="key-ttl no-expiry">永不过期</span>
+              </div>
+              <div class="key-leaf" onclick="selectKey(this,'timeline')">
+                <span class="key-name">timeline</span><span class="key-type type-zset">zset</span
+                ><span class="key-ttl no-expiry">永不过期</span>
+              </div>
+            </div>
+          </div>
+          <div class="resize-handle" id="resizeHandle"></div>
+          <div class="detail-panel">
+            <div class="detail-tab-bar">
+              <div class="detail-tab active" onclick="switchTab(this)">
+                <span class="tab-emoji">🔑</span><span>键详情</span>
+              </div>
+              <div class="detail-tab" onclick="switchTab(this)">
+                <span class="tab-emoji">⌨</span><span>命令行</span>
+              </div>
+              <div class="detail-tab" onclick="switchTab(this)">
+                <span class="tab-emoji">📡</span><span>发布/订阅</span>
+              </div>
+              <div class="detail-tab" onclick="switchTab(this)">
+                <span class="tab-emoji">⏱</span><span>慢日志</span>
+              </div>
+            </div>
+            <div class="detail-content">
+              <div class="detail-empty" id="emptyState">
+                <div class="empty-icon">🔍</div>
+                <div class="empty-text">选择一个 key 查看详情</div>
+              </div>
+              <div id="keyDetail" style="display: none; width: 100%; padding: 16px">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px">
+                  <span style="font-size: 12px; color: var(--fg-muted)">Key:</span>
+                  <code
+                    id="detailKeyName"
+                    style="font-family: monospace; font-size: 13px; color: var(--accent)"
+                  ></code>
+                  <span id="detailKeyType" class="key-type" style="margin-left: 8px"></span>
+                  <span
+                    id="detailKeyTtl"
+                    style="margin-left: auto; font-size: 11px; color: var(--fg-muted)"
+                  ></span>
+                </div>
+                <div
+                  style="
+                    border: 1px solid var(--border);
+                    border-radius: 6px;
+                    padding: 16px;
+                    background: var(--bg-surface);
+                    min-height: 200px;
+                    color: var(--fg-muted);
+                    font-size: 12px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                  "
+                >
+                  Value 编辑器区域
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function selectKey(el, keyName) {
+        document
+          .querySelectorAll('.key-leaf.selected')
+          .forEach((e) => e.classList.remove('selected'));
+        el.classList.add('selected');
+        document.getElementById('emptyState').style.display = 'none';
+        document.getElementById('keyDetail').style.display = 'block';
+        document.getElementById('detailKeyName').textContent = keyName;
+        const t = el.querySelector('.key-type');
+        const tb = document.getElementById('detailKeyType');
+        tb.textContent = t ? t.textContent : '';
+        tb.className = 'key-type ' + (t ? t.className : '');
+        const ttl = el.querySelector('.key-ttl');
+        document.getElementById('detailKeyTtl').textContent = ttl ? ttl.textContent : '';
+      }
+      function switchTab(el) {
+        document.querySelectorAll('.detail-tab').forEach((t) => t.classList.remove('active'));
+        el.classList.add('active');
+      }
+      function setViewMode(el) {
+        document.querySelectorAll('.view-mode-btn').forEach((b) => b.classList.remove('active'));
+        el.classList.add('active');
+      }
+      document
+        .querySelectorAll('.toggle-btn')
+        .forEach((b) => b.addEventListener('click', () => b.classList.toggle('active')));
+      function toggleFolder(h) {
+        const a = h.querySelector('.arrow'),
+          leaves = h.parentElement.querySelectorAll('.key-leaf');
+        if (a.textContent === '▾') {
+          a.textContent = '▸';
+          leaves.forEach((l) => (l.style.display = 'none'));
+        } else {
+          a.textContent = '▾';
+          leaves.forEach((l) => (l.style.display = 'flex'));
+        }
+      }
+      const handle = document.getElementById('resizeHandle'),
+        kb = document.querySelector('.key-browser');
+      handle.addEventListener('mousedown', (e) => {
+        const sx = e.clientX,
+          sw = kb.offsetWidth;
+        const mv = (ev) =>
+          (kb.style.width = Math.max(280, Math.min(800, sw + ev.clientX - sx)) + 'px');
+        const up = () => {
+          document.removeEventListener('mousemove', mv);
+          document.removeEventListener('mouseup', up);
+        };
+        document.addEventListener('mousemove', mv);
+        document.addEventListener('mouseup', up);
+      });
+    </script>
+  </body>
+</html>

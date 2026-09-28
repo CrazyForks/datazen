@@ -142,6 +142,10 @@ tsconfig.node.tsbuildinfo
 e2e/.app-data/
 e2e/.app-data-*/
 e2e/screenshots/
+# Derived 16:9 video set — a downscale of site/assets/screenshots/, rebuilt with
+# `node scripts/normalize-screenshots.mjs --target 1920x1080 --out <dir>`.
+# Never committed: the stills it is generated from already are.
+site/assets/screenshots-video/
 e2e/demo-recording.png
 e2e/demo-recording.mp4
 e2e/demo-recording.webm

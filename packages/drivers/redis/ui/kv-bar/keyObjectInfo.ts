@@ -38,9 +38,6 @@ export interface KeyObjectInfo {
   /** `PTTL` in milliseconds: `-1` no expiry, `-2` missing, `>0` remaining. */
   ttlMs: number;
 }
-
-/** `PTTL` sentinels, kept as named constants because they read as typos inline. */
-export const TTL_NO_EXPIRY_MS = -1;
 export const TTL_MISSING_MS = -2;
 
 /** The three states a `PTTL` reply can mean, separated for the renderers. */

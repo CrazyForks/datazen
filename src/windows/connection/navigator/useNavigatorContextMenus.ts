@@ -436,15 +436,21 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
               ? () => {
                   // F5: release the driver-side pool for this database and drop
                   // the tree's local cache, so the next expand re-fetches. The
-                  // session itself stays connected.
+                  // session itself stays connected. Tabs opened on that database
+                  // are closed with it: their backend resources are gone, so
+                  // leaving them open would only produce errors.
                   void (async () => {
                     try {
                       await connectionCommands.closeDatabase(dbSessionId, dbName);
+                      usePanelStore
+                        .getState()
+                        .removePanelsForDatabase(
+                          connectionId,
+                          dbName,
+                          useSchemaStore.getState().schemas.get(dbSessionId)?.currentDatabase ??
+                            undefined,
+                        );
                       clearDbLocalCache(connectionId, dbSessionId, dbName);
-                      onShowMessage?.(
-                        t('schemaTree.closeDatabaseConnectionDone', { name: dbName }),
-                        'success',
-                      );
                     } catch (err) {
                       onShowMessage?.(
                         extractErrorMessage(err, t('schemaTree.closeDatabaseConnectionFailed')),
@@ -850,6 +856,10 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
             },
             onGenerateSelect:
               kind === 'table' ? () => void handleGenerateTableSql('select') : undefined,
+            onOpenStructure:
+              kind === 'table' && viewActions?.openTableStructure
+                ? () => viewActions.openTableStructure?.(name)
+                : undefined,
             onGenerateInsert:
               kind === 'table' ? () => void handleGenerateTableSql('insert') : undefined,
             onGenerateUpdate:
@@ -982,6 +992,7 @@ export function useNavigatorContextMenus(deps: NavigatorContextMenuDeps) {
           readOnly,
           safeMode,
           showErFocus: supportsErDiagram,
+          showOpenStructure: Boolean(viewActions?.openTableStructure),
         }),
         { x: e.clientX, y: e.clientY },
       );

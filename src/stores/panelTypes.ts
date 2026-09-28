@@ -95,9 +95,35 @@ export interface DatabaseObjectPanel extends PanelBase {
   objectSchema: string | null;
 }
 
+/**
+ * One-shot action the overview page (屏 A) wants the Redis panel to perform on
+ * mount.  The panel consumes it exactly once and clears it so repeated renders
+ * never replay it.
+ */
+export interface RedisPendingAction {
+  /** Tab to switch to after the panel opens. */
+  tab?: 'items' | 'console' | 'pubsub' | 'monitor';
+  /** Sub-page inside the monitor tab. */
+  monitorSubPage?: 'info' | 'monitor' | 'memory' | 'slowlog' | 'streams';
+  /** Key to select + open in the editor (屏 A → 屏 B key jump). */
+  selectKey?: string;
+  /** Database the key lives in (for key jumps that target a different db). */
+  keyDbIndex?: number;
+  /** Open the import/export dialog (quick action). */
+  openImportExport?: boolean;
+  /** Open the create-new-key dialog (quick action). */
+  openNewKey?: boolean;
+}
+
 export interface RedisDbPanel extends PanelBase {
   type: 'redis-db';
   dbName: string;
+  /**
+   * Pending action from the overview page.  Set when a quick-action / big-key /
+   * slowlog / recent-key click creates or re-activates the panel.  Consumed and
+   * cleared by `RedisConnectionView` on mount / first render.
+   */
+  pendingAction?: RedisPendingAction;
 }
 
 export type Panel =

@@ -79,5 +79,7 @@ const pack = {
   'dashboard.workflowInUse': 'This workflow is used by dashboard reports',
   'dashboard.openWorkflowEditor': 'Open workflow editor',
   'dashboard.selectWorkflow': 'Select workflow',
+  'dashboard.expand': 'Expand',
+  'dashboard.collapse': 'Collapse',
 } as const;
 export default pack;

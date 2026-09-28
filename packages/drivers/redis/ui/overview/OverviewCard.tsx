@@ -16,7 +16,7 @@ export type OverviewCardState = OverviewSourceStatus | 'empty';
 
 export interface OverviewCardProps {
   /** Stable id used in `data-overview-card` — one per 屏 A block. */
-  cardId: 'server' | 'memory' | 'keyspace' | 'slowlog' | 'actions' | 'recent';
+  cardId: 'server' | 'memory' | 'keyspace' | 'slowlog' | 'performance' | 'actions' | 'recent';
   titleKey: string;
   /** Backend command name this block reads (raw token, not UI copy). */
   source?: string;
@@ -77,7 +77,7 @@ export function OverviewCard({
         className,
       )}
     >
-      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-3">
+      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-3">
         <h3
           data-overview-card-title={cardId}
           className="truncate text-xs font-semibold uppercase tracking-wide text-fg-secondary"
@@ -93,18 +93,6 @@ export function OverviewCard({
           </code>
         ) : null}
         <span className="flex-1" />
-        {onRetry && state === 'ready' ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            data-overview-card-action={cardId}
-            className="h-6 px-1.5 text-[11px]"
-            onClick={onRetry}
-          >
-            {t('redis.overview.refresh')}
-          </Button>
-        ) : null}
       </header>
 
       <div className="min-h-0 flex-1">

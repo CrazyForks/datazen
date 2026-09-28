@@ -136,6 +136,13 @@ export interface ConnectionNavigatorTreeProps {
     openCreateSchema?: () => void;
     openCreateUser?: () => void;
     openErDiagram?: (focusTable?: string, database?: string) => void;
+    /**
+     * Open a table's structure (or the standalone structure editor when the
+     * driver supports one). The navigator's table context menu needs this to
+     * offer 打开结构; without it `buildSchemaTreeContextMenuItems` omits the
+     * item, because the navigator does not set `showOpenStructure` by default.
+     */
+    openTableStructure?: (tableName: string) => void;
     refresh?: () => void;
     openObject?: (
       kind: 'function' | 'procedure' | 'trigger' | 'sequence' | 'type',

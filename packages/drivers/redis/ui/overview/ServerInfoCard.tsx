@@ -41,7 +41,7 @@ export function ServerInfoCard({ status, rows, onRetry }: ServerInfoCardProps) {
       unauthorizedKey="redis.overview.server.unauthorized"
       onRetry={onRetry}
     >
-      <dl className="grid grid-cols-1 gap-x-6 gap-y-1 p-3 text-xs sm:grid-cols-2">
+      <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 p-2.5 text-xs sm:grid-cols-2">
         {rows.map((row) => {
           const value = formatServerRowValue(row, t);
           return (

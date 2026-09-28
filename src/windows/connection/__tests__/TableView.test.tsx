@@ -195,7 +195,7 @@ describe('TableView', () => {
   it('shows a copyable inline error banner without truncate when reload fails', () => {
     const errorMsg = 'syntax error near filter clause with a very long message that must wrap';
     seedPanel(contextOf(), {
-      columns: [{ name: 'id', dataType: 'int', isPrimaryKey: true }],
+      columns: [{ name: 'id', dataType: 'int', nullable: false, isPrimaryKey: true }],
       rows: [{ id: 1 }],
       totalRows: 1,
       error: errorMsg,
@@ -249,7 +249,7 @@ describe('TableView', () => {
 
   it('refresh button re-fetches the current page even when cached data exists', () => {
     seedPanel(contextOf(), {
-      columns: [{ name: 'id', dataType: 'int', isPrimaryKey: true }],
+      columns: [{ name: 'id', dataType: 'int', nullable: false, isPrimaryKey: true }],
       rows: [{ id: 1 }],
       totalRows: 1,
     });
@@ -363,8 +363,8 @@ describe('TableView', () => {
   it('renders field filter toggle button in toolbar', () => {
     seedPanel(contextOf(), {
       columns: [
-        { name: 'id', dataType: 'int', isPrimaryKey: true },
-        { name: 'name', dataType: 'varchar', isPrimaryKey: false },
+        { name: 'id', dataType: 'int', nullable: false, isPrimaryKey: true },
+        { name: 'name', dataType: 'varchar', nullable: true, isPrimaryKey: false },
       ],
       rows: [{ id: 1, name: 'Alice' }],
       totalRows: 1,
@@ -379,9 +379,9 @@ describe('TableView', () => {
   it('filters displayed columns to only user-selected columns', () => {
     seedPanel(contextOf(), {
       columns: [
-        { name: 'id', dataType: 'int', isPrimaryKey: true },
-        { name: 'name', dataType: 'varchar', isPrimaryKey: false },
-        { name: 'email', dataType: 'varchar', isPrimaryKey: false },
+        { name: 'id', dataType: 'int', nullable: false, isPrimaryKey: true },
+        { name: 'name', dataType: 'varchar', nullable: true, isPrimaryKey: false },
+        { name: 'email', dataType: 'varchar', nullable: true, isPrimaryKey: false },
       ],
       rows: [{ id: 1, name: 'Alice', email: 'alice@example.com' }],
       totalRows: 1,
@@ -396,8 +396,8 @@ describe('TableView', () => {
   it('shows all-columns-hidden empty state when user deselects all columns', () => {
     seedPanel(contextOf(), {
       columns: [
-        { name: 'id', dataType: 'int', isPrimaryKey: true },
-        { name: 'name', dataType: 'varchar', isPrimaryKey: false },
+        { name: 'id', dataType: 'int', nullable: false, isPrimaryKey: true },
+        { name: 'name', dataType: 'varchar', nullable: true, isPrimaryKey: false },
       ],
       rows: [{ id: 1, name: 'Alice' }],
       totalRows: 1,
@@ -420,7 +420,7 @@ describe('TableView', () => {
     expect(screen.getByText('tableView.loadingData')).toBeInTheDocument();
 
     seedPanel(contextOf(), {
-      columns: [{ name: 'id', dataType: 'int', isPrimaryKey: true }],
+      columns: [{ name: 'id', dataType: 'int', nullable: false, isPrimaryKey: true }],
       rows: [{ id: 1 }],
       totalRows: 1,
     });

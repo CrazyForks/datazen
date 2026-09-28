@@ -218,8 +218,8 @@ describe('WidgetEditorDrawer', () => {
         open
         widget={{ ...baseWidget, workflowId: 'wf-1' }}
         userWorkflows={[
-          { id: 'wf-1', name: 'Workflow One' },
-          { id: 'wf-2', name: 'Workflow Two' },
+          { id: 'wf-1', name: 'Workflow One', description: '', variables: [] },
+          { id: 'wf-2', name: 'Workflow Two', description: '', variables: [] },
         ]}
         onOpenWorkflowEditor={onOpenWorkflowEditor}
         onClose={vi.fn()}

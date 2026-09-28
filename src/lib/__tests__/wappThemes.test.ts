@@ -115,7 +115,9 @@ describe('repo wapp packages', () => {
     (dirName) => {
       const manifest = loadManifest(dirName);
       const allowed = /\.(html|js|mjs|css|json|svg|png|webp|woff2|woff)$/i;
-      const declared: string[] = [];
+      // Optional theme fields are absent for some packs; they are collected here
+      // and dropped by the `filter(Boolean)` pass before the path assertions.
+      const declared: (string | undefined)[] = [];
       if (manifest.icon) declared.push(manifest.icon);
       if (manifest.entry) declared.push(manifest.entry);
       for (const page of manifest.contributes?.pages ?? []) {

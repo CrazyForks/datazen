@@ -75,14 +75,16 @@ describe('dashboardCommands wrappers', () => {
     });
   });
 
-  it('getWidgetRun forwards composite run id', async () => {
-    const run = { id: { dashboardId: 'd7', widgetId: 'w2', seq: 3 } };
+  it('getWidgetRun forwards run id', async () => {
+    // The backend identifies a widget run by an opaque string id (`get_widget_run`
+    // takes `run_id: String`), not by a numeric sequence.
+    const run = { id: 'run-3' };
     invokeMock.mockResolvedValueOnce(run);
-    await expect(dashboardCommands.getWidgetRun('d7', 'w2', 3)).resolves.toBe(run);
+    await expect(dashboardCommands.getWidgetRun('d7', 'w2', 'run-3')).resolves.toBe(run);
     expect(invokeMock).toHaveBeenCalledWith('get_widget_run', {
       dashboardId: 'd7',
       widgetId: 'w2',
-      runId: 3,
+      runId: 'run-3',
     });
   });
 

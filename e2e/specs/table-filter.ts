@@ -3,6 +3,7 @@ import { t } from '../i18n.js';
 import {
   closeExtraWindows,
   executeSQL,
+  executeSQLChecked,
   openQueryTab,
   clickTableInSidebar,
   switchSubTab,
@@ -74,15 +75,18 @@ describe('表数据筛选 (TF-001~TF-010)', () => {
     await connectSeededPgInWorkspace();
 
     await openQueryTab();
-    await executeSQL(`DROP TABLE IF EXISTS ${TEST_TABLE}`);
-    await executeSQL(`
+    // Checked DDL: a swallowed backend error (stale session bound to a
+    // replaced worker DB) used to surface only as a 20s
+    // `waitForTableInSidebar` timeout with no hint of the real cause.
+    await executeSQLChecked(`DROP TABLE IF EXISTS ${TEST_TABLE}`);
+    await executeSQLChecked(`
       CREATE TABLE ${TEST_TABLE} (
         id SERIAL PRIMARY KEY,
         name VARCHAR(50) NOT NULL,
         score INT NOT NULL
       )
     `);
-    await executeSQL(`
+    await executeSQLChecked(`
       INSERT INTO ${TEST_TABLE} (name, score) VALUES
         ('alpha', 10),
         ('beta', 20),
@@ -246,7 +250,8 @@ describe('表数据筛选 (TF-001~TF-010)', () => {
     });
     await browser.pause(200);
     valueInputs = await $$('[data-testid="filter-value"]');
-    await valueInputs[valueInputs.length - 1].setValue('20');
+    const valueInputCount = await valueInputs.length;
+    await valueInputs[valueInputCount - 1].setValue('20');
     await browser.pause(400);
 
     await $(`button*=${t('filter.or')}`).click();

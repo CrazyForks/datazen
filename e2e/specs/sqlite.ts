@@ -35,12 +35,28 @@ describe('SQLite', () => {
   });
 
   it('should show tables in sidebar', async () => {
-    const aside = await connectionNavigatorAside();
-    const text = await aside.getText();
-    expect(asideHasSchemaSections(text)).toBe(true);
-    expect(text).toContain('users');
-    expect(text).toContain('posts');
-    expect(text).toContain('tags');
+    // The navigator's first table fetch races the SQLite connect (it can
+    // query with the file path instead of `main` before recovering), so the
+    // sidebar content must be polled rather than read once immediately
+    // after connecting. The aside element is re-created on re-render —
+    // re-fetch it every pass and tolerate transient stale-element errors.
+    await browser.waitUntil(
+      async () => {
+        try {
+          const aside = await connectionNavigatorAside();
+          const text = await aside.getText();
+          return (
+            asideHasSchemaSections(text) &&
+            text.includes('users') &&
+            text.includes('posts') &&
+            text.includes('tags')
+          );
+        } catch {
+          return false;
+        }
+      },
+      { timeout: 20000, interval: 1000, timeoutMsg: '等待 SQLite 侧边栏显示表列表' },
+    );
   });
 
   it('should show views in sidebar', async () => {

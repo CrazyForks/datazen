@@ -22,6 +22,7 @@ import {
   bindConnectionStore,
   bindSchemaStore,
   bindSettingsStore,
+  type ConfirmDialogOptions,
   type ConnectionBridgeState,
   type SchemaStoreState,
   type SettingsBridgeState,
@@ -76,8 +77,6 @@ vi.mock('../shared/redisInvoke', async (importOriginal) => ({
 }));
 
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
-import { KEY_TYPE_FILTERS, SEPARATOR_CHOICES } from '../key-browser/keyTree';
-import { TREE_PREFS_STORAGE_KEY } from '../key-browser/treePreferences';
 
 bindSettingsStore(
   create<SettingsBridgeState>(() => ({
@@ -85,12 +84,26 @@ bindSettingsStore(
   })),
 );
 bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
-bindConfirmDialog(() => [async () => true, null]);
+/*
+ * Controllable so the R1 select-all → delete journey can walk both branches of
+ * the gate order (confirm refused ⇒ nothing is sent at all). Defaults to `true`,
+ * which is what every other journey in this file already assumed.
+ */
+let confirmAnswer = true;
+const confirmSpy = vi.fn(async (_options: ConfirmDialogOptions) => confirmAnswer);
+bindConfirmDialog(() => [confirmSpy, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    // Host-store fields this suite never exercises; bound to satisfy the bridge
+    // contract so the Redis tree only ever reads `databases` / `loading`.
+    pathItems: {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -130,6 +143,15 @@ function emptyState(): string | null {
   return screen.queryByTestId('redis-tree-empty')?.getAttribute('data-empty-state') ?? null;
 }
 
+/**
+ * Header actions render through `@datazen/ui` `Button`, i.e. a real `<button>`;
+ * testing-library only knows them as `HTMLElement`, and `disabled` is asserted
+ * on them. Narrowing here keeps the assertions on the real DOM property.
+ */
+function actionButton(testId: string): HTMLButtonElement {
+  return screen.getByTestId(testId) as HTMLButtonElement;
+}
+
 /** The page `data-empty-state` must show right now. */
 async function expectEmptyState(state: string): Promise<void> {
   await waitFor(() => expect(emptyState()).toBe(state));
@@ -138,6 +160,7 @@ async function expectEmptyState(state: string): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  confirmAnswer = true;
   // Default flat scan: both keys on one finished page (cursor drained ⇒ the
   // counter is exact and `scanning` never masks an empty state by accident).
   scanKeys.mockImplementation(async () => ({
@@ -155,7 +178,10 @@ beforeEach(() => {
     if (prefix === 'app:') return { children: [leaf('app:user:1'), leaf('app:user:2')], cursor: 0 };
     return { children: [folder('app:', 2), leaf('root-plain')], cursor: 0 };
   });
-  dbSizes.mockResolvedValue([{ db: 0, keys: 2 }, { db: 1, keys: 0 }]);
+  dbSizes.mockResolvedValue([
+    { db: 0, keys: 2 },
+    { db: 1, keys: 0 },
+  ]);
   getKey.mockResolvedValue({
     key: 'app:user:1',
     keyType: 'string',
@@ -169,7 +195,9 @@ beforeEach(() => {
     if (command === 'batch_set_ttl') {
       return {
         updated: 1,
-        errors: [{ key: 'app:user:1', error: 'NOPERM this user has no permissions to run this command' }],
+        errors: [
+          { key: 'app:user:1', error: 'NOPERM this user has no permissions to run this command' },
+        ],
       };
     }
     return undefined;
@@ -179,77 +207,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
-});
-
-describe('R3 grouping row journey (D-3)', () => {
-  it('re-folds the tree on the chosen separator and persists it per connection', async () => {
-    listChildren.mockImplementation(async (...args: unknown[]) => {
-      const opts = (args[5] ?? {}) as { sep?: string };
-      if (opts.sep === '.') return { children: [folder('app.', 1)], cursor: 0 };
-      return { children: [folder('app:', 2), leaf('root-plain')], cursor: 0 };
-    });
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-folder-app:');
-    const tree = screen.getByTestId('redis-key-tree');
-    expect(tree.getAttribute('data-separator')).toBe(':');
-    expect(screen.getByTestId('redis-tree-group-row').getAttribute('data-separator')).toBe(':');
-
-    // Enter: open the separator select and pick `.` (design-system Select
-    // commits on mousedown — the journey walks the real pointer order).
-    fireEvent.click(screen.getByTestId('redis-tree-separator'));
-    const options = await screen.findAllByTestId('select-option');
-    fireEvent.mouseDown(options[SEPARATOR_CHOICES.findIndex((sep) => sep === '.')]);
-
-    // The new option reaches `list_children` …
-    await waitFor(() => {
-      const reFold = listChildren.mock.calls
-        .map((call) => call as unknown[])
-        .find((call) => call[2] === '' && ((call[5] ?? {}) as { sep?: string }).sep === '.');
-      expect(reFold).toBeTruthy();
-    });
-    // … the old fold is replaced, not appended to: `app.` exists, `app:` is gone.
-    await screen.findByTestId('redis-tree-folder-app.');
-    expect(screen.queryByTestId('redis-tree-folder-app:')).toBeNull();
-    await waitFor(() => expect(screen.getByTestId('redis-key-tree').getAttribute('data-separator')).toBe('.'));
-    expect(screen.getByTestId('redis-tree-group-row').getAttribute('data-separator')).toBe('.');
-
-    // Exit/durability: the preference lands in this connection's bucket only.
-    await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem(TREE_PREFS_STORAGE_KEY) ?? '{}') as Record<
-        string,
-        unknown
-      >;
-      expect(stored['sess-1']).toEqual({ view: 'tree', sep: '.' });
-    });
-  });
-
-  it('switches between the folded tree and the flat list without losing keys', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-folder-app:');
-
-    fireEvent.click(screen.getByTestId('redis-tree-view-list'));
-    await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-group-row').getAttribute('data-view')).toBe('list'),
-    );
-    // Flat mode lists the loaded keys themselves — no fold, no folder rows.
-    expect(await screen.findByTestId('redis-key-row-app:user:1')).toBeTruthy();
-    expect(screen.queryByTestId('redis-tree-folder-app:')).toBeNull();
-    expect(screen.getByTestId('redis-key-tree').getAttribute('data-row-count')).toBe('2');
-
-    fireEvent.click(screen.getByTestId('redis-tree-view-tree'));
-    await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-group-row').getAttribute('data-view')).toBe('tree'),
-    );
-    expect(await screen.findByTestId('redis-tree-folder-app:')).toBeTruthy();
-    expect(screen.queryByTestId('redis-key-row-app:user:1')).toBeNull();
-    await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem(TREE_PREFS_STORAGE_KEY) ?? '{}') as Record<
-        string,
-        { view?: string }
-      >;
-      expect(stored['sess-1']?.view).toBe('tree');
-    });
-  });
 });
 
 describe('row spec + sticky group headers (D-4)', () => {
@@ -289,18 +246,18 @@ describe('row spec + sticky group headers (D-4)', () => {
 
   it('cascades a folder check over the whole loaded key set, both ways', async () => {
     renderWorkbench();
-    await screen.findByTestId('redis-tree-folder-check-app:');
-    expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(true);
-    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(true);
+    const folderCheck = (await screen.findByTestId(
+      'redis-tree-folder-check-app:',
+    )) as HTMLInputElement;
+    expect(folderCheck.checked).toBe(false);
 
     // Enter: check the (collapsed) folder — cascade reads the full loaded set.
-    fireEvent.click(screen.getByTestId('redis-tree-folder-check-app:'));
+    fireEvent.click(folderCheck);
     await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-batch-delete-count').getAttribute('data-count')).toBe(
-        '2',
+      expect((screen.getByTestId('redis-tree-folder-check-app:') as HTMLInputElement).checked).toBe(
+        true,
       ),
     );
-    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(false);
 
     // Opening the subtree shows both leaf checks following the cascade.
     fireEvent.click(screen.getByTestId('redis-tree-folder-app:'));
@@ -314,7 +271,11 @@ describe('row spec + sticky group headers (D-4)', () => {
 
     // Exit: unchecking the folder releases exactly its subtree.
     fireEvent.click(screen.getByTestId('redis-tree-folder-check-app:'));
-    await waitFor(() => expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(true));
+    await waitFor(() =>
+      expect((screen.getByTestId('redis-tree-folder-check-app:') as HTMLInputElement).checked).toBe(
+        false,
+      ),
+    );
     expect(screen.getByTestId('redis-tree-key-check-app:user:1').getAttribute('data-checked')).toBe(
       'false',
     );
@@ -417,7 +378,9 @@ describe('keyboard navigation journey (I-9 / D-7)', () => {
     expect(tree.getAttribute('data-active-index')).toBe('0');
     // … the next ← folds it (exit of expand).
     fireEvent.keyDown(tree, { key: 'ArrowLeft' });
-    expect(screen.getByTestId('redis-tree-folder-app:').getAttribute('data-expanded')).toBe('false');
+    expect(screen.getByTestId('redis-tree-folder-app:').getAttribute('data-expanded')).toBe(
+      'false',
+    );
     expect(screen.queryByTestId('redis-key-row-app:user:1')).toBeNull();
 
     // → re-expands WITHOUT refetching: the level was retained (I-4).
@@ -434,11 +397,11 @@ describe('keyboard navigation journey (I-9 / D-7)', () => {
         'true',
       ),
     );
-    expect(
-      getKey.mock.calls.some((call) => String((call as unknown[])[2]) === 'app:user:1'),
-    ).toBe(true);
+    expect(getKey.mock.calls.some((call) => String((call as unknown[])[2]) === 'app:user:1')).toBe(
+      true,
+    );
 
-    // ⌘A selects everything loaded; the clear action becomes available.
+    // ⌘A selects everything loaded.
     fireEvent.keyDown(tree, { key: 'a', metaKey: true });
     await waitFor(() =>
       expect(
@@ -448,10 +411,9 @@ describe('keyboard navigation journey (I-9 / D-7)', () => {
     expect(screen.getByTestId('redis-tree-key-check-app:user:2').getAttribute('data-checked')).toBe(
       'true',
     );
-    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(false);
-    expect(
-      (screen.getByTestId('redis-tree-folder-check-app:') as HTMLInputElement).checked,
-    ).toBe(true);
+    expect((screen.getByTestId('redis-tree-folder-check-app:') as HTMLInputElement).checked).toBe(
+      true,
+    );
 
     // Esc is the exit transition: checks cleared, active row left behind.
     fireEvent.keyDown(tree, { key: 'Escape' });
@@ -461,7 +423,6 @@ describe('keyboard navigation journey (I-9 / D-7)', () => {
       ).toBe('false'),
     );
     expect(tree.getAttribute('data-active-index')).toBe('-1');
-    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(true);
 
     // ⌘R refreshes both feeds: the flat scan and the tree root rescan.
     const rootsBefore = rootCalls();
@@ -472,130 +433,8 @@ describe('keyboard navigation journey (I-9 / D-7)', () => {
   });
 });
 
-describe('batch selection journey (I-8 / D-6)', () => {
-  it('keeps the failed key checked after a partial batch TTL and groups its reason', async () => {
-    // Flat rows so both selected keys have a visible checkbox.
-    listChildren.mockResolvedValue({
-      children: [leaf('app:user:1'), leaf('app:user:2')],
-      cursor: 0,
-    });
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-count');
-
-    // Enter: select both loaded keys.
-    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    await waitFor(() =>
-      expect(screen.getByTestId('redis-tree-key-check-app:user:1').getAttribute('data-checked')).toBe(
-        'true',
-      ),
-    );
-    expect(screen.getByTestId('redis-tree-key-check-app:user:2').getAttribute('data-checked')).toBe(
-      'true',
-    );
-
-    // Open the batch-TTL dialog and type a TTL.
-    fireEvent.click(screen.getByTestId('redis-tree-batch-ttl'));
-    const input = await screen.findByTestId('redis-batch-ttl-input');
-    fireEvent.change(input, { target: { value: '60' } });
-    const rootsBefore = rootCalls();
-    fireEvent.click(screen.getByTestId('redis-batch-ttl-confirm'));
-    await waitFor(() =>
-      expect(
-        redisCommand.mock.calls.some(
-          (call) => String((call as unknown[])[1]) === 'batch_set_ttl',
-        ),
-      ).toBe(true),
-    );
-
-    // The structured summary: 1 updated, 1 failed, action = ttl.
-    const banner = await screen.findByTestId('redis-batch-summary');
-    expect(banner.getAttribute('data-kind')).toBe('batch');
-    expect(banner.getAttribute('data-action')).toBe('ttl');
-    expect(banner.getAttribute('data-ok')).toBe('1');
-    expect(banner.getAttribute('data-failed')).toBe('1');
-    expect(screen.queryByTestId('redis-batch-ttl-confirm')).toBeNull();
-
-    // The post-write refresh ran (both feeds) and must NOT eat the failed key.
-    await waitFor(() => expect(rootCalls()).toBeGreaterThan(rootsBefore));
-    await waitFor(() =>
-      expect(
-        screen.getByTestId('redis-tree-key-check-app:user:1').getAttribute('data-checked'),
-      ).toBe('true'),
-    );
-    expect(screen.getByTestId('redis-tree-key-check-app:user:2').getAttribute('data-checked')).toBe(
-      'false',
-    );
-
-    // Expand the banner: failures grouped by stable code, never by copy.
-    fireEvent.click(screen.getByTestId('redis-batch-summary-toggle'));
-    const failures = await screen.findByTestId('redis-batch-summary-failures');
-    expect(failures.getAttribute('data-group-count')).toBe('1');
-    const group = screen.getByTestId('redis-batch-failure-group-noAcl');
-    expect(group.getAttribute('data-failure-code')).toBe('noAcl');
-    expect(group.getAttribute('data-count')).toBe('1');
-    expect(group.getAttribute('data-reason-key')).toBe('redis.tree.error.noAcl');
-
-    // Dismiss is the exit transition of the banner.
-    fireEvent.click(screen.getByTestId('redis-batch-summary-dismiss'));
-    await waitFor(() => expect(screen.queryByTestId('redis-batch-summary')).toBeNull());
-    // …and the failed key is still checked afterwards.
-    expect(screen.getByTestId('redis-tree-key-check-app:user:1').getAttribute('data-checked')).toBe(
-      'true',
-    );
-  });
-
-  it('keeps the whole selection when the batch invoke itself throws', async () => {
-    listChildren.mockResolvedValue({
-      children: [leaf('app:user:1'), leaf('app:user:2')],
-      cursor: 0,
-    });
-    redisCommand.mockImplementation(async (_driver: string, command: string) => {
-      if (command === 'batch_set_ttl') throw new Error('connection reset by peer');
-      return undefined;
-    });
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-count');
-
-    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    await waitFor(() =>
-      expect(
-        screen.getByTestId('redis-tree-key-check-app:user:1').getAttribute('data-checked'),
-      ).toBe('true'),
-    );
-    fireEvent.click(screen.getByTestId('redis-tree-batch-ttl'));
-    const input = await screen.findByTestId('redis-batch-ttl-input');
-    fireEvent.change(input, { target: { value: '60' } });
-    fireEvent.click(screen.getByTestId('redis-batch-ttl-confirm'));
-
-    // No per-key verdict exists ⇒ every requested key failed (safe side of I-8),
-    // and the dialog stays open with its error slot — the raw message is shown,
-    // not parsed.
-    const banner = await screen.findByTestId('redis-batch-summary');
-    expect(banner.getAttribute('data-ok')).toBe('0');
-    expect(banner.getAttribute('data-failed')).toBe('2');
-    expect(await screen.findByTestId('redis-batch-error')).toBeTruthy();
-    expect(screen.getByTestId('redis-batch-ttl-confirm')).toBeTruthy();
-    expect(screen.getByTestId('redis-tree-key-check-app:user:1').getAttribute('data-checked')).toBe(
-      'true',
-    );
-    expect(screen.getByTestId('redis-tree-key-check-app:user:2').getAttribute('data-checked')).toBe(
-      'true',
-    );
-
-    // Cancel closes the dialog but must not release the kept selection.
-    fireEvent.click(screen.getByTestId('redis-batch-ttl-cancel'));
-    await waitFor(() => expect(screen.queryByTestId('redis-batch-ttl-confirm')).toBeNull());
-    expect(screen.getByTestId('redis-tree-key-check-app:user:1').getAttribute('data-checked')).toBe(
-      'true',
-    );
-    expect(screen.getByTestId('redis-tree-key-check-app:user:2').getAttribute('data-checked')).toBe(
-      'true',
-    );
-  });
-});
-
 describe('named empty states journey (I-11 / D-8)', () => {
-  it('walks none → no-match → none as the pattern and type filter cross states', async () => {
+  it('walks none → no-match → none as the pattern crosses the empty states', async () => {
     listChildren.mockResolvedValue({ children: [], cursor: 0 });
     scanKeys.mockImplementation(async () => ({
       keys: [],
@@ -611,21 +450,14 @@ describe('named empty states journey (I-11 / D-8)', () => {
     fireEvent.change(input, { target: { value: 'zzz' } });
     await expectEmptyState('no-match');
 
-    // Enter applies: the scan really ran with the typed pattern …
+    // Enter applies: the scan really ran with the resolved prefix pattern …
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(lastScan().pattern).toBe('zzz'));
+    await waitFor(() => expect(lastScan().pattern).toBe('zzz*'));
     await expectEmptyState('no-match');
 
     // … and Esc (the row's exit) drops the filter back to the whole keyspace.
     fireEvent.keyDown(input, { key: 'Escape' });
     await expectEmptyState('none');
-
-    // The type chip is a filter too — picking one narrows the fact again.
-    fireEvent.click(screen.getByTestId('redis-tree-type-filter'));
-    const options = await screen.findAllByTestId('select-option');
-    fireEvent.mouseDown(options[KEY_TYPE_FILTERS.findIndex((item) => item.value === 'hash')]);
-    await waitFor(() => expect(lastScan().opts.keyType).toBe('hash'));
-    await expectEmptyState('no-match');
   });
 
   it('names an open cursor as interrupted and returns to none once drained', async () => {
@@ -713,5 +545,281 @@ describe('row delete journeys (I-6 write gate, D-0 extraction)', () => {
     expect(((call as unknown[])[2] as { pattern: string }).pattern).toBe('app:*');
     await waitFor(() => expect(rootCalls()).toBeGreaterThan(rootsBefore));
     expect(screen.queryByTestId('redis-batch-ttl-confirm')).toBeNull();
+  });
+});
+
+/* ── R1 select-all slot morphs into the delete action ────────────────────── */
+
+describe('R1 the select-all button becomes the delete button over the selection', () => {
+  /** The identity R1's single action slot is wearing right now. */
+  function actionSlot(): { testId: string; labelKey: string } {
+    const el =
+      screen.queryByTestId('redis-tree-select-all') ??
+      screen.queryByTestId('redis-tree-delete-selected');
+    if (!el) throw new Error('[journey] R1 has no action button at all');
+    return {
+      testId: el.getAttribute('data-testid') as string,
+      labelKey: el.getAttribute('data-action-label-key') as string,
+    };
+  }
+
+  /** `delete_keys` payloads, in call order. */
+  function deleteCalls(): string[][] {
+    return redisCommand.mock.calls
+      .filter((c) => String((c as unknown[])[1]) === 'delete_keys')
+      .map((c) => ((c as unknown[])[2] as { keys: string[] }).keys);
+  }
+
+  it('walks select-all → delete → summary → back to select-all, one step at a time', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+
+    // 1. Resting state: the slot is select-all, and it is enabled.
+    expect(actionSlot()).toEqual({
+      testId: 'redis-tree-select-all',
+      labelKey: 'redis.tree.selectAll',
+    });
+    expect(actionButton('redis-tree-select-all').disabled).toBe(false);
+
+    // 2. Select all loaded — the very next paint is the delete action.
+    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
+    await waitFor(() => expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy());
+    expect(actionSlot().labelKey).toBe('redis.deleteSelected');
+    // The select-all identity is *gone*, not merely hidden: one slot, and it
+    // is the delete one now.
+    expect(screen.queryByTestId('redis-tree-select-all')).toBeNull();
+
+    // 3. Both loaded keys are the payload — the same set the button selected.
+    fireEvent.click(screen.getByTestId('redis-tree-delete-selected'));
+    await waitFor(() => expect(deleteCalls()).toHaveLength(1));
+    expect(deleteCalls()[0].sort()).toEqual(['app:user:1', 'app:user:2']);
+
+    // 4. The write reports back through the shared banner, in its text form.
+    const banner = await screen.findByTestId('redis-batch-summary');
+    expect(banner.getAttribute('data-kind')).toBe('text');
+
+    // 5. The refresh dropped the selection, so the slot reverted by itself.
+    await waitFor(() => expect(screen.getByTestId('redis-tree-select-all')).toBeTruthy());
+    expect(screen.queryByTestId('redis-tree-delete-selected')).toBeNull();
+  });
+
+  it('a hand-ticked row arms the same delete action (it keys off the selection, not the button)', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    // Expand the folder first — a leaf row only exists to tick once its
+    // subtree is on screen.
+    fireEvent.click(screen.getByTestId('redis-tree-folder-app:'));
+    const leaf = await screen.findByTestId('redis-tree-key-check-app:user:1');
+    fireEvent.click(leaf);
+    await waitFor(() => expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy());
+
+    // Un-ticking the last row disarms it again — the button tracks the state,
+    // it does not latch.
+    fireEvent.click(leaf);
+    await waitFor(() => expect(screen.getByTestId('redis-tree-select-all')).toBeTruthy());
+    expect(deleteCalls()).toHaveLength(0);
+  });
+
+  it('Esc leaves the delete state without deleting anything', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
+    await waitFor(() => expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy());
+
+    // `Escape` is treeNavAction's `clear` chord — the exit transition.
+    fireEvent.keyDown(screen.getByTestId('redis-key-tree'), { key: 'Escape' });
+    await waitFor(() => expect(screen.getByTestId('redis-tree-select-all')).toBeTruthy());
+    // Refused ⇒ not even the confirm was shown: no write was ever on the table.
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(deleteCalls()).toHaveLength(0);
+  });
+
+  it('a refused confirm sends nothing and keeps the selection armed', async () => {
+    confirmAnswer = false;
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
+    await waitFor(() => expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('redis-tree-delete-selected'));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
+    // Identity `t` ⇒ the message equals its i18n key. The count is interpolated
+    // into that string, so asserting on the key (not on prose) is what this
+    // file's policy allows; `en.ts` owns whether `{count}` is in it.
+    const arg: ConfirmDialogOptions = confirmSpy.mock.calls[0][0];
+    expect(arg.message).toBe('redis.deleteSelectedConfirm');
+    expect(arg.kind).toBe('warning');
+
+    expect(deleteCalls()).toHaveLength(0);
+    expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy();
+  });
+
+  it('the value scope parks the delete action disabled, selection intact', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
+    await waitFor(() => expect(screen.getByTestId('redis-tree-delete-selected')).toBeTruthy());
+
+    // Switching scope only re-roots the column; it does not apply a search, so
+    // it does not run I-1 and the selection survives. The ticked rows are just
+    // not on screen, which is why the action is disabled rather than hidden:
+    // the selection is real, it just has no tree to delete from right now.
+    fireEvent.click(screen.getByTestId('redis-search-mode-value'));
+    await waitFor(() =>
+      expect(screen.getByTestId('redis-tree-header').getAttribute('data-search-mode')).toBe(
+        'value',
+      ),
+    );
+    const parked = actionButton('redis-tree-delete-selected');
+    expect(parked.disabled).toBe(true);
+    expect(deleteCalls()).toHaveLength(0);
+
+    // Back in the key scope it is live again — the selection outlived the trip.
+    fireEvent.click(screen.getByTestId('redis-search-mode-key'));
+    await waitFor(() => expect(actionButton('redis-tree-delete-selected').disabled).toBe(false));
+  });
+});
+
+/*
+ * R1's counter counts *scanned keys*, so it only means anything while the key
+ * scope owns the column. The value scope's own status bar reports the value
+ * search instead; the two must never both be on screen claiming the column.
+ */
+describe('the key counter yields to the scope that owns the column', () => {
+  it('drops the key counter for the value scope, which brings its own', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    // Key scope: the counter is present and describes the key scan.
+    await waitFor(() => expect(screen.getByTestId('redis-tree-count')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('redis-search-mode-value'));
+    await waitFor(() =>
+      expect(screen.getByTestId('redis-tree-header').getAttribute('data-search-mode')).toBe(
+        'value',
+      ),
+    );
+    // Gone — not stale, not zero: a key-scan count next to value-search numbers
+    // is a contradiction, so the whole counter leaves.
+    expect(screen.queryByTestId('redis-tree-count')).toBeNull();
+    // And the value scope does own a count of its own (the i18n key, identity `t`).
+    expect(screen.getByText('redis.search.hits')).toBeTruthy();
+  });
+
+  it('brings the counter back on the way home to the key scope', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    fireEvent.click(screen.getByTestId('redis-search-mode-value'));
+    await waitFor(() => expect(screen.queryByTestId('redis-tree-count')).toBeNull());
+
+    fireEvent.click(screen.getByTestId('redis-search-mode-key'));
+    await waitFor(() => expect(screen.getByTestId('redis-tree-count')).toBeTruthy());
+    expect(screen.queryByText('redis.search.hits')).toBeNull();
+  });
+});
+
+/*
+ * 模糊 is a modifier that only rewrites the pattern at apply time, while
+ * 仅无过期 is a scan argument that re-issues on toggle. That asymmetry is fine
+ * as long as the apply step is reachable without the keyboard — the button is
+ * what makes 模糊 read as a pending change rather than a dead chip.
+ */
+describe('R2 apply is reachable by pointer, not only by Enter', () => {
+  it('the fuzzy chip alone changes nothing; the apply button spends it', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    await waitFor(() => expect(lastScan().pattern).toBe('*'));
+    const before = scanKeys.mock.calls.length;
+
+    const input = screen.getByTestId('redis-search-input');
+    fireEvent.change(input, { target: { value: 'user' } });
+    fireEvent.click(screen.getByTestId('redis-tree-chip-fuzzy'));
+    expect(screen.getByTestId('redis-tree-chip-fuzzy').getAttribute('data-active')).toBe('on');
+    // The modifier is armed but unspent: no rescan, and the input still holds the
+    // literal the user typed.
+    expect(scanKeys.mock.calls.length).toBe(before);
+    expect((input as HTMLInputElement).value).toBe('user');
+
+    // The button is the missing trigger: it wraps the literal and scans.
+    fireEvent.click(screen.getByTestId('redis-search-apply'));
+    await waitFor(() => expect(lastScan().pattern).toBe('*user*'));
+  });
+
+  it('applies what is already in the box with no chip touched', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    const before = scanKeys.mock.calls.length;
+    fireEvent.change(screen.getByTestId('redis-search-input'), { target: { value: 'app' } });
+    expect(scanKeys.mock.calls.length).toBe(before);
+
+    fireEvent.click(screen.getByTestId('redis-search-apply'));
+    await waitFor(() => expect(lastScan().pattern).toBe('app*'));
+  });
+});
+
+/*
+ * The reported defect: typing `app` and pressing Enter listed nothing, because
+ * the pattern reached `SCAN … MATCH` as a bare `app` — a glob that admits only
+ * the single key spelled `app`, so `app:cache` and the rest of the namespace were
+ * invisible. A literal now means prefix.
+ */
+describe('a typed literal searches by prefix', () => {
+  /** Prefixes handed to the server's `list_children`, in order. */
+  function treePrefixes(): string[] {
+    return listChildren.mock.calls.map((call) => String((call as unknown[])[2]));
+  }
+
+  it('sends `app*` and narrows the tree walk to the `app` namespace', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    await waitFor(() => expect(lastScan().pattern).toBe('*'));
+
+    fireEvent.change(screen.getByTestId('redis-search-input'), { target: { value: 'app' } });
+    fireEvent.keyDown(screen.getByTestId('redis-search-input'), { key: 'Enter' });
+
+    // The scan asks for the prefix, not for the one key named `app`.
+    await waitFor(() => expect(lastScan().pattern).toBe('app*'));
+    // …and the tree narrows with it: `patternToTreePrefix` cuts the trailing
+    // star off, so the server walks `app*` instead of the whole keyspace. A bare
+    // `app` would also have narrowed, but only ever to keys that do not exist
+    // under it — which is the whole bug.
+    await waitFor(() => expect(treePrefixes()).toContain('app'));
+  });
+
+  it('a hand-written glob is still honoured, and a trailing star is not doubled', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    fireEvent.change(screen.getByTestId('redis-search-input'), { target: { value: 'app:*' } });
+    fireEvent.keyDown(screen.getByTestId('redis-search-input'), { key: 'Enter' });
+
+    await waitFor(() => expect(lastScan().pattern).toBe('app:*'));
+  });
+
+  it('fuzzy still widens to a substring match, and beats prefix', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    const input = screen.getByTestId('redis-search-input');
+    fireEvent.click(screen.getByTestId('redis-tree-chip-fuzzy'));
+    fireEvent.change(input, { target: { value: 'app' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(lastScan().pattern).toBe('*app*'));
+    // A pattern that opens with a star gives the tree no literal head to route
+    // on, so the walk falls back to the whole keyspace — by design (the server
+    // may return anything, the client filter cuts it down).
+    await waitFor(() => expect(treePrefixes()).toContain(''));
+  });
+
+  it('Esc leaves the prefix state entirely rather than leaving a star behind', async () => {
+    renderWorkbench();
+    await screen.findByTestId('redis-key-tree');
+    const input = screen.getByTestId('redis-search-input');
+    fireEvent.change(input, { target: { value: 'app' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(lastScan().pattern).toBe('app*'));
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    // Back to the unfiltered tree, and the box is empty — not holding `app*`.
+    await waitFor(() => expect(lastScan().pattern).toBe('*'));
+    expect(input).toHaveValue('');
   });
 });

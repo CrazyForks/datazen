@@ -85,7 +85,12 @@ function sliceOf(seq: ByteSeq, from: number, len: number): ByteSeq {
  * `state.skip` is the by-reference `skipLongerMatches` flag Redis threads
  * through the recursion.
  */
-function matchSeq(pattern: ByteSeq, str: ByteSeq, state: { skip: number }, nesting: number): boolean {
+function matchSeq(
+  pattern: ByteSeq,
+  str: ByteSeq,
+  state: { skip: number },
+  nesting: number,
+): boolean {
   if (nesting > MAX_NESTING) return false;
   let p = 0;
   let pLen = pattern.len;
@@ -108,7 +113,9 @@ function matchSeq(pattern: ByteSeq, str: ByteSeq, state: { skip: number }, nesti
        * port bug, caught by cross-checking against a literal transliteration.
        */
       while (sLen > 0) {
-        if (matchSeq(sliceOf(pattern, p + 1, pLen - 1), sliceOf(str, s, sLen), state, nesting + 1)) {
+        if (
+          matchSeq(sliceOf(pattern, p + 1, pLen - 1), sliceOf(str, s, sLen), state, nesting + 1)
+        ) {
           return true;
         }
         if (state.skip !== 0) return false;
@@ -214,14 +221,6 @@ export function globMatcher(compiled: ByteSeq | null): GlobMatcher {
 }
 
 /**
- * Does `name` match the Redis MATCH glob `pattern`? Single-call convenience over
- * {@link globMatcher}; prefer compiling once when matching a list.
- */
-export function redisGlobMatch(name: string, pattern: string): boolean {
-  return globMatcher(compileGlob(pattern))(name);
-}
-
-/**
  * The identity a pattern is matched against, chosen by `row.kind` — the single
  * place allowed to reach for `path` vs `entry.key`. Forking on whether some field
  * is *present* instead would mis-handle a child-level leaf row, whose `entry.key`
@@ -279,15 +278,12 @@ export function filterTreeRowsByPattern(
     const isFolder = row.kind === 'folder';
     // The fork is on `row.kind`, never on a field being present (`rowMatchTarget`).
     const target = rowMatchTarget(row);
-    const match = isFolder
-      ? matches(target) && row.count > 0
-      : matches(target);
+    const match = isFolder ? matches(target) && row.count > 0 : matches(target);
     // A folder whose *own* name fails the glob is not automatically irrelevant:
     // a collapsed subtree is judged by `hasVisibleDescendant` (the caller's
     // filtered key set), because that is the only honest source for keys the tree
     // never loaded. Such a folder stays an ordinary, expandable row.
-    const probed =
-      !match && isFolder && row.count > 0 && hasVisibleDescendant(target);
+    const probed = !match && isFolder && row.count > 0 && hasVisibleDescendant(target);
     if (probed) candidate[i] = true;
     matched[i] = match;
     if (match) for (const ancestor of stack) needed[ancestor] = true;

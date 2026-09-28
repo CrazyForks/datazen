@@ -58,7 +58,13 @@ export interface KvConnectionHomeBinding {
    * Recent Key clicks are "wired" and navigate to 屏 B. When absent the
    * overview degrades to a guidance hint (overviewNavigation planOverviewJump).
    */
-  onOpenTarget?: (target: { kind: string; dbIndex?: number; key?: string; keyType?: string | null; section?: string }) => void;
+  onOpenTarget?: (target: {
+    kind: string;
+    dbIndex?: number;
+    key?: string;
+    keyType?: string | null;
+    section?: string;
+  }) => void;
 }
 
 export interface KvWorkspaceSlots {
@@ -100,8 +106,13 @@ export interface UseKvWorkspaceSlotsArgs {
   /**
    * Host callback to open/activate a database panel (ConnectionPage's
    * `handleSelectKvDb`). Used by the 屏 A → 屏 B jump bridge.
+   * The optional third argument carries a one-shot action (tab switch, key
+   * selection, dialog open) the driver view consumes on mount.
    */
-  onSelectKvDb?: (database: string) => void;
+  onSelectKvDb?: (
+    database: string,
+    pendingAction?: import('../../stores/panelStore').RedisPendingAction,
+  ) => void;
 }
 
 /**
@@ -201,26 +212,49 @@ export function useKvWorkspaceSlots({
     // `onSelectKvDb`, every jump degrades to a hint (the driver's
     // `planOverviewJump` handles the fallback).
     const onOpenTarget = onSelectKvDb
-      ? (target: { kind: string; dbIndex?: number; key?: string; keyType?: string | null; section?: string }) => {
+      ? (target: {
+          kind: string;
+          dbIndex?: number;
+          key?: string;
+          keyType?: string | null;
+          section?: string;
+        }) => {
           switch (target.kind) {
-            case 'database':
-            case 'newKey':
-            case 'key': {
-              // Open / activate the db panel for the target database.
+            case 'database': {
               const dbNum = typeof target.dbIndex === 'number' ? target.dbIndex : 0;
               onSelectKvDb(`db${dbNum}`);
-              // TODO: for 'key' jumps also select the specific key in the workbench.
               break;
             }
-            case 'console':
-            case 'pubsub':
-            case 'monitor':
+            case 'newKey': {
+              const dbNum = typeof target.dbIndex === 'number' ? target.dbIndex : 0;
+              onSelectKvDb(`db${dbNum}`, { openNewKey: true });
+              break;
+            }
+            case 'key': {
+              const dbNum = typeof target.dbIndex === 'number' ? target.dbIndex : 0;
+              onSelectKvDb(`db${dbNum}`, {
+                selectKey: target.key,
+                keyDbIndex: dbNum,
+              });
+              break;
+            }
+            case 'console': {
+              onSelectKvDb(initialDatabase ?? 'db0', { tab: 'console' });
+              break;
+            }
+            case 'pubsub': {
+              onSelectKvDb(initialDatabase ?? 'db0', { tab: 'pubsub' });
+              break;
+            }
+            case 'monitor': {
+              onSelectKvDb(initialDatabase ?? 'db0', {
+                tab: 'monitor',
+                monitorSubPage: (target.section as 'info' | 'memory' | 'slowlog') ?? 'info',
+              });
+              break;
+            }
             case 'importExport': {
-              // These targets belong to an already-open panel. Open the
-              // default database panel (db0) — the user can then switch tabs
-              // via the panel UI. A follow-up can refine this by threading a
-              // "pending tab" state into the panel.
-              onSelectKvDb(initialDatabase ?? 'db0');
+              onSelectKvDb(initialDatabase ?? 'db0', { openImportExport: true });
               break;
             }
             default:

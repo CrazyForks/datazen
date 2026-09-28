@@ -26,7 +26,7 @@ describe('[tester] workflowPanelGuards', () => {
       type: 'edit',
       id: 'e1',
       editingId: 'wf-1',
-      draft: { name: 'Draft', description: '', variables: [], steps: [] },
+      draft: { id: 'wf-draft-1', name: 'Draft', description: '', variables: [], steps: [] },
       editorMode: 'visual',
       yamlText: '',
     };
@@ -34,18 +34,20 @@ describe('[tester] workflowPanelGuards', () => {
     expect(isWorkflowRunPanel(runPanel)).toBe(true);
     expect(isEditPanel(editPanel)).toBe(true);
     expect(isAiCreatePanel({ type: 'ai-create', id: 'a1' })).toBe(true);
-    expect(isHistoryDetailPanel({
-      type: 'history',
-      id: 'h1',
-      historyId: 'hist-1',
-      workflowName: 'Old',
-      createdAt: '2026-01-01T09:00:00.000Z',
-      result: { status: 'success', steps: [], durationMs: 1 },
-    })).toBe(true);
+    expect(
+      isHistoryDetailPanel({
+        type: 'history',
+        id: 'h1',
+        historyId: 'hist-1',
+        workflowName: 'Old',
+        createdAt: '2026-01-01T09:00:00.000Z',
+        result: { success: true, finalOutput: '', steps: [], totalTimeMs: 1 },
+      }),
+    ).toBe(true);
   });
 
   it('panelExecutionResult returns result for run/history panels only', () => {
-    const result = { status: 'success' as const, steps: [], durationMs: 1 };
+    const result = { success: true, finalOutput: '', steps: [], totalTimeMs: 1 };
     expect(
       panelExecutionResult({
         type: 'run',
@@ -57,9 +59,7 @@ describe('[tester] workflowPanelGuards', () => {
         isExecuting: false,
       }),
     ).toEqual(result);
-    expect(
-      panelExecutionResult({ type: 'ai-create', id: 'a1' }),
-    ).toBeNull();
+    expect(panelExecutionResult({ type: 'ai-create', id: 'a1' })).toBeNull();
   });
 
   it('panelTabLabel formats labels per panel type', () => {
@@ -70,7 +70,7 @@ describe('[tester] workflowPanelGuards', () => {
           type: 'edit',
           id: 'e1',
           editingId: null,
-          draft: { name: '', description: '', variables: [], steps: [] },
+          draft: { id: '', name: '', description: '', variables: [], steps: [] },
           editorMode: 'yaml',
           yamlText: '',
         },
@@ -83,7 +83,7 @@ describe('[tester] workflowPanelGuards', () => {
           type: 'edit',
           id: 'e2',
           editingId: 'wf-1',
-          draft: { name: 'My WF', description: '', variables: [], steps: [] },
+          draft: { id: 'wf-2', name: 'My WF', description: '', variables: [], steps: [] },
           editorMode: 'visual',
           yamlText: '',
         },

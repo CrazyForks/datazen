@@ -2,17 +2,15 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useSt
 import { Database } from 'lucide-react';
 import { useI18n } from '@datazen/ui';
 import { useBoundSchemaStore, useBoundSettingsStore, readBooleanField } from '@datazen/driver-sdk';
-import { BatchPatternBar } from './BatchBar';
 import { ImportExport } from './ImportExport';
 import { KeyTreePane } from './KeyTreePane';
-import { useBatchActions } from './useBatchActions';
 import { DetailColumn } from './DetailColumn';
 import { useRedisKeyScan } from './useRedisKeyScan';
 import { useKeyTreeView } from './useKeyTreeView';
 import { KeyWorkbenchDialogs } from './KeyWorkbenchDialogs';
 import { mergeDatabases, dbIndexOfName } from './workbenchDatabases';
 import { DbSidebar } from './DbSidebar';
-import { BatchSummaryBanner, WorkbenchToolbar } from './WorkbenchToolbar';
+import { BatchSummaryBanner } from './WorkbenchToolbar';
 import { useWorkbenchSplit } from './useWorkbenchSplit';
 import { useKeySelection } from './useKeySelection';
 import { useKeyDetailState } from './useKeyDetailState';
@@ -22,6 +20,7 @@ import { useWorkbenchSearch } from './useWorkbenchSearch';
 import { useDbKeyCounts } from './useDbKeyCounts';
 import { useCreateTypes, useReJsonModules } from './useReJsonModules';
 import { useWorkbenchOverlays } from './useWorkbenchOverlays';
+import { useKeyJump } from './useKeyJump';
 import { isDraftDirty, requestDraftLeave } from '../shared/draftGuard';
 
 export type { RedisWorkbenchProps, RedisWorkbenchHandle } from './workbenchTypes';
@@ -56,6 +55,8 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
       onDatabaseChange,
       onKeysChange,
       kvSlotState,
+      pendingAction,
+      renderRightPanel,
     },
     ref,
   ) {
@@ -186,39 +187,34 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     }, [selectedDb, clearFocus, scanRefresh, tree.refresh]);
 
     const handleRefresh = useCallback(async () => {
-      // Toolbar 刷新 is a named I-1 interception point: refuse ⇒ nothing reloads.
-      // The second guard is inside `refreshKeys`; on a 放弃 answer the draft is
-      // already clean, so it passes without a second dialog (P2). Keep both.
+      // I-1: refuse ⇒ nothing reloads. `refreshKeys` has its own I-1 guard too.
       if (!(await requestDraftLeave())) return;
       void loadForConnection(dbSessionId, { skipLoadTables: true });
       void refreshKeys();
       void loadDbSizes();
     }, [dbSessionId, loadForConnection, refreshKeys, loadDbSizes]);
 
-    /*
-     * I-8 (D-6) + I-1 together. Clean state: reload the *data* only — `refreshKeys`
-     * would drop the selection and silently undo "failed keys stay selected".
-     * Dirty state: a reload the user cannot see coming, so ask first; refuse ⇒ no
-     * reload, and the focus is dropped only after the answer.
-     */
-    const refreshAfterWrite = useCallback(async () => {
-      if (isDraftDirty()) {
-        if (!(await requestDraftLeave())) return;
-        clearFocus();
-      }
-      scanRefresh();
-      tree.refresh();
-    }, [clearFocus, scanRefresh, tree.refresh]);
+    // 屏 A → 屏 B jump bridge: key selection + dialog pending actions.
+    const { selectKey } = useKeyJump({
+      dbIndex,
+      selectedDb,
+      handleSelectDb,
+      detail,
+      scanKeys: scan.keys,
+      scanKeysLoading: scan.keysLoading,
+      pendingAction,
+      overlays,
+    });
 
-    useImperativeHandle(ref, () => ({ refreshKeys, selectDatabase: handleSelectDb }), [
+    useImperativeHandle(ref, () => ({ refreshKeys, selectDatabase: handleSelectDb, selectKey }), [
       refreshKeys,
       handleSelectDb,
+      selectKey,
     ]);
 
+    // E-5 fix: refetch DETAIL only — `refreshKeys()` would clear selection.
     const reloadDetail = useCallback(async () => {
       if (!detail.selectedKey) return;
-      // E-5 fix: refetch the DETAIL only. `refreshKeys()` would clear the selection
-      // (its I-1 body drops the draft), closing the panel on every save.
       await detail.selectKey(detail.selectedKey);
       scanRefresh();
       tree.refresh();
@@ -228,32 +224,16 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
     useKvSlotRelay(kvSlotState, dbSessionId, detail.selectedKey, detail.editorDirty);
 
     // Row context menu + hover delete (confirm → write gate → refresh).
-    const { handleKeyContextMenu, handleDeleteRow, actionDialogs } = useKeyRowActions({
-      dbSessionId,
-      dbIndex,
-      onRefreshKeys: refreshKeys,
-      onBatchSummary: overlays.setBatchSummary,
-      onKeyCtxDialog: overlays.setKeyCtxDialog,
-    });
+    const { handleKeyContextMenu, handleDeleteRow, handleDeleteSelected, actionDialogs } =
+      useKeyRowActions({
+        dbSessionId,
+        dbIndex,
+        onRefreshKeys: refreshKeys,
+        onBatchSummary: overlays.setBatchSummary,
+        onKeyCtxDialog: overlays.setKeyCtxDialog,
+      });
 
-    // One controller for every batch write (R1 header + pattern strip, D-1).
-    const batchActions = useBatchActions({
-      dbSessionId,
-      dbIndex,
-      selectedKeys: [...selection.selectedKeys],
-      searchPattern: scan.searchPattern,
-      onRemoveFromSelection: selection.removeKeys,
-      onRefresh: refreshAfterWrite,
-      onSummary: overlays.setBatchSummary,
-    });
-
-    /**
-     * Dialog-side refresh (创建 / TTL / PERSIST / 重命名 / 删除 / flush 出口,
-     * BUG-002). Those flows manage the selection through their own guarded
-     * outlets, so while a draft is live this must NOT run `refreshKeys`'
-     * destructive body — it would drop the draft unguarded, or stack a SECOND
-     * leave dialog on one action (双弹). It only re-scans the list.
-     */
+    // Dialog-side refresh (BUG-002): dirty ⇒ rescan only; clean ⇒ full refresh.
     const refreshKeysForDialogs = useCallback(() => {
       if (isDraftDirty()) {
         scanRefresh();
@@ -278,25 +258,10 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {selectedDb ? (
             <>
-              <WorkbenchToolbar
-                selectedDb={selectedDb}
-                dbSize={scan.dbSize}
-                loadedCount={scan.keys.length}
-                hasMore={scan.cursor !== 0}
-                withMemory={scan.withMemory}
-                onWithMemoryChange={scan.setWithMemory}
-                allowFlush={allowFlush}
-                onImportExport={() => overlays.setImportExportOpen(true)}
-                onFlushDb={() => overlays.setFlushDialog('db')}
-                onFlushAll={() => overlays.setFlushDialog('all')}
-              />
-
               <BatchSummaryBanner
                 summary={overlays.batchSummary}
                 onDismiss={() => overlays.setBatchSummary(null)}
               />
-
-              <BatchPatternBar actions={batchActions} dbIndex={dbIndex} />
 
               <div className="flex min-h-0 flex-1">
                 <div
@@ -311,9 +276,9 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                     search={search}
                     selection={selection}
                     detail={detail}
-                    batch={batchActions}
                     onKeyContextMenu={handleKeyContextMenu}
                     onDeleteRow={handleDeleteRow}
+                    onDeleteSelected={handleDeleteSelected}
                     totalCount={scan.dbSize}
                     fuzzy={fuzzyPattern}
                     onFuzzyChange={setFuzzyPattern}
@@ -331,23 +296,39 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
                 />
 
                 <div className="flex min-w-0 flex-1 flex-col border-l border-edge">
-                  <DetailColumn
-                    dbSessionId={dbSessionId}
-                    dbIndex={dbIndex}
-                    selectedKey={detail.selectedKey}
-                    detail={detail.keyDetail}
-                    detailLoading={detail.detailLoading}
-                    modules={modules}
-                    onRefresh={reloadDetail}
-                    onRenamed={(newKey) => {
-                      detail.retargetKey(newKey);
-                      // Draft already settled upstream (rename passes the I-1
-                      // guard before it runs), so this refresh sails through.
-                      void refreshKeys();
-                    }}
-                    onDirtyChange={detail.setEditorDirty}
-                    onClose={detail.clearDetailGuarded}
-                  />
+                  {renderRightPanel ? (
+                    renderRightPanel({
+                      dbSessionId,
+                      dbIndex,
+                      selectedKey: detail.selectedKey,
+                      detail: detail.keyDetail,
+                      detailLoading: detail.detailLoading,
+                      modules,
+                      onRefresh: reloadDetail,
+                      onRenamed: (newKey) => {
+                        detail.retargetKey(newKey);
+                        void refreshKeys();
+                      },
+                      onDirtyChange: detail.setEditorDirty,
+                    })
+                  ) : (
+                    <DetailColumn
+                      dbSessionId={dbSessionId}
+                      dbIndex={dbIndex}
+                      selectedKey={detail.selectedKey}
+                      detail={detail.keyDetail}
+                      detailLoading={detail.detailLoading}
+                      modules={modules}
+                      onRefresh={reloadDetail}
+                      onRenamed={(newKey) => {
+                        detail.retargetKey(newKey);
+                        // Draft already settled upstream (rename passes the I-1
+                        // guard before it runs), so this refresh sails through.
+                        void refreshKeys();
+                      }}
+                      onDirtyChange={detail.setEditorDirty}
+                    />
+                  )}
                 </div>
               </div>
             </>
@@ -392,7 +373,6 @@ export const RedisWorkbench = forwardRef<RedisWorkbenchHandle, RedisWorkbenchPro
         />
 
         {actionDialogs}
-        {batchActions.dialogs}
       </div>
     );
   },

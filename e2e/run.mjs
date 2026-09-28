@@ -38,10 +38,7 @@ function loadDotEnv(filePath) {
     if (eq <= 0) continue;
     const key = line.slice(0, eq).trim();
     let val = line.slice(eq + 1).trim();
-    if (
-      (val.startsWith('"') && val.endsWith('"')) ||
-      (val.startsWith("'") && val.endsWith("'"))
-    ) {
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
     if (process.env[key] === undefined) process.env[key] = val;
@@ -56,9 +53,7 @@ function runEnvSetup() {
   try {
     execSync(`bash "${script}"`, { stdio: 'inherit', cwd: ROOT, env: process.env });
   } catch {
-    log(
-      'WARNING: e2e/setup-e2e-env.sh failed. DB specs may fail; UI-only specs can still run.',
-    );
+    log('WARNING: e2e/setup-e2e-env.sh failed. DB specs may fail; UI-only specs can still run.');
   }
 }
 
@@ -95,18 +90,67 @@ const screenshotTrace = args.includes('--screenshot');
 const keepAppData = args.includes('--keep-app-data');
 const portArg = args.find((a, i) => args[i - 1] === '--port');
 const instancesArg = args.find((a, i) => args[i - 1] === '--instances');
-const WD_PORT = portArg
-  ? parseInt(portArg, 10)
-  : parseInt(process.env.E2E_WD_PORT || '4445', 10);
+const WD_PORT = portArg ? parseInt(portArg, 10) : parseInt(process.env.E2E_WD_PORT || '4445', 10);
 const INSTANCE_COUNT = instancesArg ? parseInt(instancesArg, 10) : 1;
 const minimalDrivers =
   process.env.DATAZEN_DRIVERS === 'basic' || args.includes('--minimal-drivers');
 const isPro =
-  args.includes('--pro') ||
-  args.includes('--edition=pro') ||
-  process.env.DATAZEN_EDITION === 'pro';
+  args.includes('--pro') || args.includes('--edition=pro') || process.env.DATAZEN_EDITION === 'pro';
 if (isPro) {
   process.env.DATAZEN_EDITION = 'pro';
+}
+const runsProQueryBuilderSuite = args.some(
+  (arg, index) => arg === '--suite' && args[index + 1] === 'pro-query-builder',
+);
+// The release-gallery capture drives the Builder through the same
+// `window.__qbTest` bridge as the journeys, so it needs VITE_E2E just as much.
+const runsProScreenshotSuite = args.some(
+  (arg, index) => arg === '--suite' && args[index + 1] === 'pro-screenshots',
+);
+if (isPro && (runsProQueryBuilderSuite || runsProScreenshotSuite)) {
+  // resolve-pro packs the extension before e2e-tauri-build sets its own env;
+  // pass the test-only bridge flag into that earlier packaging step.
+  process.env.VITE_E2E = '1';
+}
+
+/**
+ * `--window-size=fit16x9` (or `fullscreen` / `=<w>x<h>`) pins the main window for the whole
+ * run, so every `saveScreenshot` lands on one size instead of whatever geometry
+ * the host monitor reports. Only screenshot runs want this — behaviour specs must
+ * keep the shipped default (1280x900) or their layout assertions stop meaning
+ * anything. wdio.conf.ts reads E2E_WINDOW_SIZE; `--window-size` is consumed here
+ * and never forwarded to WDIO.
+ *
+ * `fit16x9` is the right value for the release gallery: the window is sized to the
+ * largest 16:9 viewport the display can show, so the whole app is always in
+ * frame and the capture needs no cropping. Resizing to 1920x1080 for the video is
+ * a pure pixel step, done afterwards by scripts/normalize-screenshots.mjs.
+ */
+/**
+ * `--attach` skips launching the app and drives an instance that is already
+ * running on `--port`, so a hand-sized window survives into the capture.
+ * See the guard further down where the app processes are started.
+ */
+const windowSizeArg = args.find((a) => a.startsWith('--window-size='));
+if (windowSizeArg) {
+  const value = windowSizeArg.slice('--window-size='.length);
+  if (value !== 'fullscreen' && value !== 'fit16x9' && !/^\d+\s*[x×]\s*\d+$/.test(value)) {
+    console.error(`[e2e] --window-size must be fullscreen, fit16x9 or <w>x<h>, got "${value}"`);
+    process.exit(1);
+  }
+  process.env.E2E_WINDOW_SIZE = value;
+  log(`Window pinned to ${value} for this run (screenshots only)`);
+}
+
+/**
+ * `--capture` re-admits the specs wdio.conf.ts normally excludes
+ * (zz-screenshots / demo-recording / zz-diag). They are excluded by default
+ * because they are slow, need seeded demo data and rewrite files in
+ * site/assets/screenshots/. It pairs with --window-size: the whole point of a
+ * capture run is a uniform set, which needs both.
+ */
+if (args.includes('--capture')) {
+  process.env.E2E_CAPTURE = '1';
 }
 if (screenshotTrace) {
   process.env.E2E_SCREENSHOT = '1';
@@ -126,7 +170,10 @@ const wdioArgs = [];
       a !== '--minimal-drivers' &&
       a !== '--minimal-plugins' &&
       a !== '--screenshot' &&
+      a !== '--capture' &&
       a !== '--keep-app-data' &&
+      a !== '--attach' &&
+      a !== '--hold' &&
       a !== '--pro' &&
       a !== '--edition=pro' &&
       !a.startsWith('--edition=') &&
@@ -134,6 +181,7 @@ const wdioArgs = [];
       args[i - 1] !== '--port' &&
       a !== '--instances' &&
       args[i - 1] !== '--instances' &&
+      !a.startsWith('--window-size=') &&
       a !== '--',
   );
   for (let i = 0; i < filtered.length; i++) {
@@ -228,9 +276,7 @@ function assertBinaryReady(binaryPath) {
   const binM = fs.statSync(binaryPath).mtimeMs;
   const distM = fs.statSync(DIST_INDEX).mtimeMs;
   if (binM + 1000 < distM) {
-    log(
-      'WARNING: binary is older than dist/index.html. Embedded assets may be stale.',
-    );
+    log('WARNING: binary is older than dist/index.html. Embedded assets may be stale.');
     log(`Rebuild with: ${BUILD_CMD}`);
   }
 }
@@ -239,9 +285,7 @@ function resolveDataDirs(count) {
   if (count <= 1) {
     return [path.join(ROOT, 'e2e', '.app-data')];
   }
-  return Array.from({ length: count }, (_, i) =>
-    path.join(ROOT, 'e2e', `.app-data-${i}`),
-  );
+  return Array.from({ length: count }, (_, i) => path.join(ROOT, 'e2e', `.app-data-${i}`));
 }
 
 function resolvePorts(basePort, count) {
@@ -301,14 +345,38 @@ assertBinaryReady(appBinary);
 const dataDirs = resolveDataDirs(INSTANCE_COUNT);
 const wdPorts = resolvePorts(WD_PORT, INSTANCE_COUNT);
 
-for (const dir of dataDirs) {
-  resetAppDataDir(dir, keepAppData);
+/**
+ * `--attach` drives an app instance someone else launched and sized by hand.
+ *
+ * Capture runs need a window geometry that is stable for the whole run, and the
+ * only reliable way to get one is to let a human set it once on a real display.
+ * That conflicts with the normal flow, where this script starts (and later kills)
+ * the app itself — resizing a window that gets recreated per run is pointless.
+ * So `--attach` leaves the app alone and only runs WDIO against
+ * `E2E_WD_PORT`, keeping the data dir intact because the running instance owns
+ * whatever is already seeded there.
+ */
+const attachMode = args.includes('--attach');
+const holdMode = args.includes('--hold');
+
+if (holdMode) {
+  if (attachMode) die('--hold and --attach are mutually exclusive');
+  if (INSTANCE_COUNT > 1) die('--hold opens a single window; use --instances 1');
+}
+
+if (attachMode) {
+  if (INSTANCE_COUNT > 1) {
+    die('--attach drives a single already-running instance; use --instances 1');
+  }
+  log(`Attach mode: driving the app already listening on ${WD_PORT}.`);
+} else {
+  for (const dir of dataDirs) {
+    resetAppDataDir(dir, keepAppData);
+  }
 }
 
 if (INSTANCE_COUNT > 1) {
-  log(
-    `Multi-instance mode: ${INSTANCE_COUNT} app processes on ports ${wdPorts.join(', ')}`,
-  );
+  log(`Multi-instance mode: ${INSTANCE_COUNT} app processes on ports ${wdPorts.join(', ')}`);
 } else {
   log(`Starting app: ${appBinary}`);
   log(`WebDriver port: ${WD_PORT} (TAURI_WEBDRIVER_PORT / E2E_WD_PORT)`);
@@ -325,15 +393,17 @@ function onAppOutput(chunk) {
 }
 
 /** @type {import('node:child_process').ChildProcess[]} */
-const appProcesses = wdPorts.map((port, i) =>
-  startAppInstance({
-    binaryPath: appBinary,
-    dataDir: dataDirs[i],
-    port,
-    workerIndex: i,
-    onOutput: onAppOutput,
-  }),
-);
+const appProcesses = attachMode
+  ? []
+  : wdPorts.map((port, i) =>
+      startAppInstance({
+        binaryPath: appBinary,
+        dataDir: dataDirs[i],
+        port,
+        workerIndex: i,
+        onOutput: onAppOutput,
+      }),
+    );
 
 function cleanup() {
   for (const proc of appProcesses) {
@@ -363,6 +433,28 @@ process.on('SIGTERM', () => {
 
 try {
   await Promise.all(wdPorts.map((port) => waitForPort(port)));
+
+  /**
+   * `--hold` opens the app and stops there, leaving the window up so a human can
+   * size it by hand, then drives it with a follow-up `--attach` run.
+   *
+   * The screenshot geometry is not something a spec can pick: the webdriver
+   * captures 1:1 in CSS pixels and ignores devicePixelRatio, so the only way to
+   * land on a window that is both fully visible and the right density is to set
+   * it once, by eye, on the real display.
+   */
+  if (holdMode) {
+    log('Hold mode: app is up. Size the window, then run the capture with --attach.');
+    await new Promise((resolve) => {
+      appProcesses.forEach((p) => p.on('close', resolve));
+      process.on('SIGINT', resolve);
+      process.on('SIGTERM', resolve);
+    });
+    cleanup();
+    runEnvTeardown();
+    process.exit(0);
+  }
+
   if (INSTANCE_COUNT > 1) {
     log(`All ${INSTANCE_COUNT} WebDriver plugin(s) ready on ports ${wdPorts.join(', ')}.`);
   } else {
@@ -425,10 +517,7 @@ if (INSTANCE_COUNT > 1) {
     const confPath = path.join(ROOT, 'e2e', 'wdio.conf.ts');
     const confText = fs.readFileSync(confPath, 'utf8');
     // Match: suiteName: [\n  './specs/...', ...]
-    const re = new RegExp(
-      `['"]?${suiteName}['"]?\\s*:\\s*\\[([^\\]]+)\\]`,
-      's',
-    );
+    const re = new RegExp(`['"]?${suiteName}['"]?\\s*:\\s*\\[([^\\]]+)\\]`, 's');
     const m = confText.match(re);
     if (!m) {
       die(`Suite "${suiteName}" not found in wdio.conf.ts`);
@@ -551,7 +640,9 @@ if (INSTANCE_COUNT > 1) {
   const passed = exitCodes.filter((c) => c === 0).length;
   log(
     `${passed}/${exitCodes.length} workers passed. ` +
-      (maxCode === 0 ? 'All tests passed!' : `Some workers failed (codes: ${exitCodes.join(', ')})`),
+      (maxCode === 0
+        ? 'All tests passed!'
+        : `Some workers failed (codes: ${exitCodes.join(', ')})`),
   );
   process.exit(maxCode);
 } else {
@@ -564,15 +655,11 @@ if (INSTANCE_COUNT > 1) {
     E2E_WORKER_SCHEMA: process.env.E2E_WORKER_SCHEMA || 'e2e_worker_0',
   };
 
-  const wdio = spawn(
-    'npx',
-    ['wdio', 'run', 'e2e/wdio.conf.ts', ...wdioArgs],
-    {
-      stdio: 'inherit',
-      cwd: ROOT,
-      env: wdioEnv,
-    },
-  );
+  const wdio = spawn('npx', ['wdio', 'run', 'e2e/wdio.conf.ts', ...wdioArgs], {
+    stdio: 'inherit',
+    cwd: ROOT,
+    env: wdioEnv,
+  });
 
   const exitCode = await new Promise((resolve) => {
     wdio.on('close', (code) => resolve(code ?? 1));

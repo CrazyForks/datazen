@@ -76,26 +76,32 @@ class MockResizeObserver {
 globalThis.ResizeObserver ??= MockResizeObserver as unknown as typeof ResizeObserver;
 
 /**
- * Single IPC seam. `BatchBar` / `KeyWorkbenchDialogs` build their invoke helpers
+ * Single IPC seam. `batchInvokes` / `KeyWorkbenchDialogs` build their invoke helpers
  * on top of `redisCommandInvoke` (a cross-module import, so it IS interceptable)
  * — mocking the helper modules themselves would miss their internal calls.
  */
-const commands = vi.fn(async (_pluginId: string, command: string): Promise<unknown> => {
-  switch (command) {
-    case 'delete_keys':
-      return 1;
-    case 'batch_set_ttl':
-      return { updated: 1, errors: [] };
-    case 'batch_delete_pattern':
-      return { deleted: 0, errors: [] };
-    case 'batch_rename_prefix':
-      return { renamed: 0, errors: [] };
-    case 'count_matching':
-      return 1;
-    default:
-      return undefined;
-  }
-});
+const commands = vi.fn(
+  async (
+    _pluginId: string,
+    command: string,
+    _params: Record<string, unknown>,
+  ): Promise<unknown> => {
+    switch (command) {
+      case 'delete_keys':
+        return 1;
+      case 'batch_set_ttl':
+        return { updated: 1, errors: [] };
+      case 'batch_delete_pattern':
+        return { deleted: 0, errors: [] };
+      case 'batch_rename_prefix':
+        return { renamed: 0, errors: [] };
+      case 'count_matching':
+        return 1;
+      default:
+        return undefined;
+    }
+  },
+);
 
 const getKey = vi.fn();
 const getKeyRaw = vi.fn();
@@ -141,9 +147,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -186,9 +197,7 @@ async function dialogByTitle(titleKey: string): Promise<HTMLElement> {
 }
 
 function buttonWithKey(container: HTMLElement, key: string): HTMLButtonElement {
-  const found = Array.from(container.querySelectorAll('button')).find(
-    (b) => b.textContent === key,
-  );
+  const found = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === key);
   if (!found) throw new Error(`no button ${key} in dialog`);
   return found as HTMLButtonElement;
 }
@@ -199,14 +208,6 @@ async function selectAndDraft(key = 'user:1', draft = 'draft') {
   await waitFor(() => expect(input()).toBeTruthy());
   fireEvent.change(input(), { target: { value: draft } });
   await waitFor(() => expect(editor().getAttribute('data-string-dirty')).toBe('true'));
-}
-
-/** Check another key so the batch bar has a target without touching the draft. */
-async function checkOtherKey() {
-  const checkbox = screen.getByLabelText('other:2') as HTMLInputElement;
-  fireEvent.click(checkbox);
-  await flush(0);
-  expect(checkbox.checked).toBe(true);
 }
 
 beforeEach(() => {
@@ -329,76 +330,6 @@ describe('[tester] 头行改名与删除的 I-1 拦截', () => {
     fireEvent.click(screen.getByTestId('redis-draft-discard'));
     await waitFor(() => expect(deleteKey).toHaveBeenCalledOnce());
     expect(deleteKey.mock.calls[0]).toEqual(['sess-i1c', 0, 'user:1']);
-  });
-});
-
-// ============================================================================
-// C. 遗留事项 2 · 批量删除（专属 I-1 断言）
-// ============================================================================
-describe('[tester] 批量删除选中的 I-1 拦截', () => {
-  it('the batch refresh after a successful delete asks before dropping the draft', async () => {
-    renderWorkbench();
-    await selectAndDraft();
-    await checkOtherKey();
-    expect(editor().getAttribute('data-string-dirty')).toBe('true');
-
-    fireEvent.click(screen.getByTestId('redis-tree-batch-delete'));
-    const dialog = await dialogByTitle('redis.confirmDeleteKeys');
-    fireEvent.click(buttonWithKey(dialog, 'common.delete'));
-
-    // 批量删除先落库（删的是别的键），随后 refreshKeys 发现仍有草稿 ⇒ 弹守卫。
-    await waitFor(() =>
-      expect(commands).toHaveBeenCalledWith(
-        'redis',
-        'delete_keys',
-        expect.objectContaining({ keys: ['other:2'] }),
-      ),
-    );
-    await screen.findByTestId('redis-draft-discard');
-    // 关键：被拦时选中与草稿都还在（旧写法在这里静默清 dirty）。
-    expect(column().getAttribute('data-selected-key')).toBe('user:1');
-    expect(editor().getAttribute('data-string-dirty')).toBe('true');
-    expect(isDraftDirty()).toBe(true);
-
-    fireEvent.click(screen.getByTestId('redis-draft-keep'));
-    await waitFor(() => expect(leaveDialog()).toBeNull());
-    expect(column().getAttribute('data-selected-key')).toBe('user:1');
-    expect(isDraftDirty()).toBe(true);
-  });
-});
-
-// ============================================================================
-// D. 遗留事项 2 · 批量 TTL（专属 I-1 断言）
-// ============================================================================
-describe('[tester] 批量 TTL 的 I-1 拦截', () => {
-  it('a batch TTL apply asks before the refresh drops the draft', async () => {
-    renderWorkbench();
-    await selectAndDraft();
-    await checkOtherKey();
-
-    fireEvent.click(screen.getByTestId('redis-tree-batch-ttl'));
-    const dialog = await dialogByTitle('redis.confirmBatchTtl');
-    const field = dialog.querySelector('input:not([type="checkbox"])') as HTMLInputElement;
-    expect(field).toBeTruthy();
-    fireEvent.change(field, { target: { value: '60' } });
-    fireEvent.click(buttonWithKey(dialog, 'common.confirm'));
-
-    await waitFor(() =>
-      expect(commands).toHaveBeenCalledWith(
-        'redis',
-        'batch_set_ttl',
-        expect.objectContaining({ ttlSeconds: 60, keys: ['other:2'] }),
-      ),
-    );
-    await screen.findByTestId('redis-draft-discard');
-    expect(column().getAttribute('data-selected-key')).toBe('user:1');
-    expect(editor().getAttribute('data-string-dirty')).toBe('true');
-
-    // 放弃 ⇒ 刷新继续：选中随 refreshKeys 清空，脏落 false，不再弹第二次。
-    fireEvent.click(screen.getByTestId('redis-draft-discard'));
-    await waitFor(() => expect(column().getAttribute('data-detail-state')).toBe('no-key'));
-    expect(isDraftDirty()).toBe(false);
-    expect(leaveDialog()).toBeNull();
   });
 });
 

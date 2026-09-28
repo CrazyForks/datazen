@@ -49,6 +49,8 @@ const pack = {
   'nl2sql.clear': '清除',
   'nl2sql.selectDatabaseFirst': '请先在左侧选择一个数据库',
   'nl2sql.applyAndChart': '应用并图表化',
+  'nl2sql.preview': 'SQL 预览',
+  'nl2sql.result': '生成的 SQL',
   'explain.title': 'EXPLAIN 分析',
   'explain.rawOutput': '执行计划',
   'explain.planTree': '计划树',

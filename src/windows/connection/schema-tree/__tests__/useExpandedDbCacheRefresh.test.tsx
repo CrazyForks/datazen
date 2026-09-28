@@ -1,12 +1,17 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { useExpandedDbCacheRefresh, type ExpandedDbCacheRefreshOptions } from '../useExpandedDbCacheRefresh';
+import {
+  useExpandedDbCacheRefresh,
+  type ExpandedDbCacheRefreshOptions,
+} from '../useExpandedDbCacheRefresh';
 import { useSchemaStore } from '../../../../stores/schemaStore';
+import type { ConnectionSchemaState } from '../../../../stores/schemaStoreState';
 
 /** Shape stored per connection inside schemaStore.schemas. */
-function schemaEntry(databases: string[], epoch: number) {
+function schemaEntry(databases: string[], epoch: number): ConnectionSchemaState {
   return {
     currentDatabase: databases[0] ?? null,
+    currentSchema: null,
     databases,
     databaseType: 'postgresql',
     isMultiDatabase: databases.length > 1,
@@ -14,6 +19,7 @@ function schemaEntry(databases: string[], epoch: number) {
     views: [],
     schemaNames: [],
     columnMap: {},
+    typedColumnMap: {},
     namespaceTree: {},
     loadedPaths: new Set<string>(),
     pathItems: {},
@@ -30,10 +36,23 @@ function schemaEntry(databases: string[], epoch: number) {
 }
 
 type HandlerMocks = {
-  loadTablesForDb: ReturnType<typeof vi.fn>;
-  loadObjectsForCat: ReturnType<typeof vi.fn>;
-  clearCaches: ReturnType<typeof vi.fn>;
+  loadTablesForDb: Mock<ExpandedDbCacheRefreshOptions['loadTablesForDb']>;
+  loadObjectsForCat: Mock<ExpandedDbCacheRefreshOptions['loadObjectsForCat']>;
+  clearCaches: Mock<ExpandedDbCacheRefreshOptions['clearCaches']>;
 };
+
+/** The three handler mocks every case in this file needs. */
+function makeHandlers(): HandlerMocks {
+  return {
+    loadTablesForDb: vi
+      .fn<(dbSessionId: string, dbName: string) => Promise<void>>()
+      .mockResolvedValue(undefined),
+    loadObjectsForCat: vi
+      .fn<(dbSessionId: string, catKey: string, catId: string) => Promise<void>>()
+      .mockResolvedValue(undefined),
+    clearCaches: vi.fn<(dbSessionId: string, connectionId?: string) => void>(),
+  };
+}
 
 function baseOpts(handlers: HandlerMocks): ExpandedDbCacheRefreshOptions {
   return {
@@ -54,11 +73,7 @@ describe('useExpandedDbCacheRefresh', () => {
       schemas: new Map(s.schemas).set('conn-1', schemaEntry(['a', 'b'], 0)),
     }));
 
-    const handlers = {
-      loadTablesForDb: vi.fn().mockResolvedValue(undefined),
-      loadObjectsForCat: vi.fn().mockResolvedValue(undefined),
-      clearCaches: vi.fn(),
-    };
+    const handlers = makeHandlers();
 
     const { rerun } = renderHookWithDeps(baseOpts(handlers));
     expect(handlers.clearCaches).not.toHaveBeenCalled();
@@ -80,11 +95,7 @@ describe('useExpandedDbCacheRefresh', () => {
     useSchemaStore.setState((s) => ({
       schemas: new Map(s.schemas).set('conn-1', schemaEntry(['a'], 0)),
     }));
-    const handlers = {
-      loadTablesForDb: vi.fn().mockResolvedValue(undefined),
-      loadObjectsForCat: vi.fn().mockResolvedValue(undefined),
-      clearCaches: vi.fn(),
-    };
+    const handlers = makeHandlers();
     const { rerun } = renderHookWithDeps(baseOpts(handlers));
 
     const entry = schemaEntry(['a'], 0);
@@ -104,11 +115,7 @@ describe('useExpandedDbCacheRefresh', () => {
       schemas: new Map(s.schemas).set('conn-sql', schemaEntry(['/data/app.db'], 0)),
     }));
 
-    const handlers = {
-      loadTablesForDb: vi.fn().mockResolvedValue(undefined),
-      loadObjectsForCat: vi.fn().mockResolvedValue(undefined),
-      clearCaches: vi.fn(),
-    };
+    const handlers = makeHandlers();
 
     const opts: ExpandedDbCacheRefreshOptions = {
       ...baseOpts(handlers),

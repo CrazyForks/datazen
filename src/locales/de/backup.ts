@@ -18,12 +18,12 @@ const pack = {
   'backup.progressObject': 'Dump von {name} ({current}/{total})',
   'backup.progressWriting': 'Sicherungsdatei wird geschrieben…',
   'backup.restoreOverwriteConfirm':
-    'Zieldatenbank "{database}" hat bereits {count} Objekte. Fortfahren löscht bestehende Tabellen/Views und wendet dann die Sicherung an. Überschreiben?',
+    'Zieldatenbank „{database}“ hat bereits {count} Objekte. Fortfahren löscht bestehende Tabellen/Ansichten und wendet dann die Sicherung an. Überschreiben?',
   'backup.restorePreparing': 'Sicherungsdatei wird gelesen…',
   'backup.restoreProgress': '{name} wird wiederhergestellt ({current}/{total})',
   'backup.progressLog': 'Ausführungsprotokoll',
   'backup.copyLog': 'Protokoll kopieren',
-  'backup.logCopied': 'Copied',
+  'backup.logCopied': 'Kopiert',
   'backup.logOmitted': '… {count} Zeilen ausgelassen (Log zur Speicherschonung gekürzt)',
 } as const;
 export default pack;

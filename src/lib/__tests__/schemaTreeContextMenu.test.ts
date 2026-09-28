@@ -21,6 +21,7 @@ const labels: SchemaTreeContextMenuLabels = {
   drop: 'Drop',
   dropView: 'Drop View',
   dropDatabase: 'Drop Database',
+  closeDatabaseConnection: 'Close Connection',
   viewErDiagram: 'View ER Diagram',
   newSchema: 'New Schema',
   createSchema: 'Create Schema',

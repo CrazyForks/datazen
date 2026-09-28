@@ -3,6 +3,7 @@ import { t } from '../i18n.js';
 import {
   closeExtraWindows,
   executeSQL,
+  executeSQLChecked,
   openQueryTab,
   clickTableInSidebar,
   switchSubTab,
@@ -28,8 +29,11 @@ describe('表索引创建与删除 (IDX-001~IDX-006)', () => {
     await connectSeededPgInWorkspace();
 
     await openQueryTab();
-    await executeSQL(`DROP TABLE IF EXISTS ${TEST_TABLE}`);
-    await executeSQL(`
+    // Checked DDL: a swallowed backend error (stale session bound to a
+    // replaced worker DB) used to surface only as a 20s
+    // `waitForTableInSidebar` timeout with no hint of the real cause.
+    await executeSQLChecked(`DROP TABLE IF EXISTS ${TEST_TABLE}`);
+    await executeSQLChecked(`
       CREATE TABLE ${TEST_TABLE} (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,

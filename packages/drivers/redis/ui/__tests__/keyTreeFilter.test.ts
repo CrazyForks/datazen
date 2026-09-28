@@ -19,13 +19,22 @@ import { describe, expect, it } from 'vitest';
 import type { KeyEntry } from '@datazen/driver-sdk';
 import type { KeyTreeRow } from '../key-browser/keyTree';
 import {
+  compileGlob,
   countSelectableRows,
   filterKeysByPattern,
   filterTreeRowsByPattern,
+  globMatcher,
   isBreadcrumbRow,
-  redisGlobMatch,
 } from '../key-browser/keyTreeFilter';
 
+/**
+ * Single-call convenience over the two exported primitives, rebuilt here: the
+ * suite is about *Redis MATCH semantics*, so it names its own matcher instead
+ * of leaning on a production shortcut that nothing on the UI path calls.
+ */
+function redisGlobMatch(name: string, pattern: string): boolean {
+  return globMatcher(compileGlob(pattern))(name);
+}
 
 /* ── independent reference: literal transliteration of Redis 7.2 util.c ───── */
 
@@ -339,17 +348,89 @@ describe('[redis-tree-ui-BUG-001/003] redisGlobMatch is Redis MATCH, not a regex
    * reference and the port deliberately differ there and the pair is skipped.
    */
   const REF_PATTERNS = [
-    '*', 'a*', '*c', 'a*c', 'app:*', 'a?c', 'user', '*user*', 'root-plain', 'app.user*',
-    'h[ae]llo', '*[0-9]', 'user[0-9]', 'h[a-b]llo', 'h[b-a]llo', 'h[^e]llo', 'a[\\]]b',
-    '[abc', 'user[0-9', 'a\\b', '\\*lit', 'ab\\', '*x', '?', '??', '???', '??????',
-    '?????', 'é*', 'a??c', '**', '**a**', 'a**b', '[]a]', '[^a]', '[!a]', 'x\\', '\\\\',
-    '*a*a*a*a*a*', '?[a-c]', '[a-c]?', '\\?',
+    '*',
+    'a*',
+    '*c',
+    'a*c',
+    'app:*',
+    'a?c',
+    'user',
+    '*user*',
+    'root-plain',
+    'app.user*',
+    'h[ae]llo',
+    '*[0-9]',
+    'user[0-9]',
+    'h[a-b]llo',
+    'h[b-a]llo',
+    'h[^e]llo',
+    'a[\\]]b',
+    '[abc',
+    'user[0-9',
+    'a\\b',
+    '\\*lit',
+    'ab\\',
+    '*x',
+    '?',
+    '??',
+    '???',
+    '??????',
+    '?????',
+    'é*',
+    'a??c',
+    '**',
+    '**a**',
+    'a**b',
+    '[]a]',
+    '[^a]',
+    '[!a]',
+    'x\\',
+    '\\\\',
+    '*a*a*a*a*a*',
+    '?[a-c]',
+    '[a-c]?',
+    '\\?',
   ] as const;
   const REF_KEYS = [
-    '', 'a', 'ac', 'abc', 'a\nc', 'a\x00c', 'ab', 'a\\b', '*lit', '[abc', 'user5',
-    'user[0-9', 'hello', 'hallo', 'hillo', 'hbllo', 'hcllo', 'a]b', 'a[b', 'x', 'é',
-    'é:x', 'e:x', '用', '用ab', 'aaaaab', 'aaa', 'cache:9', 'user1', 'app:user:1',
-    'appXuser:1', 'root-plain', 'a{2}', 'a(b)', 'a$b^', 'x|y', '[]a]', '[!a]', ']',
+    '',
+    'a',
+    'ac',
+    'abc',
+    'a\nc',
+    'a\x00c',
+    'ab',
+    'a\\b',
+    '*lit',
+    '[abc',
+    'user5',
+    'user[0-9',
+    'hello',
+    'hallo',
+    'hillo',
+    'hbllo',
+    'hcllo',
+    'a]b',
+    'a[b',
+    'x',
+    'é',
+    'é:x',
+    'e:x',
+    '用',
+    '用ab',
+    'aaaaab',
+    'aaa',
+    'cache:9',
+    'user1',
+    'app:user:1',
+    'appXuser:1',
+    'root-plain',
+    'a{2}',
+    'a(b)',
+    'a$b^',
+    'x|y',
+    '[]a]',
+    '[!a]',
+    ']',
   ] as const;
 
   it('agrees with a literal C transliteration on every pattern/key pair', () => {
@@ -361,7 +442,9 @@ describe('[redis-tree-ui-BUG-001/003] redisGlobMatch is Redis MATCH, not a regex
         const got = redisGlobMatch(key, pattern);
         const want = refStringmatchlen(enc.encode(pattern), enc.encode(key));
         if (got !== want) {
-          mismatches.push(`${JSON.stringify(pattern)} vs ${JSON.stringify(key)}: port=${got} ref=${want}`);
+          mismatches.push(
+            `${JSON.stringify(pattern)} vs ${JSON.stringify(key)}: port=${got} ref=${want}`,
+          );
         }
       }
     }
@@ -383,7 +466,6 @@ describe('[redis-tree-ui-BUG-001/003] redisGlobMatch is Redis MATCH, not a regex
     expect(Date.now() - start).toBeLessThan(500);
   });
 });
-
 
 /* ── pattern → prefix (the routing half of the fix) ────────────────────────── */
 
@@ -421,9 +503,9 @@ describe('[redis-tree-ui-BUG-001] filterTreeRowsByPattern forks on row.kind', ()
       'k:app:user:1',
       'k:app:user:2',
     ]);
-    expect(
-      filterTreeRowsByPattern(rows(), 'app:*').some((row) => isBreadcrumbRow(row)),
-    ).toBe(false);
+    expect(filterTreeRowsByPattern(rows(), 'app:*').some((row) => isBreadcrumbRow(row))).toBe(
+      false,
+    );
   });
 
   it('a folder-only match does not smuggle non-matching children through', () => {
@@ -463,10 +545,7 @@ describe('[redis-tree-ui-BUG-001] filterTreeRowsByPattern forks on row.kind', ()
   });
 
   it('an empty folder is never painted, matching or not', () => {
-    const withEmpty: KeyTreeRow[] = [
-      rowFolder('app:', 0, 0),
-      rowKey('root-plain', 0),
-    ];
+    const withEmpty: KeyTreeRow[] = [rowFolder('app:', 0, 0), rowKey('root-plain', 0)];
     expect(ids(filterTreeRowsByPattern(withEmpty, 'app:*'))).toEqual([]);
     expect(ids(filterTreeRowsByPattern(withEmpty, '*'))).toEqual(['f:app:', 'k:root-plain']);
     expect(ids(filterTreeRowsByPattern(withEmpty, 'root-plain'))).toEqual(['k:root-plain']);
@@ -485,11 +564,7 @@ describe('[redis-tree-ui-BUG-001] filterTreeRowsByPattern forks on row.kind', ()
       rowFolder('z:', 0),
       rowKey('z:three', 1),
     ];
-    expect(ids(filterTreeRowsByPattern(mixed, 'm:*'))).toEqual([
-      'f:m:',
-      'k:m:one',
-      'k:m:two',
-    ]);
+    expect(ids(filterTreeRowsByPattern(mixed, 'm:*'))).toEqual(['f:m:', 'k:m:one', 'k:m:two']);
     // Every leaf matches ⇒ nothing is dropped, order is byte-for-byte the input.
     expect(filterTreeRowsByPattern(mixed, '*')).toBe(mixed);
     // `*:t*` hits `m:two` / `z:three` but not the folder paths themselves, so

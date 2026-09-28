@@ -30,10 +30,14 @@ export const redisMeta = {
   // KV workspace surfaces Redis fills (host contract F-1 — capability flags, not
   // slot components). Declared here rather than in the host so the host never
   // branches on a driver id, and declared slot by slot so a surface Redis does
-  // not contribute to keeps the host's default rendering. All four are live now
-  // that the context bar's owning track has landed.
+  // not contribute to keeps the host's default rendering.
+  //
+  // `contextBar` is deliberately absent: the 48px context band (db selector, key
+  // count, memory, scan budget, action buttons) duplicated what the key browser
+  // and the right panel already own, and the panel's own controls now sit in the
+  // right panel's tab bar. The host therefore keeps its plain toolbar for Redis
+  // panels instead of reserving a band nothing fills.
   kvWorkspace: {
-    contextBar: true,
     statusBar: true,
     keyPropsSidebar: true,
     home: true,

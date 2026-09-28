@@ -7,6 +7,7 @@
  * Outputs: site/assets/screenshots/wizard-open.png
  */
 import { browser, $ } from '@wdio/globals';
+import { assertGallerySize, ensureMaximized } from '../lib/capture-window';
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
@@ -29,6 +30,10 @@ async function invoke<T = unknown>(cmd: string, args: Record<string, unknown> = 
 
 async function shot(name: string, settleMs = 1500) {
   await browser.pause(settleMs);
+  // Maximize, never resize: a `set_size` IPC is honoured 1:1 in CSS points and
+  // drops devicePixelRatio, which is how this image ended up at 1920x1440.
+  await ensureMaximized();
+  await assertGallerySize(name);
   fs.mkdirSync(OUT, { recursive: true });
   const buf = Buffer.from(await browser.takeScreenshot(), 'base64');
   fs.writeFileSync(path.join(OUT, name), buf);
@@ -47,10 +52,6 @@ describe('Wizard Screenshot', () => {
     await browser.pause(2000);
 
     // Resize to standard demo resolution
-    await invoke('set_size', {
-      kind: 'main',
-      value: { Logical: { width: 2560, height: 1648 } },
-    }).catch(() => {});
     await browser.pause(1500);
 
     // Screenshot

@@ -216,6 +216,7 @@ const pack = {
     'Cross-dialect plans map types via sync IR; unsupported types are skipped with warnings.',
   'schemaDiff.warnings': 'Warnings',
   'schemaDiff.statements': 'statements',
+  'schemaDiff.schemaIdentical': 'The two schemas are identical',
   'schemaDiff.emptyPlan': 'No executable plan statements were generated',
   'schemaDiff.emptyPlanNoDiff':
     'No executable statements: the selected schemas are already aligned for the enabled plan options.',

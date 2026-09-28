@@ -1,11 +1,14 @@
 /**
  * Responsive query-toolbar user journey.
  *
- * The toolbar switches to icon-only actions below its measured threshold. The
- * test changes the real Tauri window size, verifies the compact state, and
- * proves the primary actions remain usable before restoring the original size.
+ * The toolbar is icon-only at every width: action names live in tooltips, and
+ * the right-hand status zone shortens below its measured threshold. The test
+ * changes the real Tauri window size, proves the row neither grows labels nor
+ * overflows, and that the primary actions remain usable before restoring the
+ * original size.
  */
 import { expect, browser, $ } from '@wdio/globals';
+import { t } from '../../i18n.js';
 import {
   captureJourneyStep,
   closeExtraWindows,
@@ -40,7 +43,7 @@ describe('查询工具栏响应式完整用户旅程 (QUERY-TOOLBAR-JOURNEY)', (
     await closeExtraWindows(mainWindow);
   });
 
-  it('完整旅程：缩窄窗口 → 工具栏进入 compact → 执行/历史仍可用 → 恢复窗口', async () => {
+  it('完整旅程：缩窄窗口 → 工具栏保持纯图标且不溢出 → 执行/历史仍可用 → 恢复窗口', async () => {
     const narrowWidth = Math.min(880, Math.max(760, originalSize.width - 240));
     await setWindowSize(narrowWidth, originalSize.height);
 
@@ -50,14 +53,22 @@ describe('查询工具栏响应式完整用户旅程 (QUERY-TOOLBAR-JOURNEY)', (
       async () =>
         browser.execute(() => {
           const root = document.querySelector('[data-testid="query-editor-toolbar"]');
-          const execute = root?.querySelector('[data-testid="editor-execute-button"]');
-          const label = execute?.querySelector('span');
-          return !!root && root.clientWidth < 920 && label?.classList.contains('sr-only') === true;
+          if (!root || root.clientWidth >= 920) return false;
+          // Every action is icon-only: no visible text node inside the buttons…
+          const buttons = Array.from(root.querySelectorAll('button'));
+          const hasVisibleText = buttons.some((btn) => (btn.textContent ?? '').trim().length > 0);
+          // …and the row still fits without horizontal overflow.
+          return buttons.length > 0 && !hasVisibleText && root.scrollWidth <= root.clientWidth;
         }),
-      { timeout: 10000, timeoutMsg: '窄窗口下查询工具栏未进入 compact 模式' },
+      { timeout: 10000, timeoutMsg: '窄窗口下查询工具栏未保持纯图标或出现横向溢出' },
     );
     await expect(await $('[data-testid="editor-execute-button"]')).toBeDisplayed();
     await expect(await $('[data-testid="editor-execution-strategy-button"]')).toBeDisplayed();
+    await expect(await $('[data-testid="editor-format-button"]')).toBeDisplayed();
+    // The action names survive as tooltips now that they are not rendered.
+    expect(await $('[data-testid="editor-format-button"]').getAttribute('title')).toContain(
+      t('query.format'),
+    );
     await captureJourneyStep('query-toolbar-compact');
 
     await executeSQL('SELECT 1 AS compact_toolbar_value');
@@ -77,19 +88,24 @@ describe('查询工具栏响应式完整用户旅程 (QUERY-TOOLBAR-JOURNEY)', (
       { timeout: 5000, timeoutMsg: '关闭历史面板超时' },
     );
 
-    // Use a known-wide viewport for the positive expanded-state assertion. The
-    // app may have been launched at its platform minimum size, where the
-    // toolbar can legitimately remain compact even after "restoring" it.
+    // Use a known-wide viewport for the expanded-state assertion. The app may
+    // have been launched at its platform minimum size, so never rely on the
+    // original width here. The toolbar stays icon-only either way; what the
+    // extra room buys is the full status text on the right-hand side.
     await setWindowSize(Math.max(originalSize.width, 1400), originalSize.height);
     await browser.waitUntil(
       async () =>
         browser.execute(() => {
           const root = document.querySelector('[data-testid="query-editor-toolbar"]');
-          const execute = root?.querySelector('[data-testid="editor-execute-button"]');
-          const label = execute?.querySelector('span');
-          return label?.classList.contains('sr-only') === false;
+          if (!root || root.clientWidth < 1400) return false;
+          const execute = root.querySelector('[data-testid="editor-execute-button"]');
+          return (
+            !!execute &&
+            (execute.textContent ?? '').trim().length === 0 &&
+            root.scrollWidth <= root.clientWidth
+          );
         }),
-      { timeout: 10000, timeoutMsg: '恢复窗口宽度后查询工具栏未恢复标签' },
+      { timeout: 10000, timeoutMsg: '宽窗口下查询工具栏未保持纯图标或出现横向溢出' },
     );
     await captureJourneyStep('query-toolbar-expanded-wide');
 

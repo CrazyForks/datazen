@@ -3,7 +3,7 @@
  * Database reset lives in e2e/setup-e2e-env.sh + e2e/teardown-e2e-env.sh (run.mjs).
  */
 import { execSync } from 'node:child_process';
-import type { Browser } from '@wdio/globals';
+type Browser = WebdriverIO.Browser;
 
 type ConnectionRow = { id: string; name?: string };
 type WorkflowRow = { id: string };

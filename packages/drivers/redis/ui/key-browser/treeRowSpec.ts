@@ -90,11 +90,6 @@ export function firstChildIndex(rows: KeyTreeRow[], from: number): number {
   return next && next.depth === row.depth + 1 ? from + 1 : -1;
 }
 
-/** Folder prefix a row was produced under (`''` for root-level rows). */
-export function rowPrefix(row: KeyTreeRow): string {
-  return row.kind === 'folder' ? row.path : row.entry.key;
-}
-
 /* ── I-9 keyboard map ─────────────────────────────────────────────────────── */
 
 /**

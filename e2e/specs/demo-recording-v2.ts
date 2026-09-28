@@ -415,11 +415,9 @@ GROUP BY quarter;`;
     // 2.7 工具条：格式化 + 历史 + 片段
     await setEditorContent('select region,sum(amount) as total from demo_sales group by region;');
     await hold(1000, 400);
-    await clickTestId('query-toolbar-more-menu-trigger');
-    await hold(1000, 400);
-    const formatItem = $('[data-testid="more-menu-format"]');
-    if (await formatItem.isExisting()) {
-      await formatItem.click();
+    const formatBtn = $('[data-testid="editor-format-button"]');
+    if (await formatBtn.isExisting()) {
+      await formatBtn.click();
       await browser.pause(500);
       await hold(1500, 400);
     }

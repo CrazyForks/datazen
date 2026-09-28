@@ -6,7 +6,7 @@ const onboarding = {
   'onboarding.sidebar.importTitle': 'Ein-Klick-Import',
   'onboarding.sidebar.importDesc': 'DBeaver, DataGrip, Navicat, TablePlus und mehr.',
   'onboarding.sidebar.aiTitle': 'KI-nativ',
-  'onboarding.sidebar.aiDesc': 'Schema-awaree SQL-Assistenz.',
+  'onboarding.sidebar.aiDesc': 'Schemabewusste SQL-Assistenz.',
   'onboarding.sidebar.dashboardTitle': 'Dashboards & Diagramme',
   'onboarding.sidebar.dashboardDesc':
     'Abfrageergebnisse sofort in Diagramme umwandeln und Berichte einfach teilen.',
@@ -22,12 +22,12 @@ const onboarding = {
   'onboarding.s0.manualCard': 'Verbindung manuell erstellen',
   'onboarding.s0.manualCardDesc': 'PostgreSQL, MySQL, SQLite, Redis und mehr',
   'onboarding.s0.sampleCard': 'Mit Beispieldaten ausprobieren',
-  'onboarding.s0.sampleCardDesc': 'Ein lokales SQLite-Spielplatz — keine Konfiguration nötig',
+  'onboarding.s0.sampleCardDesc': 'Ein lokaler SQLite-Spielplatz — keine Konfiguration nötig',
 
   // S1 — Connect
   'onboarding.s1.title': 'Erste Verbindung erstellen',
   'onboarding.s1.subtitle':
-    'Gleiche Formular wie bei Neue Verbindung — gleiche Validierung, gleicher Test. <b>Nach dem Speichern können Sie fortfahren.</b>',
+    'Gleiches Formular wie bei „Neue Verbindung“ — gleiche Validierung, gleicher Test. <b>Nach dem Speichern können Sie fortfahren.</b>',
   'onboarding.s1.stepLabel': 'Schritt 1 von 2',
   'onboarding.s1.driver': 'Treiber',
   'onboarding.s1.testBtn': 'Verbindung testen',
@@ -37,13 +37,13 @@ const onboarding = {
   'onboarding.s1.importSubtitle':
     'Wählen Sie den Client, von dem Sie migrieren — oder eine Verbindungsdatei. Die Verbindungen landen in Ihrem Arbeitsbereich, nichts verlässt dieses Gerät.',
   'onboarding.s1.importFileSource': 'Datei',
-  'onboarding.s1.importing': 'Importiere…',
-  'onboarding.s1.importDetecting': 'Suche nach Client-Konfiguration…',
+  'onboarding.s1.importing': 'Wird importiert…',
+  'onboarding.s1.importDetecting': 'Suche nach der Client-Konfiguration…',
   'onboarding.s1.importSuccess': '✓ {count} Verbindungen importiert · {source}',
   'onboarding.s1.importUpdated': '✓ {count} Verbindungen aktualisiert · {source}',
   'onboarding.s1.sampleTitle': 'Ihr Beispiel-Spielplatz',
   'onboarding.s1.sampleSubtitle':
-    'Eine gebündelte SQLite-Datenbank mit einer englischen demo_sales-Tabelle — kein Server, keine Anmeldeinformationen, sofort abfragebereit.',
+    'Eine mitgelieferte SQLite-Datenbank mit einer englischen demo_sales-Tabelle — kein Server, keine Anmeldeinformationen, sofort abfragebereit.',
   'onboarding.s1.samplePreparing': 'Beispieldaten werden vorbereitet…',
   'onboarding.s1.sampleReady': 'Beispieldaten sind bereit',
   'onboarding.s1.sampleReadyDesc':

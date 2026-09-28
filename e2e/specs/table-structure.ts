@@ -4,6 +4,7 @@ import {
   connectSeededPgInWorkspace,
   closeExtraWindows,
   executeSQL,
+  executeSQLChecked,
   openQueryTab,
   clickTableInSidebar,
   switchSubTab,
@@ -30,9 +31,11 @@ describe('表结构编辑 (TS-001~TS-008)', () => {
     await waitForNewQueryButton(20000);
     await browser.pause(1500);
 
-    // Clean up any leftover test table
+    // Clean up any leftover test table. Checked: a stale/dead session would
+    // make this fail fast with the real backend error instead of cascading
+    // into a 20s `waitForTableInSidebar` timeout below.
     await openQueryTab();
-    await executeSQL(`DROP TABLE IF EXISTS ${TEST_TABLE}`);
+    await executeSQLChecked(`DROP TABLE IF EXISTS ${TEST_TABLE}`);
   });
 
   after(async () => {
@@ -126,7 +129,7 @@ describe('表结构编辑 (TS-001~TS-008)', () => {
     // Since the form might not be complete enough to create, let's use SQL directly
     // and verify the alter table flow instead
     await openQueryTab();
-    await executeSQL(`
+    await executeSQLChecked(`
       CREATE TABLE ${TEST_TABLE} (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -211,7 +214,8 @@ describe('表结构编辑 (TS-001~TS-008)', () => {
     await nameInput.waitForDisplayed({ timeout: 5000 });
     // Prefer the last empty / newest column_name input
     const inputs = await $$('input[placeholder="column_name"]');
-    const target = inputs[inputs.length - 1];
+    const inputCount = await inputs.length;
+    const target = inputs[inputCount - 1];
     await target.click();
     await target.clearValue();
     await target.setValue('e2e_extra_col');

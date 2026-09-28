@@ -9,6 +9,13 @@ Templates live in-repo; publishing the tap / winget-pkgs PR is a release ops ste
 | Homebrew Cask (Basic DMG) | [`packaging/homebrew/datazen.rb`](../../packaging/homebrew/datazen.rb) |
 | WinGet singleton (Basic NSIS) | [`packaging/winget/Flyxl.DataZen.yaml`](../../packaging/winget/Flyxl.DataZen.yaml) |
 
+Both name a **Basic** artifact, and the Windows installer is
+`DataZen-{Version}-windows-x64.exe` — there is **no** `-nsis` segment;
+`canonical_name()` in `release.yml` appends only the file extension (the `0.1.1`
+snapshot under `packaging/winget/manifests/` predates that and keeps its name).
+Run `pnpm test:release-variants` before publishing: it fails if a template names
+a variant artifact, keeps a retired name, or drifts from the release matrix.
+
 ## After each Basic release
 
 1. Download the published Basic macOS `.dmg` / Windows `.exe` assets from GitHub Releases.
@@ -20,7 +27,10 @@ Templates live in-repo; publishing the tap / winget-pkgs PR is a release ops ste
    brew install --cask datazen
    ```
 5. WinGet: open a PR against [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) with the updated manifest.
-6. Document any All-SKU packages separately — templates currently target **Basic** only (matches updater scope).
+6. Document any All-SKU packages separately — templates currently target **Basic** only.
+   The updater, by contrast, is per-SKU ([`updater.md`](./updater.md)): each of Basic / All /
+   Akulaku publishes its own signed manifest, so no longer suspect an All-SKU package of
+   being pulled in by Basic's channel.
 
 ---
 
@@ -71,7 +81,7 @@ GitHub Releases ship **x86_64** artifacts for each SKU:
 
 Runtime dependency: **WebKitGTK** (e.g. `libwebkit2gtk-4.1-0` / `webkit2gtk4.1`).
 
-There is **no** official distro repository yet — install from [GitHub Releases](https://github.com/flyxl/datazen/releases). In-app auto-update ([`docs/updater.md`](updater.md)) applies to **Basic** builds only (AppImage + `.sig`); `.deb` / `.rpm` users reinstall from releases or future package repos.
+There is **no** official distro repository yet — install from [GitHub Releases](https://github.com/flyxl/datazen/releases). In-app auto-update ([`updater.md`](./updater.md)) is per-SKU: every Basic / All / Akulaku release publishes signed AppImage artifacts plus its own manifest, so a Linux install updates within its own SKU. `.deb` / `.rpm` users reinstall from releases or future package repos.
 
 Flatpak / Snap / AUR are not maintained in-repo; community packages should track the same release URLs and SHA256.
 
@@ -82,12 +92,12 @@ Flatpak / Snap / AUR are not maintained in-repo; community packages should track
 - **NSIS `.exe`** installers and **portable `.zip`** archives on GitHub Releases (Basic / All / Akulaku variants).
 - Portable archives are installation-free and contain `DataZen.exe`, prompt resources, and Pro extension resources (`builtin-ep/`). Extract the whole archive before running. User data is still stored in the system application-data directory, not beside the executable.
 - Windows requires the Microsoft Edge WebView2 Runtime. It is normally present on supported Windows 10/11 systems; install it separately if the portable build cannot start because the runtime is missing.
-- Portable archives are not Tauri updater bundles. The Windows entry in `latest.json` continues to reference the signed Basic NSIS `.exe`.
+- Portable archives are not Tauri updater bundles. Each SKU's manifest references that SKU's own signed NSIS `.exe` — `latest.json` for Basic, `latest-all.json` / `latest-akulaku.json` for the variants.
 - **WinGet:** manifest template in [`packaging/winget/`](../../packaging/winget/); prefer WinGet over Scoop (Scoop not maintained).
 
 ---
 
 ## Notes
 
-- Updater (`docs/updater.md`) is independent of brew/winget and only serves signed Basic artifacts via `latest.json`.
+- Updater ([`updater.md`](./updater.md)) is independent of brew/winget. It serves one signed manifest per SKU (`latest.json` / `latest-all.json` / `latest-akulaku.json`), while the brew / winget templates below track **Basic** only.
 - Optional drivers and SKU matrix: [`optional-drivers.md`](optional-drivers.md).

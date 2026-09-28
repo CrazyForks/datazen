@@ -60,8 +60,11 @@ describe('buildStructureChangeRequest', () => {
       originalIndexes: [],
       currentIndexes: [sampleIndex('i1', 'idx_email'), sampleIndex('i2', '  ')],
     });
-    expect(request.currentIndexes).toHaveLength(1);
-    expect(request.currentIndexes[0]?.name).toBe('idx_email');
+    // `currentIndexes` is optional on the wire request, so read it through a
+    // local: an absent array still fails the length assertion below.
+    const currentIndexes = request.currentIndexes ?? [];
+    expect(currentIndexes).toHaveLength(1);
+    expect(currentIndexes[0]?.name).toBe('idx_email');
   });
 
   it('passes schema through to the request', () => {

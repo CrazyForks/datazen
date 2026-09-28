@@ -38,6 +38,26 @@ export type OverviewJumpTarget =
   | { kind: 'importExport' }
   | { kind: 'newKey'; dbIndex: number };
 
+/**
+ * One-shot action the host wants the Redis panel to perform on mount after
+ * the overview page (屏 A) jumps to 屏 B.  The panel consumes it exactly once
+ * and clears it so repeated renders never replay it.
+ */
+export interface RedisPendingAction {
+  /** Tab to switch to after the panel opens. */
+  tab?: 'items' | 'console' | 'pubsub' | 'monitor';
+  /** Sub-page inside the monitor tab. */
+  monitorSubPage?: 'info' | 'monitor' | 'memory' | 'slowlog' | 'streams';
+  /** Key to select + open in the editor (屏 A → 屏 B key jump). */
+  selectKey?: string;
+  /** Database the key lives in (for key jumps that target a different db). */
+  keyDbIndex?: number;
+  /** Open the import/export dialog (quick action). */
+  openImportExport?: boolean;
+  /** Open the create-new-key dialog (quick action). */
+  openNewKey?: boolean;
+}
+
 /** Host-supplied jump bridge (absent until the follow-up track lands). */
 export type OverviewJumpHandler = (target: OverviewJumpTarget) => void;
 
@@ -142,7 +162,9 @@ export function parseDbIndex(database: string | number | null | undefined): numb
   if (typeof database === 'number' && Number.isFinite(database)) {
     return Math.max(0, Math.floor(database));
   }
-  const value = String(database ?? '').trim().toLowerCase();
+  const value = String(database ?? '')
+    .trim()
+    .toLowerCase();
   const match = /^(?:db)?(\d+)$/.exec(value);
   return match ? Number(match[1]) : 0;
 }

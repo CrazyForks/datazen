@@ -31,7 +31,7 @@ export function StructurePlanPreview({ plan, onClose }: StructurePlanPreviewProp
 
       {plan.warnings && plan.warnings.length > 0 && (
         <div className="mx-4 mb-2 rounded border border-warning/40 bg-surface p-2 text-xs text-fg-secondary">
-          <div className="mb-1 font-medium text-warning">{t('schema.warnings')}</div>
+          <div className="mb-1 font-medium text-warning">{t('structEditor.warnings')}</div>
           <ul className="list-inside list-disc space-y-0.5">
             {plan.warnings.map((w) => (
               <li key={w}>{w}</li>
@@ -41,7 +41,7 @@ export function StructurePlanPreview({ plan, onClose }: StructurePlanPreviewProp
       )}
 
       <div className="px-4 pb-1 text-xs text-fg-muted">
-        {plan.statements.length} {t('schema.statements')}
+        {plan.statements.length} {t('structEditor.statements')}
       </div>
 
       <ul className="max-h-48 space-y-2 overflow-auto px-4 pb-3">
@@ -60,7 +60,7 @@ export function StructurePlanPreview({ plan, onClose }: StructurePlanPreviewProp
           </li>
         ))}
         {plan.statements.length === 0 && (
-          <li className="text-sm text-fg-muted">{t('schema.emptyPlan')}</li>
+          <li className="text-sm text-fg-muted">{t('structEditor.emptyPlan')}</li>
         )}
       </ul>
     </div>
