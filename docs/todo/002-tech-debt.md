@@ -166,6 +166,44 @@ Rust 侧为 `packages/driver-api` 的 `supports_offset()`（默认 `true`，
 
 ---
 
+### P1-6 `store/history_db.rs` 1817 行，三个互不相干的域挤在一个 impl 里
+
+**证据**（实测，行号取自 `23ae49d03`）：
+
+| 区间 | 行数 | 内容 |
+| --- | --- | --- |
+| 1–22 | 22 | 导入 |
+| 23–181 | 159 | 类型：`HistoryEntry`、`HistoryScope`、`HistoryOrder`、`QueryHistoryFilter`、`QueryHistoryPage`、`HistoryDb` |
+| 182–841 | 660 | `impl HistoryDb`，其中 621–637 的 `with_raw_conn` 是 `#[cfg(test)]`，却夹在生产 impl 中间 |
+| 842–1145 | 304 | 迁移辅助 + 两个遗留结构体 + JSON 导入 |
+| 1146–1817 | 672 | 测试（`mod page_tests` 外挂、`mod tests` 445 行、`mod migration_startpoint_tests` 223 行） |
+
+领域关键词出现次数：`query_history` 102、`workflow` 88、`favorite` 59。三者
+唯一共享面是 `HistoryDb` 这一个持有 `Connection` 的壳：
+
+- 查询历史 `add/get/clear/delete/predicate/page` — 374–620
+- 工作流历史 `record/list/get/clear` — 705–816
+- 遗留收藏迁移 `read_legacy_favorites`/`*_archived`/`archive_legacy_favorites_table` — 638–704
+
+**影响**：生产代码 841 行已超 800 的规定；遗留收藏迁移是有终点的一次性工作，
+完成后整个域连同 `LEGACY_FAVORITES_*` 表名常量应可整体删除，现在却与仍在
+演进的查询历史绑在同一个文件里，无法单独摘除。查询历史本轮刚加过分页与
+过滤，测试增长全部落在同一文件，进一步压缩了它与另外两个域的边界。
+
+**建议**：按域而非按行数切为 `store/history_db.rs`（壳，`open`/`with_conn`/
+`init_schema`/`purge`/`db_path`）+ `history_db/{migrations,query_history,
+workflow_history,legacy_favorites}.rs`，测试同样按域拆成四个 `*_tests.rs`。
+Rust 2018 允许 `foo.rs` 与 `foo/` 并存，仓库已有 17 个 `*_tests.rs` 先例。
+
+**拆分前必须先做测试归类审计**：`mod tests` 里 445 行归属未决，跨域的迁移
+往返测试无法机械归入任一域。先把逐条归类结果评审通过再动代码——本轮已在
+同一文件误删过 22 个既有测试（用清理脚本从章节横幅切到 EOF）。同时把
+`with_raw_conn` 移出生产 impl 区间。
+
+**同批超限**（同一目录，本轮不处理）：`store/tests.rs` 946 行、`store/app_db.rs` 1064 行。
+
+---
+
 ## P2-5 ~~`e2e/specs/er-diagram.ts` ER-008（PNG 导出）在 HEAD 即失败~~ 已解决
 
 **现象**：`Error: ER PNG export did not write <temp>.png`，稳定复现，非抖动。
