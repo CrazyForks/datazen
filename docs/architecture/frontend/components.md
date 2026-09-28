@@ -1025,6 +1025,14 @@ webview 的环境里。因此设计系统必须是依赖图里的**叶子**：�
 `scripts/__tests__/` 里的变异用例（把真实违规文件写进真实 `packages/ui/` 树，跑完
 再删掉），不是另一个脚本。
 
+一处**已知且刻意保留**的不对称：`check-driver-import-boundaries.mjs` 会把
+gitignored 文件里的 blocking 判定降级为 advisory（未跟踪的 codegen / Pro EP 本就
+不是本仓库的代码），`check-module-layers.mjs` 没有这层判断，会照报。当前
+`packages/ui/` 与 `src/lib/relationMetadata/` 下没有任何 gitignored 文件
+（`git ls-files --others --ignored --exclude-standard` 为空），差异是休眠的；没有
+补齐，是因为它服务的 git 驱动/Pro EP 树都在 `packages/drivers/` 下而不在
+`packages/ui/`，而补齐会让 layer 守卫开始依赖 `git` 在 PATH 上，换来零当前覆盖。
+
 ## 10. 开发阶段规划
 
 | 阶段                    | 内容                                                                                   | 输出                   |
