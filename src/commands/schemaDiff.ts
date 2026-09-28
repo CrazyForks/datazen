@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { DatabaseObject, TableSchemaDiff } from '../types';
+import type { DatabaseObject, TableSchema, TableSchemaDiff } from '../types';
 
 export type SchemaDiffObjectKind =
   | 'view'
@@ -29,6 +29,7 @@ export interface PlanStatement {
   risk: StatementRisk;
   rollbackSql: string | null;
   summary: string;
+  requiresTransaction?: boolean;
 }
 
 export interface RollbackCompleteness {
@@ -132,6 +133,8 @@ export interface SchemaDiffPlan {
   requirements?: PlanRequirement[];
   rollbackCompleteness: RollbackCompleteness;
   typeSuggestions?: TypeSuggestion[];
+  /** Target catalog snapshots used to reject stale SQLite rebuild reviews. */
+  expectedTargetSchemas?: TableSchema[];
 }
 
 export interface StatementExecResult {

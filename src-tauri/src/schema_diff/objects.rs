@@ -259,6 +259,7 @@ fn unsupported_plan(
             missing: Vec::new(),
         },
         type_suggestions: Vec::new(),
+        expected_target_schemas: Vec::new(),
     }
 }
 
@@ -486,6 +487,7 @@ pub fn build_view_migration_plan_with_components(
                     risk,
                     rollback_sql: statement.rollback_sql,
                     summary: statement.summary,
+                    requires_transaction: false,
                 });
             }
             Err(reason) => requirements.push(PlanRequirement::Unsupported {
@@ -529,6 +531,7 @@ pub fn build_view_migration_plan_with_components(
             missing,
         },
         type_suggestions: Vec::new(),
+        expected_target_schemas: Vec::new(),
     }
 }
 
@@ -808,6 +811,7 @@ pub fn build_routine_trigger_migration_plan_with_components(
                     risk,
                     rollback_sql: statement.rollback_sql,
                     summary: statement.summary,
+                    requires_transaction: false,
                 });
             }
             Err(reason) => requirements.push(PlanRequirement::Unsupported {
@@ -839,6 +843,7 @@ pub fn build_routine_trigger_migration_plan_with_components(
             missing,
         },
         type_suggestions: Vec::new(),
+        expected_target_schemas: Vec::new(),
     }
 }
 
@@ -1046,6 +1051,7 @@ pub fn build_sequence_migration_plan_with_components(
                     risk,
                     rollback_sql: statement.rollback_sql,
                     summary: statement.summary,
+                    requires_transaction: false,
                 });
             }
             Err(reason) => requirements.push(PlanRequirement::Unsupported {
@@ -1074,6 +1080,7 @@ pub fn build_sequence_migration_plan_with_components(
             missing,
         },
         type_suggestions: Vec::new(),
+        expected_target_schemas: Vec::new(),
     }
 }
 
@@ -1281,6 +1288,7 @@ pub fn build_type_migration_plan_with_components(
                     risk,
                     rollback_sql: statement.rollback_sql,
                     summary: statement.summary,
+                    requires_transaction: false,
                 });
             }
             Err(reason) => requirements.push(PlanRequirement::Unsupported {
@@ -1309,6 +1317,7 @@ pub fn build_type_migration_plan_with_components(
             missing,
         },
         type_suggestions: Vec::new(),
+        expected_target_schemas: Vec::new(),
     }
 }
 

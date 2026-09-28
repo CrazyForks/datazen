@@ -242,7 +242,9 @@ describe('SchemaDiffPanel target-only review', () => {
     expect(screen.getByText('schemaDiff.checkMissing')).toBeInTheDocument();
     expect(screen.getByText('+ users_age_check: CHECK (age >= 0)')).toBeInTheDocument();
     expect(screen.getByText('schemaDiff.checkExtra')).toBeInTheDocument();
-    expect(screen.getByText("- users_status_check: CHECK (status <> 'deleted')")).toBeInTheDocument();
+    expect(
+      screen.getByText("- users_status_check: CHECK (status <> 'deleted')"),
+    ).toBeInTheDocument();
     expect(formatSchemaDiffText(diff)).toBe(
       "-- Schema diff: users\n+ users_age_check: CHECK (age >= 0)\n- users_status_check: CHECK (status <> 'deleted')",
     );
@@ -287,11 +289,7 @@ describe('SchemaDiffPanel target-only review', () => {
     expect(screen.getByText('+ email (text)')).toBeInTheDocument();
     expect(screen.getByText('- old_id (integer)')).toBeInTheDocument();
 
-    rerender(
-      <SchemaDiffPanel
-        diff={{ table: 'same', added: [], removed: [], changed: [] }}
-      />,
-    );
+    rerender(<SchemaDiffPanel diff={{ table: 'same', added: [], removed: [], changed: [] }} />);
     expect(screen.getByText('schemaDiff.schemaIdentical')).toBeInTheDocument();
   });
 });
@@ -588,9 +586,19 @@ describe('SchemaDiffDeployPanel', () => {
 });
 
 it('blocks execution across rollback and result state transitions', () => {
-  const props = { plan: samplePlan, targetLabel: 'target', useTransaction: true,
-    onUseTransactionChange: vi.fn(), requireRollback: true, onRequireRollbackChange: vi.fn(),
-    confirmText: '', onConfirmTextChange: vi.fn(), deploying: false, onDeploy: vi.fn(), result: null };
+  const props = {
+    plan: samplePlan,
+    targetLabel: 'target',
+    useTransaction: true,
+    onUseTransactionChange: vi.fn(),
+    requireRollback: true,
+    onRequireRollbackChange: vi.fn(),
+    confirmText: '',
+    onConfirmTextChange: vi.fn(),
+    deploying: false,
+    onDeploy: vi.fn(),
+    result: null,
+  };
   const { rerender } = render(<SchemaDiffDeployPanel {...props} />);
   expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
   rerender(<SchemaDiffDeployPanel {...props} useTransaction={false} />);
@@ -599,9 +607,49 @@ it('blocks execution across rollback and result state transitions', () => {
   expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
   rerender(<SchemaDiffDeployPanel {...props} />);
   expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
-  rerender(<SchemaDiffDeployPanel {...props} result={{ status: 'unknown', executedCount: 1, statementCount: 1, errors: ['COMMIT outcome unknown'], statementResults: [] }} />);
+  rerender(
+    <SchemaDiffDeployPanel
+      {...props}
+      result={{
+        status: 'unknown',
+        executedCount: 1,
+        statementCount: 1,
+        errors: ['COMMIT outcome unknown'],
+        statementResults: [],
+      }}
+    />,
+  );
   expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
   expect(screen.getByTestId('schema-diff-deploy-status')).toHaveTextContent('unknown');
+});
+
+it('forces the transaction control for reviewed SQLite table rebuilds', () => {
+  const plan = {
+    ...samplePlan,
+    targetDialect: 'sqlite',
+    statements: [{ ...samplePlan.statements[0], requiresTransaction: true }],
+  };
+  render(
+    <SchemaDiffDeployPanel
+      plan={plan}
+      targetLabel="SQLite target"
+      useTransaction={false}
+      onUseTransactionChange={vi.fn()}
+      requireRollback={false}
+      onRequireRollbackChange={vi.fn()}
+      confirmText=""
+      onConfirmTextChange={vi.fn()}
+      deploying={false}
+      onDeploy={vi.fn()}
+      result={null}
+    />,
+  );
+
+  const transactionCheckbox = screen.getAllByRole('checkbox')[0];
+  expect(transactionCheckbox).toBeChecked();
+  expect(transactionCheckbox).toBeDisabled();
+  expect(screen.getByText('(schemaDiff.transactionRequired)')).toBeInTheDocument();
+  expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
 });
 
 describe('[tester] deployment review control journey', () => {
@@ -610,10 +658,23 @@ describe('[tester] deployment review control journey', () => {
     const onRequireRollbackChange = vi.fn();
     const onConfirmTextChange = vi.fn();
     const onDeploy = vi.fn();
-    const plan = { ...samplePlan, statements: [{ ...samplePlan.statements[0], risk: 'destructive' as const }] };
-    const props = { plan, targetLabel: 'test', useTransaction: true, onUseTransactionChange,
-      requireRollback: true, onRequireRollbackChange, confirmText: '', onConfirmTextChange,
-      deploying: false, onDeploy, result: null };
+    const plan = {
+      ...samplePlan,
+      statements: [{ ...samplePlan.statements[0], risk: 'destructive' as const }],
+    };
+    const props = {
+      plan,
+      targetLabel: 'test',
+      useTransaction: true,
+      onUseTransactionChange,
+      requireRollback: true,
+      onRequireRollbackChange,
+      confirmText: '',
+      onConfirmTextChange,
+      deploying: false,
+      onDeploy,
+      result: null,
+    };
     const { rerender } = render(<SchemaDiffDeployPanel {...props} />);
     expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
     fireEvent.click(screen.getAllByRole('checkbox')[0]);
@@ -628,7 +689,19 @@ describe('[tester] deployment review control journey', () => {
     expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
     fireEvent.click(screen.getByTestId('schema-diff-deploy'));
     expect(onDeploy).toHaveBeenCalledTimes(1);
-    rerender(<SchemaDiffDeployPanel {...props} confirmText="DEPLOY" result={{status:'unknown', executedCount:1, statementCount:1, errors:['Commit outcome unknown'], statementResults:[]}} />);
+    rerender(
+      <SchemaDiffDeployPanel
+        {...props}
+        confirmText="DEPLOY"
+        result={{
+          status: 'unknown',
+          executedCount: 1,
+          statementCount: 1,
+          errors: ['Commit outcome unknown'],
+          statementResults: [],
+        }}
+      />,
+    );
     expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
     expect(screen.getByTestId('schema-diff-deploy-status')).toHaveTextContent('unknown');
   });

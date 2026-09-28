@@ -153,6 +153,11 @@ pub struct PlanStatement {
     pub risk: StatementRisk,
     pub rollback_sql: Option<String>,
     pub summary: String,
+    /// This statement is one step in a multi-statement change whose rollback
+    /// guarantee comes from the host transaction. Deploy must refuse to run
+    /// it when transactions are unavailable or disabled.
+    #[serde(default)]
+    pub requires_transaction: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -191,6 +196,9 @@ pub struct SchemaDiffPlan {
     pub rollback_completeness: RollbackCompleteness,
     #[serde(default)]
     pub type_suggestions: Vec<TypeSuggestion>,
+    /// Target snapshots used by transactional table rebuilds; deploy checks for stale review state before writing.
+    #[serde(default)]
+    pub expected_target_schemas: Vec<crate::db::TableSchema>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

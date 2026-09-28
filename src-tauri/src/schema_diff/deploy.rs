@@ -49,6 +49,21 @@ pub async fn run_deploy_with_executor(
         };
     }
 
+    if plan
+        .statements
+        .iter()
+        .any(|statement| statement.requires_transaction)
+        && !can_tx
+    {
+        return SchemaDiffDeployResult {
+            status: DeployStatus::Failed,
+            executed_count: 0,
+            statement_count: n,
+            errors: vec!["This reviewed table rebuild requires transactional DDL; enable transaction execution".into()],
+            statement_results: vec![],
+        };
+    }
+
     if can_tx {
         if let Err(e) = executor.exec("BEGIN").await {
             return SchemaDiffDeployResult {
@@ -225,7 +240,22 @@ pub async fn execute_schema_diff_deploy_at(
         };
     }
 
-    let tx_scope = if can_tx {
+    if plan
+        .statements
+        .iter()
+        .any(|statement| statement.requires_transaction)
+        && !can_tx
+    {
+        return SchemaDiffDeployResult {
+            status: DeployStatus::Failed,
+            executed_count: 0,
+            statement_count: n,
+            errors: vec!["This reviewed table rebuild requires transactional DDL; enable transaction execution".into()],
+            statement_results: vec![],
+        };
+    }
+
+    let mut tx_scope = if can_tx {
         match TransactionScope::begin_at(driver, handle, target).await {
             Ok(scope) => Some(scope),
             Err(e) => {
@@ -241,6 +271,38 @@ pub async fn execute_schema_diff_deploy_at(
     } else {
         None
     };
+
+    if plan
+        .statements
+        .iter()
+        .any(|statement| statement.requires_transaction)
+    {
+        let validation = driver
+            .validate_schema_migration_plan(handle, target, &plan.expected_target_schemas)
+            .await;
+        if let Err(error) = validation {
+            let mut errors = vec![format!(
+                "Reviewed target schema changed or could not be validated: {error}"
+            )];
+            let status = match tx_scope.take() {
+                Some(scope) => match scope.rollback().await {
+                    Ok(()) => DeployStatus::RolledBack,
+                    Err(rollback_error) => {
+                        errors.push(format!("ROLLBACK failed: {rollback_error}"));
+                        DeployStatus::Unknown
+                    }
+                },
+                None => DeployStatus::Failed,
+            };
+            return SchemaDiffDeployResult {
+                status,
+                executed_count: 0,
+                statement_count: n,
+                errors,
+                statement_results: vec![],
+            };
+        }
+    }
 
     let mut results = Vec::new();
     let mut errors = Vec::new();
@@ -314,6 +376,18 @@ pub async fn execute_schema_diff_deploy_at(
                     break;
                 }
             }
+        }
+    }
+
+    if !failed
+        && plan
+            .statements
+            .iter()
+            .any(|statement| statement.requires_transaction)
+    {
+        if let Err(error) = driver.validate_schema_migration(handle, target).await {
+            failed = true;
+            errors.push(format!("Schema migration validation failed: {error}"));
         }
     }
 
@@ -437,6 +511,7 @@ mod tests {
                 risk: StatementRisk::Additive,
                 rollback_sql: Some(format!("RB_{i}")),
                 summary: format!("s{i}"),
+                requires_transaction: false,
             })
             .collect();
         SchemaDiffPlan {
@@ -454,6 +529,7 @@ mod tests {
             },
             requirements: vec![],
             type_suggestions: vec![],
+            expected_target_schemas: vec![],
         }
     }
 
@@ -474,6 +550,28 @@ mod tests {
         .await;
         assert_eq!(result.status, DeployStatus::Committed);
         assert_eq!(result.executed_count, 3);
+    }
+
+    #[tokio::test]
+    async fn required_transaction_is_enforced_before_any_statement() {
+        let mut plan = plan_with("sqlite", 2);
+        plan.statements[0].requires_transaction = true;
+        let exec = ScriptedExecutor::new(vec![Ok(()), Ok(())]);
+        let result = run_deploy_with_executor(
+            &exec,
+            &plan,
+            &DeployOptions {
+                use_transaction: false,
+                stop_on_error: true,
+            },
+            DdlAtomicity::Transactional,
+            None,
+        )
+        .await;
+
+        assert_eq!(result.status, DeployStatus::Failed);
+        assert_eq!(result.executed_count, 0);
+        assert!(exec.log.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -472,6 +472,7 @@ pub(crate) fn build_unified_schema_diff_plan_with_source_scope(
                     },
                     rollback_sql: statement.rollback_sql,
                     summary: statement.summary,
+                    requires_transaction: false,
                 }),
                 Err(reason) => requirements.push(unsupported(
                     &operation_key,
@@ -506,6 +507,7 @@ pub(crate) fn build_unified_schema_diff_plan_with_source_scope(
             missing,
         },
         type_suggestions: Vec::new(),
+        expected_target_schemas: Vec::new(),
     }
 }
 

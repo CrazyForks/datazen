@@ -1,5 +1,7 @@
 use datazen_driver_api::*;
 
+mod rebuild;
+
 fn format_sqlite_column_def(c: &MigrationColumn, qi: &impl Fn(&str) -> String) -> String {
     let mut def = format!(
         "{} {}{}",
@@ -155,6 +157,15 @@ impl MigrationRenderer for SqliteMigrationRenderer {
             )),
         }
     }
+
+    fn render_table_rebuild(
+        &self,
+        table: &str,
+        desired: &TableSchema,
+        current: &TableSchema,
+    ) -> Result<Vec<MigrationStatement>, String> {
+        rebuild::render_table_rebuild(table, desired, current)
+    }
 }
 
 pub struct SqliteMigrationCapabilities;
@@ -165,20 +176,43 @@ impl MigrationCapabilities for SqliteMigrationCapabilities {
             MigrationOperation::CreateTable { .. }
                 | MigrationOperation::DropTable { .. }
                 | MigrationOperation::AddColumn { .. }
+                | MigrationOperation::DropColumn { .. }
+                | MigrationOperation::AlterColumnType { .. }
+                | MigrationOperation::SetNullable { .. }
+                | MigrationOperation::SetDefault { .. }
+                | MigrationOperation::AddPrimaryKey { .. }
+                | MigrationOperation::DropPrimaryKey { .. }
                 | MigrationOperation::CreateIndex { .. }
                 | MigrationOperation::DropIndex { .. }
+                | MigrationOperation::AddForeignKey { .. }
+                | MigrationOperation::DropForeignKey { .. }
+                | MigrationOperation::AddCheckConstraint { .. }
+                | MigrationOperation::DropCheckConstraint { .. }
                 | MigrationOperation::CreateView { .. }
                 | MigrationOperation::DropView { .. }
         )
     }
-    fn requires_table_rebuild(&self, _operation: &MigrationOperation) -> bool {
-        false
+    fn requires_table_rebuild(&self, operation: &MigrationOperation) -> bool {
+        matches!(
+            operation,
+            MigrationOperation::DropColumn { .. }
+                | MigrationOperation::AlterColumnType { .. }
+                | MigrationOperation::SetNullable { .. }
+                | MigrationOperation::SetDefault { .. }
+                | MigrationOperation::AddPrimaryKey { .. }
+                | MigrationOperation::DropPrimaryKey { .. }
+                | MigrationOperation::AddForeignKey { .. }
+                | MigrationOperation::DropForeignKey { .. }
+                | MigrationOperation::AddCheckConstraint { .. }
+                | MigrationOperation::DropCheckConstraint { .. }
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn col(name: &str, ty: &str) -> MigrationColumn {
         MigrationColumn {
             name: name.into(),
@@ -187,6 +221,81 @@ mod tests {
             default_value: None,
             comment: None,
             is_auto_increment: false,
+        }
+    }
+
+    fn rebuild_schema() -> TableSchema {
+        TableSchema {
+            table_name: "users".into(),
+            columns: vec![
+                ColumnSchema {
+                    name: "id".into(),
+                    data_type: "INTEGER".into(),
+                    nullable: false,
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: true,
+                    is_auto_increment: true,
+                },
+                ColumnSchema {
+                    name: "email".into(),
+                    data_type: "TEXT".into(),
+                    nullable: false,
+                    default_value: Some("'unknown'".into()),
+                    comment: None,
+                    is_primary_key: false,
+                    is_auto_increment: false,
+                },
+                ColumnSchema {
+                    name: "parent_id".into(),
+                    data_type: "INTEGER".into(),
+                    nullable: true,
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: false,
+                    is_auto_increment: false,
+                },
+                ColumnSchema {
+                    name: "score".into(),
+                    data_type: "REAL".into(),
+                    nullable: true,
+                    default_value: Some("0".into()),
+                    comment: None,
+                    is_primary_key: false,
+                    is_auto_increment: false,
+                },
+            ],
+            primary_keys: vec!["id".into()],
+            indexes: vec![
+                IndexInfo {
+                    name: "sqlite_autoindex_users_2".into(),
+                    columns: vec!["email".into()],
+                    is_unique: true,
+                    is_primary: false,
+                    index_type: "btree".into(),
+                },
+                IndexInfo {
+                    name: "idx_users_score".into(),
+                    columns: vec!["score".into()],
+                    is_unique: false,
+                    is_primary: false,
+                    index_type: "btree".into(),
+                },
+            ],
+            foreign_keys: vec![ForeignKeyInfo {
+                name: "fk_users_parent".into(),
+                columns: vec!["parent_id".into()],
+                referenced_table: "parents".into(),
+                referenced_columns: vec!["id".into()],
+                on_update: "NO ACTION".into(),
+                on_delete: "CASCADE".into(),
+                deferrability: ForeignKeyDeferrability::NotDeferrable,
+            }],
+            check_constraints: vec![CheckConstraint {
+                name: "ck_users_score".into(),
+                expression: "score >= 0".into(),
+            }],
+            table_options: TableOptions::default(),
         }
     }
     #[test]
@@ -246,7 +355,8 @@ mod tests {
             table: "users".into(),
             column: col("name", "TEXT"),
         };
-        assert!(!SqliteMigrationCapabilities.supports(&op));
+        assert!(SqliteMigrationCapabilities.supports(&op));
+        assert!(SqliteMigrationCapabilities.requires_table_rebuild(&op));
         assert!(SqliteMigrationRenderer.render(&op).is_err());
     }
 
@@ -300,15 +410,23 @@ mod tests {
             })
         );
         assert!(
-            !SqliteMigrationCapabilities.supports(&MigrationOperation::AlterColumnType {
+            SqliteMigrationCapabilities.supports(&MigrationOperation::AlterColumnType {
                 table: "users".into(),
                 column: "id".into(),
                 from: "INTEGER".into(),
                 to: "BIGINT".into(),
             })
         );
+        assert!(SqliteMigrationCapabilities.requires_table_rebuild(
+            &MigrationOperation::AlterColumnType {
+                table: "users".into(),
+                column: "id".into(),
+                from: "INTEGER".into(),
+                to: "BIGINT".into(),
+            }
+        ));
         assert!(
-            !SqliteMigrationCapabilities.supports(&MigrationOperation::DropColumn {
+            SqliteMigrationCapabilities.supports(&MigrationOperation::DropColumn {
                 table: "users".into(),
                 column: col("name", "TEXT"),
             })
@@ -316,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn check_constraint_changes_fail_closed_until_table_rebuild_is_available() {
+    fn check_constraint_changes_are_routed_to_table_rebuild() {
         let op = MigrationOperation::AddCheckConstraint {
             table: "users".into(),
             constraint: CheckConstraint {
@@ -324,8 +442,166 @@ mod tests {
                 expression: "age >= 0".into(),
             },
         };
-        assert!(!SqliteMigrationCapabilities.supports(&op));
+        assert!(SqliteMigrationCapabilities.supports(&op));
+        assert!(SqliteMigrationCapabilities.requires_table_rebuild(&op));
         assert!(SqliteMigrationRenderer.render(&op).is_err());
+    }
+
+    #[test]
+    fn table_rebuild_renders_reviewed_constraints_rows_indexes_and_transaction_guard() {
+        let schema = rebuild_schema();
+        let statements = SqliteMigrationRenderer
+            .render_table_rebuild("users", &schema, &schema)
+            .unwrap();
+        assert_eq!(statements[0].sql, "PRAGMA defer_foreign_keys = ON");
+        let capture = statements
+            .iter()
+            .position(|statement| statement.summary.starts_with("CAPTURE AUTOINCREMENT"))
+            .unwrap();
+        let create = statements
+            .iter()
+            .position(|statement| statement.summary.starts_with("CREATE replacement"))
+            .unwrap();
+        let copy = statements
+            .iter()
+            .position(|statement| statement.summary.starts_with("COPY rows"))
+            .unwrap();
+        let drop_old = statements
+            .iter()
+            .position(|statement| statement.summary.starts_with("DROP old table"))
+            .unwrap();
+        let rename = statements
+            .iter()
+            .position(|statement| statement.summary.starts_with("RENAME replacement"))
+            .unwrap();
+        let restore = statements
+            .iter()
+            .position(|statement| statement.summary.starts_with("RESTORE AUTOINCREMENT"))
+            .unwrap();
+        assert_eq!(capture + 1, create);
+        assert!(capture < copy && copy < drop_old && drop_old < rename && rename < restore);
+        assert!(statements[create].sql.contains("PRIMARY KEY AUTOINCREMENT"));
+        assert!(statements[create].sql.contains("UNIQUE (\"email\")"));
+        assert!(statements[create]
+            .sql
+            .contains("FOREIGN KEY (\"parent_id\")"));
+        assert!(statements[create].sql.contains("CHECK (score >= 0)"));
+        assert!(statements[copy]
+            .sql
+            .contains("INSERT INTO \"__datazen_rebuild_users\""));
+        assert_eq!(statements[drop_old].sql, "DROP TABLE \"users\"");
+        assert_eq!(
+            statements[rename].sql,
+            "ALTER TABLE \"__datazen_rebuild_users\" RENAME TO \"users\""
+        );
+        assert!(statements.iter().any(|statement| {
+            statement
+                .sql
+                .contains("UPDATE sqlite_sequence SET seq = MAX(seq")
+        }));
+        assert!(statements.iter().any(|statement| {
+            statement
+                .sql
+                .contains("INSERT INTO sqlite_sequence (name, seq)")
+        }));
+    }
+
+    #[test]
+    fn table_rebuild_preserves_implicit_rowid_or_refuses_to_change_its_alias() {
+        let schema = TableSchema {
+            table_name: "rowid_items".into(),
+            columns: vec![ColumnSchema {
+                name: "value".into(),
+                data_type: "TEXT".into(),
+                nullable: true,
+                default_value: None,
+                comment: None,
+                is_primary_key: false,
+                is_auto_increment: false,
+            }],
+            primary_keys: Vec::new(),
+            indexes: Vec::new(),
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            table_options: TableOptions::default(),
+        };
+        let statements = SqliteMigrationRenderer
+            .render_table_rebuild("rowid_items", &schema, &schema)
+            .unwrap();
+        assert!(statements.iter().any(|statement| {
+            statement.summary.starts_with("COPY rows")
+                && statement
+                    .sql
+                    .contains("(\"value\", \"rowid\") SELECT \"value\", \"rowid\"")
+        }));
+
+        let mut with_rowid_alias = schema.clone();
+        with_rowid_alias.columns.push(ColumnSchema {
+            name: "id".into(),
+            data_type: "INTEGER".into(),
+            nullable: false,
+            default_value: None,
+            comment: None,
+            is_primary_key: true,
+            is_auto_increment: false,
+        });
+        with_rowid_alias.primary_keys.push("id".into());
+        let error = SqliteMigrationRenderer
+            .render_table_rebuild("rowid_items", &with_rowid_alias, &schema)
+            .unwrap_err();
+        assert!(error.contains("cannot add an INTEGER PRIMARY KEY rowid alias"));
+
+        let mut shadowed = schema;
+        for name in ["rowid", "_rowid_", "oid"] {
+            shadowed.columns.push(ColumnSchema {
+                name: name.into(),
+                data_type: "INTEGER".into(),
+                nullable: true,
+                default_value: None,
+                comment: None,
+                is_primary_key: false,
+                is_auto_increment: false,
+            });
+        }
+        let error = SqliteMigrationRenderer
+            .render_table_rebuild("rowid_items", &shadowed, &shadowed)
+            .unwrap_err();
+        assert!(error.contains("all aliases are shadowed"));
+    }
+
+    #[test]
+    fn table_rebuild_refuses_catalog_semantics_and_expression_injection() {
+        let schema = rebuild_schema();
+        let mut current = schema.clone();
+        current.table_options.migration_blockers.push(
+            "View `score_view` may depend on `users` and is outside the table schema snapshot"
+                .into(),
+        );
+        assert!(SqliteMigrationRenderer
+            .render_table_rebuild("users", &schema, &current)
+            .unwrap_err()
+            .contains("score_view"));
+
+        let mut unsafe_schema = schema;
+        unsafe_schema.columns[1].default_value = Some("'x'; DROP TABLE secrets".into());
+        assert!(SqliteMigrationRenderer
+            .render_table_rebuild("users", &unsafe_schema, &rebuild_schema())
+            .unwrap_err()
+            .contains("one expression"));
+
+        let mut unsafe_type = rebuild_schema();
+        unsafe_type.columns[1].data_type = "TEXT, injected TEXT".into();
+        assert!(SqliteMigrationRenderer
+            .render_table_rebuild("users", &unsafe_type, &rebuild_schema())
+            .unwrap_err()
+            .contains("type name contains syntax"));
+
+        let mut unsafe_check = rebuild_schema();
+        unsafe_check.check_constraints[0].expression = "1) , injected TEXT CHECK (1".into();
+        assert!(SqliteMigrationRenderer
+            .render_table_rebuild("users", &unsafe_check, &rebuild_schema())
+            .unwrap_err()
+            .contains("CHECK contains syntax"));
     }
 
     #[test]

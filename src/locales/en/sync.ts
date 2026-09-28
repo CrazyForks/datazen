@@ -442,6 +442,7 @@ const pack = {
   'schemaDiff.reviewTarget': 'Target',
   'schemaDiff.reviewTables': 'Tables',
   'schemaDiff.useTransaction': 'Run in a transaction (when dialect supports it)',
+  'schemaDiff.transactionRequired': 'required to preserve SQLite table rebuild safety',
   'schemaDiff.txUnsupported': 'this dialect usually auto-commits DDL',
   'schemaDiff.requireRollback': 'Require complete rollback SQL',
   'schemaDiff.rollbackIncomplete': 'Missing rollback SQL for',

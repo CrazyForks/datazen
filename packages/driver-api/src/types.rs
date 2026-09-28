@@ -354,6 +354,11 @@ pub struct TableOptions {
     /// the individual relation's storage/metadata proves snapshot behavior.
     #[serde(default)]
     pub supports_consistent_snapshot: Option<bool>,
+    /// Catalog facts that prevent a driver from safely rebuilding a table
+    /// from the public schema snapshot. This is reviewed metadata, not a
+    /// user-editable table option.
+    #[serde(default)]
+    pub migration_blockers: Vec<String>,
 }
 
 impl Default for TableOptions {
@@ -363,11 +368,12 @@ impl Default for TableOptions {
             engine: None,
             charset: None,
             supports_consistent_snapshot: None,
+            migration_blockers: Vec::new(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TableSchema {
     pub table_name: String,
@@ -396,7 +402,7 @@ impl TableSchema {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ColumnSchema {
     pub name: String,

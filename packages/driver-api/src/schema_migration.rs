@@ -1204,6 +1204,20 @@ pub struct MigrationStatement {
 pub trait MigrationRenderer: Send + Sync {
     fn render(&self, operation: &MigrationOperation) -> Result<MigrationStatement, String>;
 
+    /// Render a reviewed, driver-native rebuild of one existing table.
+    /// Drivers should return a multi-statement sequence only when the host
+    /// can execute it inside one transaction. Catalog semantics that are not
+    /// represented by `TableSchema` must be reported in the snapshot's
+    /// `table_options.migration_blockers` and rejected here.
+    fn render_table_rebuild(
+        &self,
+        _table: &str,
+        _desired: &crate::TableSchema,
+        _current: &crate::TableSchema,
+    ) -> Result<Vec<MigrationStatement>, String> {
+        Err("This driver does not support reviewed table rebuilds".into())
+    }
+
     /// Map a schema object's definition and exact dependencies from one scope
     /// into another when the driver can prove the dialect-specific rewrite.
     /// Returning `None` means this renderer does not support scope mapping.

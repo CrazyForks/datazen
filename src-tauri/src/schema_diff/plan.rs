@@ -1186,6 +1186,70 @@ fn plan_single_table(
         return;
     };
 
+    let needs_table_rebuild = normalize_dialect(target_dialect) == "sqlite"
+        && operations
+            .iter()
+            .any(|op| capabilities.requires_table_rebuild(&op.to_driver_api()));
+    if needs_table_rebuild {
+        let blocked_by_review = operations.len() != all_operations.len();
+        let blocked_by_backfill = requirements.iter().any(|requirement| {
+            matches!(requirement, PlanRequirement::Backfill { table: required_table, .. } if required_table == table)
+        });
+        let indexes_were_excluded = !opts.include_indexes && src.indexes != tgt.indexes;
+        if normalize_dialect(source_dialect) != "sqlite"
+            || normalize_dialect(target_dialect) != "sqlite"
+            || opts.cross_dialect
+            || opts.type_mapper.is_some()
+            || blocked_by_review
+            || blocked_by_backfill
+            || indexes_were_excluded
+        {
+            requirements.push(PlanRequirement::Unsupported {
+                operation: format!("table:{table}"),
+                reason: "SQLite table rebuild requires a same-dialect, fully approved table snapshot with no pending backfill or excluded index changes".into(),
+            });
+            return;
+        }
+
+        match renderer.render_table_rebuild(table, src, tgt) {
+            Ok(rebuild_statements) if !rebuild_statements.is_empty() => {
+                let destructive = operations.iter().any(|op| {
+                    destructive_narrowing.contains(&op.key())
+                        || effective_risk(op, &destructive_narrowing) == StatementRisk::Destructive
+                });
+                for statement in rebuild_statements {
+                    let risk = if destructive {
+                        StatementRisk::Destructive
+                    } else {
+                        match statement.risk {
+                            datazen_driver_api::MigrationRisk::Additive => StatementRisk::Rewrite,
+                            datazen_driver_api::MigrationRisk::Rewrite => StatementRisk::Rewrite,
+                            datazen_driver_api::MigrationRisk::Destructive => {
+                                StatementRisk::Destructive
+                            }
+                        }
+                    };
+                    statements.push(PlanStatement {
+                        sql: statement.sql,
+                        risk,
+                        rollback_sql: None,
+                        summary: statement.summary,
+                        requires_transaction: true,
+                    });
+                }
+            }
+            Ok(_) => requirements.push(PlanRequirement::Unsupported {
+                operation: format!("table:{table}"),
+                reason: "SQLite renderer returned an empty table rebuild".into(),
+            }),
+            Err(reason) => requirements.push(PlanRequirement::Unsupported {
+                operation: format!("table:{table}"),
+                reason,
+            }),
+        }
+        return;
+    }
+
     for op in operations {
         let key = op.key();
         let driver_op = op.to_driver_api();
@@ -1204,6 +1268,7 @@ fn plan_single_table(
                     risk,
                     rollback_sql: stmt.rollback_sql,
                     summary: stmt.summary,
+                    requires_transaction: false,
                 });
             }
             Err(reason) => requirements.push(PlanRequirement::Unsupported {
@@ -1318,7 +1383,7 @@ fn adjust_mysql_index_columns(
 fn rollback_completeness(statements: &[super::types::PlanStatement]) -> RollbackCompleteness {
     let missing: Vec<String> = statements
         .iter()
-        .filter(|s| s.rollback_sql.is_none())
+        .filter(|s| s.rollback_sql.is_none() && !s.requires_transaction)
         .map(|s| s.summary.clone())
         .collect();
     RollbackCompleteness {
@@ -1679,6 +1744,7 @@ fn render_target_only_tables(
                 risk: StatementRisk::Destructive,
                 rollback_sql: statement.rollback_sql,
                 summary: statement.summary,
+                requires_transaction: false,
             }),
             Err(reason) => requirements.push(PlanRequirement::Unsupported {
                 operation: operation.key(),
@@ -1919,6 +1985,14 @@ pub fn build_schema_diff_plan_with_target_only_catalog_in_schema_scope(
     let primary = tables.first().cloned().unwrap_or_default();
     let completeness = rollback_completeness(&statements);
     let type_suggestions = detect_type_suggestions(pairs, source_dialect, target_dialect, &opts);
+    let expected_target_schemas = if statements
+        .iter()
+        .any(|statement| statement.requires_transaction)
+    {
+        pairs.iter().map(|(_, _, target)| target.clone()).collect()
+    } else {
+        Vec::new()
+    };
 
     SchemaDiffPlan {
         plan_id: None,
@@ -1932,6 +2006,7 @@ pub fn build_schema_diff_plan_with_target_only_catalog_in_schema_scope(
         rollback_completeness: completeness,
         requirements,
         type_suggestions,
+        expected_target_schemas,
     }
 }
 

@@ -610,5 +610,6 @@ pub(super) fn empty_plan(
             missing: Vec::new(),
         },
         type_suggestions: Vec::new(),
+        expected_target_schemas: Vec::new(),
     }
 }

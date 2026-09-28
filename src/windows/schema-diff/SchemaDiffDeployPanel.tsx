@@ -39,13 +39,20 @@ export function SchemaDiffDeployPanel({
   const { t } = useI18n();
   const hasDestructive = planHasDestructive(plan);
   const txSupported = dialectSupportsTransactionalDdl(plan.targetDialect);
-  const canRun = !result && !(plan.requirements?.length) && (!requireRollback || (txSupported && useTransaction)) && canRunDeploy({
-    hasDestructive,
-    confirmText,
-    requireRollback,
-    rollbackComplete: plan.rollbackCompleteness.complete,
-    statementCount: plan.statements.length,
-  });
+  const transactionRequired = plan.statements.some((statement) => statement.requiresTransaction);
+  const transactionEnabled = transactionRequired || (useTransaction && txSupported);
+  const canRun =
+    !result &&
+    !plan.requirements?.length &&
+    (!transactionRequired || (txSupported && transactionEnabled)) &&
+    (!requireRollback || (txSupported && transactionEnabled)) &&
+    canRunDeploy({
+      hasDestructive,
+      confirmText,
+      requireRollback,
+      rollbackComplete: plan.rollbackCompleteness.complete,
+      statementCount: plan.statements.length,
+    });
 
   return (
     <div className="space-y-3 text-sm">
@@ -65,11 +72,14 @@ export function SchemaDiffDeployPanel({
       <label className="flex items-center gap-2">
         <input
           type="checkbox"
-          checked={useTransaction && txSupported}
-          disabled={!txSupported}
+          checked={transactionRequired || (useTransaction && txSupported)}
+          disabled={!txSupported || transactionRequired}
           onChange={(e) => onUseTransactionChange(e.target.checked)}
         />
         {t('schemaDiff.useTransaction')}
+        {transactionRequired && (
+          <span className="text-xs text-fg-muted">({t('schemaDiff.transactionRequired')})</span>
+        )}
         {!txSupported && (
           <span className="text-xs text-fg-muted">({t('schemaDiff.txUnsupported')})</span>
         )}
