@@ -335,7 +335,8 @@ describe('Per-SKU updater channels', () => {
       'DataZen-0.2.2-windows-x64-portable.zip': 'keep',
       'DataZen-0.2.2-linux-x64.deb': 'keep',
       'DataZen-0.2.2-linux-x64.rpm': 'keep',
-      'DataZen-0.2.2-linux-x64.AppImage': 'keep',
+      // AppImages carry no platform segment (AppImage catalog naming).
+      'DataZen-0.2.2-x86_64.AppImage': 'keep',
       // Variants in either suffix position, including the portable zip.
       'DataZen-0.2.2-macos-arm64-all.tar.gz': 'skip',
       'DataZen-0.2.2-windows-x64-all.exe': 'skip',

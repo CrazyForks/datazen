@@ -319,7 +319,8 @@ jobs:
             librsvg2-dev \
             libssl-dev \
             patchelf \
-            libfuse2
+            libfuse2 \
+            desktop-file-utils
 
       - name: Cache Rust compilation
         uses: swatinem/rust-cache@v2
@@ -554,6 +555,38 @@ jobs:
 
           exit $FAIL
 
+      # The AppImage catalog (appimage.github.io) runs appdir-lint on the mounted
+      # AppImage and FATALs when `.DirIcon` is missing. tauri-bundler creates
+      # `.DirIcon`, the root icon and the root .desktop symlink in the AppDir, but
+      # the linuxdeploy build pinned by the bundler strips them while repacking
+      # (observed with tauri-bundler 2.10.0 + linuxdeploy 07333c6) — so re-inject
+      # them and repack with appimagetool. The repack invalidates the updater
+      # signature, hence the re-sign below.
+      - name: Fix AppDir conventions in the Linux AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          APPIMAGE=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage" -type f | head -1)
+          if [ -z "$APPIMAGE" ]; then
+            echo "::error::no AppImage found in $BUNDLE_DIR/appimage"
+            exit 1
+          fi
+          bash scripts/fix-appimage-appdir.sh "$APPIMAGE"
+
+          # Repack invalidated the `.sig` produced during `tauri build` — re-sign
+          # so latest.json keeps verifying against the updater pubkey.
+          if [ "${UPDATER_BUILD}" = "1" ]; then
+            PASS_ARGS=()
+            if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
+              PASS_ARGS=(-p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD")
+            fi
+            pnpm exec tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" "${PASS_ARGS[@]}" "$APPIMAGE"
+          fi
+        env:
+          BUNDLE_DIR: target/${{ matrix.target }}/release/bundle
+          TAURI_SIGNING_PRIVATE_KEY: ${{ matrix.variant_suffix == '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
       - name: Download the signed Pro .dzx (Default Pro, once)
         if: matrix.needs_pro && matrix.variant_suffix == '' && matrix.os_label == 'linux-x64'
         uses: actions/download-artifact@v4
@@ -678,6 +711,23 @@ jobs:
 
           canonical_name() {
             local ext="$1"
+            # AppImage catalog convention: the file name must not contain
+            # "linux" (every AppImage is for Linux) and spells the arch
+            # x86_64/aarch64 — e.g. DataZen-1.2.3-x86_64.AppImage. All other
+            # artifacts keep the DataZen-{Version}-{Platform}-{Arch} scheme.
+            if [ "$ext" = "AppImage" ]; then
+              local appimage_arch="$ARCH"
+              case "$ARCH" in
+                x64)   appimage_arch="x86_64" ;;
+                arm64) appimage_arch="aarch64" ;;
+              esac
+              if [ -n "$VARIANT" ]; then
+                echo "DataZen-${VERSION}-${appimage_arch}-${VARIANT}.${ext}"
+              else
+                echo "DataZen-${VERSION}-${appimage_arch}.${ext}"
+              fi
+              return
+            fi
             if [ -n "$VARIANT" ]; then
               echo "DataZen-${VERSION}-${PLATFORM}-${ARCH}-${VARIANT}.${ext}"
             else
@@ -930,9 +980,11 @@ jobs:
             # `…-windows-x64.exe`, not `…-windows-x64-nsis.exe` (`installer_type`
             # gates eligibility but never enters the name), so the previous
             # `*-windows-*-nsis.exe` alternative silently dropped the one
-            # artifact WinGet needs.
+            # artifact WinGet needs. AppImages are matched by extension alone:
+            # the AppImage catalog rejects "linux" in the file name, so the
+            # rename step gives them no platform segment.
             case "$base" in
-              *-macos-*.dmg|*-macos-*.tar.gz|*-windows-*.exe|*-windows-*-portable.zip|*-linux-*.deb|*-linux-*.rpm|*-linux-*.AppImage)
+              *-macos-*.dmg|*-macos-*.tar.gz|*-windows-*.exe|*-windows-*-portable.zip|*-linux-*.deb|*-linux-*.rpm|*.AppImage)
                 sha=$(sha256sum "$f" | awk '{print $1}')
                 echo "| \`$base\` | \`$sha\` |" >> checksums.md
                 found=$((found + 1))
