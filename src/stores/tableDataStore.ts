@@ -399,6 +399,11 @@ export const useTableDataStore = create<TableDataStore>((set, get) => ({
         else next.add(index);
         return { selectedRows: next, lastSelectedIndex: index };
       }
+      // Plain click: select the row, or — when it already is the only selected
+      // row — clear the selection, so a second click undoes the first.
+      if (!opts?.range && ts.selectedRows.size === 1 && ts.selectedRows.has(index)) {
+        return { selectedRows: new Set(), lastSelectedIndex: null };
+      }
       return { selectedRows: new Set([index]), lastSelectedIndex: index };
     });
   },

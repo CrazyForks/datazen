@@ -2,6 +2,12 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import YAML from 'yaml';
+import {
+  VARIANT_NAMES,
+  artifactSuffixForVariant,
+  platformsForVariant,
+} from '../release-variants.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
 const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yml'), 'utf8');
@@ -193,5 +199,172 @@ describe('Release build time optimisation', () => {
   it('serialises releases so a re-pushed tag does not double the compile', () => {
     expect(releaseWorkflow).toMatch(/^concurrency:/m);
     expect(releaseWorkflow).toContain('group: release-${{ github.ref }}');
+  });
+});
+
+describe('Per-SKU updater channels', () => {
+  const workflow = YAML.parse(releaseWorkflow) as {
+    jobs: Record<
+      string,
+      {
+        strategy?: { matrix: { include: Array<Record<string, string>> } };
+        steps: Array<{ name?: string; if?: string; run?: string; env?: Record<string, string> }>;
+      }
+    >;
+  };
+  const buildSteps = workflow.jobs.build.steps;
+  const stepNamed = (name: string) => buildSteps.find((s) => s.name === name);
+
+  it('signs every variant, not just Basic', () => {
+    // Gating the key on `matrix.variant_suffix == ''` is what left -all /
+    // -akulaku with no signed artifacts: their only reachable manifest was
+    // Basic's, so an in-app update silently replaced the variant with Basic.
+    const signingStep = stepNamed('Configure updater signing (every SKU)');
+    expect(signingStep, 'signing step must exist for all variants').toBeTruthy();
+    expect(signingStep?.if).toBeUndefined();
+
+    const variants = workflow.jobs.build.strategy!.matrix.include.map((e) => e.variant);
+    expect(new Set(variants)).toEqual(new Set(['basic', 'all', 'akulaku']));
+
+    const buildStep = stepNamed('Resolve drivers and build Tauri app');
+    expect(buildStep?.env?.TAURI_SIGNING_PRIVATE_KEY).toBe(
+      '${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}',
+    );
+    // The SKU has to reach resolve-drivers, which bakes it into the codegen the
+    // runtime gate reads, and ci-tauri-build, which picks the endpoint.
+    expect(buildStep?.env?.DATAZEN_VARIANT).toBe('${{ matrix.variant }}');
+    expect(buildStep?.run).toContain('--variant="${{ matrix.variant }}"');
+  });
+
+  it('publishes one manifest per SKU, Basic first', () => {
+    const step = workflow.jobs['release-updater-json'].steps.find((s) =>
+      s.name?.startsWith('Generate and upload updater manifests'),
+    );
+    expect(step, 'manifest step must exist').toBeTruthy();
+    expect(step?.run).toContain('for VARIANT in basic all akulaku; do');
+    expect(step?.run).toContain('--variant "$VARIANT"');
+    // Basic must be uploaded on its own before any variant can fail, so a broken
+    // variant channel cannot stall the default one.
+    expect(step?.run).toMatch(/basic all akulaku/);
+    // Manifest names come from release-variants.mjs rather than a second list
+    // hardcoded in YAML, which could drift.
+    expect(step?.run).toContain('manifestNameForVariant');
+  });
+
+  it('keeps variant artifacts out of the Basic checksum table', () => {
+    // The table is pasted into Homebrew / WinGet, which track Basic only. The
+    // old `*-all-*` glob missed extension-terminated names such as
+    // DataZen-0.2.2-macos-arm64-all.tar.gz, leaking a variant into it.
+    const step = workflow.jobs['release-checksums'].steps.find((s) => s.id === 'checksums');
+    expect(step?.run).toContain('*-all-*|*-all.*) continue ;;');
+    expect(step?.run).toContain('*-akulaku-*|*-akulaku.*) continue ;;');
+    // Per-SKU manifests ride along in the asset set and must not be hashed.
+    expect(step?.run).toContain('latest-*.json');
+  });
+
+  // The two `case` blocks in the checksums step decide which asset names reach
+  // the table, so they are evaluated against the canonical names the rename step
+  // produces instead of being matched as strings: a pattern that reads correctly
+  // but matches nothing (the old `*-windows-*-nsis.exe` and `*-all-*`) is exactly
+  // the defect that hid here twice.
+  const REGEX_META = /[.*+?^${}()|[\]\\]/g;
+  /** Only `*` appears in these patterns, so a starred full match is faithful. */
+  const matchesCaseGlob = (pattern: string, name: string) =>
+    new RegExp(
+      `^${pattern
+        .split('*')
+        .map((part) => part.replace(REGEX_META, '\\$&'))
+        .join('.*')}$`,
+    ).test(name);
+
+  const checksumCasePatterns = (index: number) => {
+    const run = workflow.jobs['release-checksums'].steps.find((s) => s.id === 'checksums')?.run;
+    const blocks = [...(run ?? '').matchAll(/case "\$base" in\n([\s\S]*?)\n\s*esac/g)];
+    const block = blocks[index]?.[1];
+    if (block === undefined) {
+      throw new Error(`checksums step has no case block #${index} to classify assets with`);
+    }
+    // A `case` arm lists alternatives with `|` (`*-all-*|*-all.*`); none of these
+    // patterns uses `|` inside a bracket expression, so splitting on it is safe.
+    return [...block.matchAll(/^\s*(\S+)\)/gm)].flatMap((m) => m[1].split('|'));
+  };
+
+  const classifyAsset = (name: string) => {
+    const skip = checksumCasePatterns(0);
+    const include = checksumCasePatterns(1);
+    if (skip.some((p) => matchesCaseGlob(p, name))) return 'skip';
+    if (include.some((p) => matchesCaseGlob(p, name))) return 'keep';
+    return 'ignore';
+  };
+
+  it('hashes Basic installers but never variant artifacts or manifests', () => {
+    const expected: Record<string, string> = {
+      // Basic installers: the whole point of the table.
+      'DataZen-0.2.2-macos-arm64.dmg': 'keep',
+      'DataZen-0.2.2-macos-x64.tar.gz': 'keep',
+      'DataZen-0.2.2-windows-x64.exe': 'keep',
+      'DataZen-0.2.2-windows-x64-portable.zip': 'keep',
+      'DataZen-0.2.2-linux-x64.deb': 'keep',
+      'DataZen-0.2.2-linux-x64.rpm': 'keep',
+      'DataZen-0.2.2-linux-x64.AppImage': 'keep',
+      // Variants in either suffix position, including the portable zip.
+      'DataZen-0.2.2-macos-arm64-all.tar.gz': 'skip',
+      'DataZen-0.2.2-windows-x64-all.exe': 'skip',
+      'DataZen-0.2.2-windows-x64-portable-all.zip': 'skip',
+      'DataZen-0.2.2-macos-arm64-akulaku.tar.gz': 'skip',
+      'DataZen-0.2.2-windows-x64-akulaku.exe': 'skip',
+      // Signatures and one manifest per SKU sit in the same asset set.
+      'DataZen-0.2.2-macos-arm64.app.tar.gz.sig': 'skip',
+      'latest.json': 'skip',
+      'latest-all.json': 'skip',
+      'latest-akulaku.json': 'skip',
+    };
+
+    expect(Object.fromEntries(Object.keys(expected).map((n) => [n, classifyAsset(n)]))).toEqual(
+      expected,
+    );
+  });
+});
+
+describe('release matrix agrees with release-variants.mjs', () => {
+  const workflow = YAML.parse(releaseWorkflow) as {
+    jobs: { build: { strategy: { matrix: { include: Array<Record<string, string>> } } } };
+  };
+  const matrix = workflow.jobs.build.strategy.matrix.include;
+
+  it('names a known SKU in every build leg', () => {
+    expect(matrix.length).toBeGreaterThan(0);
+    for (const entry of matrix) {
+      expect(VARIANT_NAMES, JSON.stringify(entry)).toContain(entry.variant);
+    }
+  });
+
+  it('keeps variant_suffix and variant in lockstep', () => {
+    // The artifact suffix and the SKU name are edited in different lines; drift
+    // would produce artifacts no manifest looks for.
+    for (const entry of matrix) {
+      expect(entry.variant_suffix, entry.variant).toBe(artifactSuffixForVariant(entry.variant));
+    }
+  });
+
+  it('covers each declared platform of every SKU', () => {
+    for (const variant of VARIANT_NAMES) {
+      const built = matrix
+        .filter((entry) => entry.variant === variant)
+        .map((entry) => entry.os_label);
+      for (const platform of platformsForVariant(variant)) {
+        // os_label is macos-arm64 / windows-x64 / linux-x64; platform keys are
+        // darwin-aarch64 / darwin-x86_64 / windows-x86_64 / linux-x86_64.
+        const covered = built.some((label) => {
+          const [os, arch] = label.split('-');
+          if (platform === 'windows-x86_64') return os === 'windows' && arch === 'x64';
+          if (platform === 'linux-x86_64') return os === 'linux' && arch === 'x64';
+          if (platform === 'darwin-aarch64') return os === 'macos' && arch === 'arm64';
+          if (platform === 'darwin-x86_64') return os === 'macos' && arch === 'x64';
+          return false;
+        });
+        expect(covered, `${variant} is missing a build leg for ${platform}`).toBe(true);
+      }
+    }
   });
 });

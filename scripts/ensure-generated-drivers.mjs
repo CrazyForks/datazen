@@ -15,7 +15,7 @@
  * `--drivers=...` / DATAZEN_DRIVERS / default `basic`.
  */
 
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -30,6 +30,25 @@ const GENERATED_FILES = [
 ];
 
 /**
+ * Exports a codegen file must contain to be considered current.
+ *
+ * Codegen files are gitignored and this script is a no-op when they already
+ * exist, so changing a template (adding an export) would otherwise leave every
+ * existing checkout compiling against a stale file — `import { X } from
+ * '../extensions/generated'` fails with "has no exported member" and the only
+ * fix is remembering to delete the file by hand. Markers make that self-healing:
+ * a codegen file that predates an export it is expected to provide is
+ * regenerated on the next `pnpm install` / `pnpm build`.
+ */
+export const REQUIRED_CODEGEN_MARKERS = {
+  'src/extensions/generated.ts': [
+    'export const DRIVER_PROTOCOL_VERSION',
+    'export const DATAZEN_VARIANT',
+    'export const DATAZEN_UPDATER_CHANNEL',
+  ],
+};
+
+/**
  * @param {string} [root]
  * @returns {string[]}
  */
@@ -38,12 +57,28 @@ export function missingGeneratedFiles(root = ROOT) {
 }
 
 /**
+ * Existing codegen files that are missing an export they must provide.
+ * @param {string} [root]
+ * @returns {string[]}
+ */
+export function staleGeneratedFiles(root = ROOT) {
+  return Object.entries(REQUIRED_CODEGEN_MARKERS)
+    .filter(([rel, markers]) => {
+      const abs = resolve(root, rel);
+      if (!existsSync(abs)) return false;
+      const content = readFileSync(abs, 'utf-8');
+      return markers.some((marker) => !content.includes(marker));
+    })
+    .map(([rel]) => rel);
+}
+
+/**
  * @param {string} [root]
  * @param {boolean} [force]
  */
 export function shouldGenerate(root = ROOT, force = false) {
   if (force) return true;
-  return missingGeneratedFiles(root).length > 0;
+  return missingGeneratedFiles(root).length > 0 || staleGeneratedFiles(root).length > 0;
 }
 
 /**
@@ -61,14 +96,17 @@ export function runEnsureGeneratedDrivers(options = {}) {
   const force = argv.includes('--force');
   const extra = argv.filter((a) => a !== '--force').join(' ');
   const missing = missingGeneratedFiles(root);
+  const stale = staleGeneratedFiles(root);
 
   if (!shouldGenerate(root, force)) {
     log('[ensure-generated] driver codegen files already present; skip');
-    return { generated: false, missing: [] };
+    return { generated: false, missing: [], stale: [] };
   }
 
   if (missing.length > 0) {
     log(`[ensure-generated] missing ${missing.join(', ')}; generating`);
+  } else if (stale.length > 0) {
+    log(`[ensure-generated] stale ${stale.join(', ')} (missing required export); regenerating`);
   } else {
     log('[ensure-generated] --force; regenerating driver codegen files');
   }
@@ -89,7 +127,7 @@ export function runEnsureGeneratedDrivers(options = {}) {
       });
     });
   runResolve(resolveArgs);
-  return { generated: true, missing };
+  return { generated: true, missing, stale };
 }
 
 function main() {

@@ -1,14 +1,20 @@
 import { useCallback, useState } from 'react';
 import { Button } from '../../components/ui/Button';
 import { useI18n } from '../../hooks/useI18n';
+import { settingsCommands } from '../../commands/settings';
 import {
   checkForUpdates,
+  currentVariant,
   downloadAndInstallUpdate,
+  getUpdateChannel,
   isUpdaterSupported,
   type UpdateProgress,
 } from '../../lib/updater';
 
 import { SectionTitle, ToggleRow } from './settingsUi';
+
+/** GitHub Releases hosts every SKU's installer, including the ones with no updater channel. */
+const RELEASES_URL = 'https://github.com/flyxl/datazen/releases';
 
 function progressLabel(
   progress: UpdateProgress,
@@ -32,6 +38,39 @@ function progressLabel(
   }
 }
 
+/**
+ * Update card for builds that have no in-app updater channel.
+ *
+ * Returning `null` here (as this used to) hid the update story entirely from
+ * every non-Basic SKU, which is exactly the confusion that let the "variant
+ * silently replaced by Basic" bug go unnoticed: the user saw no update UI and
+ * then, if they enabled startup checks on a build that *did* have one, got a
+ * different SKU installed. Naming the build and pointing at the matching
+ * installer keeps the expectation honest.
+ */
+function ManualUpdateSection() {
+  const { t } = useI18n();
+  const variant = currentVariant();
+
+  return (
+    <>
+      <SectionTitle hint={t('settings.updater.manualDescription')}>
+        {t('settings.updater.title')}
+      </SectionTitle>
+
+      <p className="text-xs text-fg-muted">
+        {t('settings.updater.manualVariant').replace('{variant}', variant)}
+      </p>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="secondary" onClick={() => void settingsCommands.openPath(RELEASES_URL)}>
+          {t('settings.updater.openReleases')}
+        </Button>
+      </div>
+    </>
+  );
+}
+
 export function UpdateSection({
   checkOnStartup,
   onCheckOnStartupChange,
@@ -43,6 +82,7 @@ export function UpdateSection({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const updateChannel = getUpdateChannel();
 
   const handleCheck = useCallback(async () => {
     if (!isUpdaterSupported()) {
@@ -94,8 +134,12 @@ export function UpdateSection({
     onCheckOnStartupChange(enabled);
   };
 
-  if (!isUpdaterSupported()) {
+  if (updateChannel === 'none') {
     return null;
+  }
+
+  if (updateChannel === 'manual') {
+    return <ManualUpdateSection />;
   }
 
   return (
