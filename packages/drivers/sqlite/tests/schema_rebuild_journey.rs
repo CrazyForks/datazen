@@ -308,6 +308,49 @@ async fn rebuild_fails_closed_for_column_and_table_conflict_policies() {
 }
 
 #[tokio::test]
+async fn test_tester_quoted_conflict_words_do_not_block_safe_rebuild() {
+    let (driver, handle, directory) = fixture().await;
+    driver
+        .execute(
+            &handle,
+            "CREATE TABLE quoted_conflict_words (id INTEGER PRIMARY KEY, \"ON\" TEXT DEFAULT 'CONFLICT IGNORE', \"CONFLICT\" TEXT)",
+        )
+        .await
+        .unwrap();
+    driver
+        .execute(
+            &handle,
+            "INSERT INTO quoted_conflict_words (id, \"ON\", \"CONFLICT\") VALUES (7, 'kept', 'value')",
+        )
+        .await
+        .unwrap();
+
+    let current = driver
+        .get_table_schema(&handle, "quoted_conflict_words", "main", None)
+        .await
+        .unwrap();
+    assert!(current.table_options.migration_blockers.is_empty());
+    let mut desired = current.clone();
+    desired.columns[1].data_type = "BLOB".into();
+    assert!(!SqliteMigrationRenderer
+        .render_table_rebuild("quoted_conflict_words", &desired, &current)
+        .unwrap()
+        .is_empty());
+
+    let rows = driver
+        .query(
+            &handle,
+            "SELECT id, \"ON\", \"CONFLICT\" FROM quoted_conflict_words",
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows.rows.len(), 1);
+    assert_integer(&rows.rows[0][0], 7);
+    driver.disconnect(handle).await.unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
 async fn stale_reviewed_schema_is_rejected_before_rebuild_writes() {
     let (driver, handle, directory) = fixture().await;
     let reviewed = driver
