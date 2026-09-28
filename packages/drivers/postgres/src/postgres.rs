@@ -381,6 +381,22 @@ impl DatabaseDriver for PostgresDriver {
             .await
     }
 
+    fn transfer_explicit_identity_insert_clause(&self) -> Option<&'static str> {
+        Some("OVERRIDING SYSTEM VALUE")
+    }
+
+    fn transfer_sql_file_insert_batch_size(&self) -> usize {
+        500
+    }
+
+    fn render_transfer_sql_file_insert(
+        &self,
+        insert_template: &str,
+        identity_override_marker: &str,
+    ) -> Result<String, DriverError> {
+        crate::transfer_identity::render_sql_file_insert(insert_template, identity_override_marker)
+    }
+
     fn render_transfer_identity_sequence_sync_sql(
         &self,
         schema: Option<&str>,

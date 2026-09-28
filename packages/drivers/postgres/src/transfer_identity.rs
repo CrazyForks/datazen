@@ -96,7 +96,9 @@ impl PostgresDriver {
         if !options.can_read {
             return Err(DriverError::Unsupported(format!(
                 "cannot read the owned sequence for target column {}.{}.{}; grant sequence SELECT and ownership to the transfer role",
-                schema.unwrap_or("<search_path>"), table, column
+                schema.unwrap_or("<search_path>"),
+                table,
+                column
             )));
         }
         if options.cycle || options.increment <= 0 {
@@ -371,9 +373,6 @@ DECLARE
     v_restart numeric;
     v_default text;
 BEGIN
-    IF current_setting('server_version_num')::integer < 100000 THEN
-        RAISE EXCEPTION 'safe transactional identity sequence synchronization requires PostgreSQL 10 or newer';
-    END IF;
     v_table_oid := pg_catalog.to_regclass(v_relation);
     IF v_table_oid IS NULL THEN
         RAISE EXCEPTION 'Data Transfer target table % does not exist', v_relation;
@@ -394,6 +393,9 @@ BEGIN
             RAISE EXCEPTION 'target column %.% uses an unowned sequence that cannot be safely advanced', v_relation, v_column;
         END IF;
         RETURN;
+    END IF;
+    IF current_setting('server_version_num')::integer < 100000 THEN
+        RAISE EXCEPTION 'safe transactional identity sequence synchronization requires PostgreSQL 10 or newer for owned serial/identity sequences';
     END IF;
     v_sequence_oid := v_sequence_name::regclass;
     SELECT n.nspname, c.relname, s.seqstart::bigint, s.seqincrement::bigint,
@@ -466,9 +468,42 @@ fn sql_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+pub(crate) fn render_sql_file_insert(
+    insert_template: &str,
+    identity_override_marker: &str,
+) -> Result<String, DriverError> {
+    if identity_override_marker.is_empty()
+        || insert_template.matches(identity_override_marker).count() != 1
+    {
+        return Err(DriverError::Unsupported(
+            "PostgreSQL SQL-file INSERT has an invalid identity override marker".into(),
+        ));
+    }
+    let statement_tag = unique_dollar_tag("transfer_insert", insert_template);
+    let statement_literal = format!("${statement_tag}${insert_template}${statement_tag}$");
+    let marker_literal = sql_literal(identity_override_marker);
+    let body = format!(
+        "DECLARE\n    v_insert_sql text := {statement_literal};\nBEGIN\n    IF current_setting('server_version_num')::integer >= 100000 THEN\n        EXECUTE pg_catalog.replace(v_insert_sql, {marker_literal}, 'OVERRIDING SYSTEM VALUE');\n    ELSE\n        EXECUTE pg_catalog.replace(v_insert_sql, {marker_literal}, '');\n    END IF;\nEND"
+    );
+    let block_tag = unique_dollar_tag("transfer_block", &body);
+    Ok(format!("DO ${block_tag}${body}${block_tag}$"))
+}
+
+fn unique_dollar_tag(prefix: &str, payload: &str) -> String {
+    loop {
+        let candidate = format!("datazen_{prefix}_{}", uuid::Uuid::new_v4().simple());
+        let delimiter = format!("${candidate}$");
+        if !payload.contains(&delimiter) {
+            return candidate;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{next_sequence_value_after, render_sync_sql, restart_value};
+    use super::{
+        next_sequence_value_after, render_sql_file_insert, render_sync_sql, restart_value,
+    };
     use crate::postgres::PostgresDriver;
 
     #[test]
@@ -506,5 +541,29 @@ mod tests {
         assert!(sql[0].contains("'id.with\"quote'"));
         assert!(sql[0].contains("pg_get_serial_sequence"));
         assert!(sql[0].contains("ALTER SEQUENCE %s RESTART WITH %s"));
+        assert!(
+            sql[0].find("IF v_sequence_name IS NULL").unwrap()
+                < sql[0]
+                    .find("IF current_setting('server_version_num')::integer < 100000")
+                    .unwrap()
+        );
+    }
+
+    #[test]
+    fn sql_file_insert_renders_a_single_version_safe_identity_statement() {
+        let marker = "/*DATAZEN_TRANSFER_OVERRIDE_TEST*/";
+        let insert = format!(
+            "INSERT INTO \"people VALUES table\" (\"id\") {marker} VALUES ('text VALUES value')"
+        );
+        let sql = render_sql_file_insert(&insert, marker).unwrap();
+        assert!(sql.contains("server_version_num')::integer >= 100000"));
+        assert!(sql.contains("pg_catalog.replace(v_insert_sql, '/*DATAZEN_TRANSFER_OVERRIDE_TEST*/', 'OVERRIDING SYSTEM VALUE')"));
+        assert!(sql.contains(
+            "pg_catalog.replace(v_insert_sql, '/*DATAZEN_TRANSFER_OVERRIDE_TEST*/', '')"
+        ));
+        assert!(sql.contains(&insert));
+        assert_eq!(sql.matches("INSERT INTO").count(), 1);
+        assert!(!sql.contains("OVERRIDING SYSTEM VALUE VALUES ('text VALUES value')"));
+        assert!(render_sql_file_insert("INSERT INTO people (id) VALUES (1)", "").is_err());
     }
 }

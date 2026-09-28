@@ -1,7 +1,7 @@
 //! Generic execution journeys: bound values, projection, rollback and cancellation.
 use super::execute::{
-    execute_same_family_data, execute_transfer_data_with_write_observer, map_row_values,
-    ValueFormatter,
+    ValueFormatter, execute_same_family_data, execute_transfer_data_with_write_observer,
+    map_row_values,
 };
 use super::filter::SourceFilter;
 use super::model::*;
@@ -25,6 +25,7 @@ struct State {
     source_queries: Vec<(String, Vec<Value>)>,
     identity_sync_calls: Vec<(Option<String>, String, Vec<String>)>,
     transfer_order: Vec<&'static str>,
+    write_sqls: Vec<String>,
 }
 struct Driver {
     rows: Rows,
@@ -40,6 +41,7 @@ struct Driver {
     execute_error_on_call: Option<usize>,
     identity_sync_error: bool,
     affected_override: Option<u64>,
+    include_identity_insert_clause: bool,
     stream_mode: u8,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -233,6 +235,10 @@ impl DatabaseDriver for Driver {
         }
         Ok(())
     }
+    fn transfer_explicit_identity_insert_clause(&self) -> Option<&'static str> {
+        self.include_identity_insert_clause
+            .then_some("OVERRIDING SYSTEM VALUE")
+    }
     async fn execute_with_params(
         &self,
         _: &ConnectionHandle,
@@ -242,6 +248,7 @@ impl DatabaseDriver for Driver {
         assert!(sql.contains("VALUES (?"));
         let mut state = self.state.lock().unwrap();
         state.transfer_order.push("write");
+        state.write_sqls.push(sql.to_string());
         state.calls += 1;
         if self.fail_at == Some(state.calls) {
             return Err(DriverError::QueryFailed("injected write failure".into()));
@@ -333,6 +340,7 @@ fn driver(rows: Rows, schema: TableSchema) -> Driver {
         execute_error_on_call: None,
         identity_sync_error: false,
         affected_override: None,
+        include_identity_insert_clause: false,
         stream_mode: 0,
         cancel: None,
     }
@@ -531,6 +539,7 @@ async fn explicit_identity_import_synchronizes_when_driver_reports_zero_affected
     let mut target_schema = schema(&["id"]);
     target_schema.columns[0].is_auto_increment = true;
     let mut target = driver(vec![], target_schema);
+    target.include_identity_insert_clause = true;
     // Model a successful conflict-ignore batch: the INSERT was issued with
     // explicit IDs, but the driver reports no newly affected rows.
     target.affected_override = Some(0);
@@ -550,7 +559,27 @@ async fn explicit_identity_import_synchronizes_when_driver_reports_zero_affected
     let state = target.state.lock().unwrap();
     assert_eq!(state.identity_sync_calls.len(), 1);
     assert_eq!(state.transfer_order, vec!["write", "sync", "commit"]);
+    assert!(state.write_sqls[0].contains("OVERRIDING SYSTEM VALUE"));
     assert_eq!(state.committed.len(), 1);
+}
+
+#[tokio::test]
+async fn identity_override_clause_requires_a_mapped_target_identity_column() {
+    let source = driver(vec![vec![Some(Value::Integer(41))]], schema(&["id"]));
+    let target = driver(vec![], schema(&["id"]));
+    let mut target = target;
+    target.include_identity_insert_clause = true;
+    let result = run(
+        &source,
+        &target,
+        &[inspected("source_table", vec![mapping("id", "id")])],
+        None,
+    )
+    .await;
+
+    assert!(!result.partial);
+    let state = target.state.lock().unwrap();
+    assert!(!state.write_sqls[0].contains("OVERRIDING SYSTEM VALUE"));
 }
 
 #[tokio::test]
@@ -656,10 +685,12 @@ fn projected_text_bytes_decode_as_utf8_while_binary_bytes_remain_bytes() {
         Some(Value::Bytes(vec![0xff])),
         Some(Value::Bytes(vec![0, 255])),
     ];
-    assert!(map_row_values(&invalid, &source_schema, &refs)
-        .unwrap_err()
-        .to_string()
-        .contains("not valid UTF-8"));
+    assert!(
+        map_row_values(&invalid, &source_schema, &refs)
+            .unwrap_err()
+            .to_string()
+            .contains("not valid UTF-8")
+    );
 }
 
 #[tokio::test]
@@ -1515,16 +1546,18 @@ fn same_named_columns_use_their_own_table_ir_and_missing_types_fail() {
         .unwrap();
         assert!(matches!(&params[0], Value::String(value) if value == expected));
     }
-    assert!(super::writer::bound_insert(
-        &driver,
-        "missing",
-        "target",
-        &[&binding],
-        &driver.schema,
-        &row,
-        &formatter
-    )
-    .is_err());
+    assert!(
+        super::writer::bound_insert(
+            &driver,
+            "missing",
+            "target",
+            &[&binding],
+            &driver.schema,
+            &row,
+            &formatter
+        )
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -1622,10 +1655,12 @@ async fn test_tester_dotted_target_schema_fails_before_any_bound_write() {
 
     assert!(result.partial);
     assert_eq!(result.rows_inserted, 0);
-    assert!(result.tables[0]
-        .error
-        .as_deref()
-        .is_some_and(|message| message.contains("structured relation support")));
+    assert!(
+        result.tables[0]
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("structured relation support"))
+    );
     let target_state = target.state.lock().unwrap();
     assert_eq!(target_state.calls, 0);
     assert!(target_state.metadata_refs.is_empty());
@@ -1742,8 +1777,10 @@ async fn unknown_structure_ddl_fences_and_reports_every_unattempted_statement() 
 
     assert_eq!(results.len(), 3);
     assert_eq!(results[0].outcome, Some(TableExecutionOutcome::Unknown));
-    assert!(results[1..]
-        .iter()
-        .all(|result| result.outcome == Some(TableExecutionOutcome::NotStarted)));
+    assert!(
+        results[1..]
+            .iter()
+            .all(|result| result.outcome == Some(TableExecutionOutcome::NotStarted))
+    );
     assert_eq!(target.state.lock().unwrap().execute_calls, 1);
 }

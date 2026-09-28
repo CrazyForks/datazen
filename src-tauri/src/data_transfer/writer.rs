@@ -64,6 +64,17 @@ pub fn bound_insert_batch(
         .map(|c| driver.quote_ident(&c.target_column))
         .collect::<Vec<_>>()
         .join(", ");
+    let has_explicit_identity = columns.iter().any(|mapping| {
+        target_schema
+            .columns
+            .iter()
+            .any(|column| column.name == mapping.target_column && column.is_auto_increment)
+    });
+    let identity_insert_clause = has_explicit_identity
+        .then(|| driver.transfer_explicit_identity_insert_clause())
+        .flatten()
+        .map(|clause| format!(" {clause}"))
+        .unwrap_or_default();
 
     let mut values_sql = Vec::with_capacity(rows.len());
     let mut parameters = Vec::with_capacity(rows.len() * columns.len());
@@ -112,7 +123,7 @@ pub fn bound_insert_batch(
 
     Ok((
         format!(
-            "INSERT INTO {target_ref} ({column_sql}) VALUES {}",
+            "INSERT INTO {target_ref} ({column_sql}){identity_insert_clause} VALUES {}",
             values_sql.join(", ")
         ),
         parameters,
