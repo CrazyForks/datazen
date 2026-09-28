@@ -7,6 +7,7 @@ use super::driver_command::{
 use super::error::{CmdExt, CommandError};
 use super::AppState;
 use crate::db::{ExplainResult, MultiQueryResult};
+use crate::store::history_db::DEFAULT_HISTORY_PAGE_SIZE;
 use crate::store::{HistoryOrder, QueryHistoryEntry, QueryHistoryFilter, QueryHistoryPage};
 use datazen_driver_api::{QueryExecutionId, QueryStreamCallback, QueryStreamEvent};
 use tauri::ipc::Channel;
@@ -208,34 +209,82 @@ pub(crate) async fn clear_query_history_impl(state: &AppState) -> Result<(), Com
         .cmd_err("clear_query_history")
 }
 
+/// The raw shape of a paged history read, as it arrives over IPC.
+///
+/// Tauri's command macro requires one parameter per IPC argument, so the
+/// `#[tauri::command]` below unavoidably has a long positional list. Everything
+/// past that boundary works on this struct instead, so the filter's fields
+/// cannot be silently reordered at a call site.
+///
+/// Mirrors the frontend's `HistoryQueryState` in
+/// `src/components/history/historyQuery.ts`. The two are not identical by
+/// design: the frontend uses `'all'` sentinels because it binds to selects,
+/// while an absent value is a real `Option` over the wire.
+#[derive(Debug, Clone)]
+pub struct HistoryPageRequest {
+    pub limit: usize,
+    pub connection_id: Option<String>,
+    pub database: Option<String>,
+    pub schema: Option<String>,
+    pub search: Option<String>,
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub order: Option<String>,
+}
+
+impl Default for HistoryPageRequest {
+    /// Hand-written for the same reason `QueryHistoryFilter`'s is: a derived
+    /// `Default` would give `limit: 0`, and `LIMIT 0` returns an empty page
+    /// that reads as "no history" rather than "no rows requested".
+    fn default() -> Self {
+        Self {
+            limit: DEFAULT_HISTORY_PAGE_SIZE,
+            connection_id: None,
+            database: None,
+            schema: None,
+            search: None,
+            since: None,
+            until: None,
+            order: None,
+        }
+    }
+}
+
+impl HistoryPageRequest {
+    /// Validate the order and project onto the store's filter.
+    ///
+    /// An unknown order is rejected rather than silently defaulting: a UI that
+    /// asks for "slowest first" and gets "most recent" is a worse outcome than
+    /// an error, because nothing on screen reveals the substitution.
+    ///
+    /// Borrows rather than consumes, because `QueryHistoryFilter` borrows its
+    /// strings. The caller owns the request for as long as it needs the filter.
+    fn to_filter(&self) -> Result<QueryHistoryFilter<'_>, CommandError> {
+        let order = match self.order.as_deref() {
+            None | Some("") => HistoryOrder::Recent,
+            Some(other) => HistoryOrder::parse(other)
+                .ok_or_else(|| CommandError::Validation(format!("unknown order: {other}")))?,
+        };
+        Ok(QueryHistoryFilter {
+            limit: self.limit,
+            connection_id: self.connection_id.as_deref(),
+            database: self.database.as_deref(),
+            schema: self.schema.as_deref(),
+            search: self.search.as_deref(),
+            since: self.since.as_deref(),
+            until: self.until.as_deref(),
+            order,
+        })
+    }
+}
+
 /// Paged history read. `total` is the full match count, so a UI can state
 /// "showing N of M" instead of implying the page is everything.
 pub(crate) async fn get_query_history_page_impl(
     state: &AppState,
-    limit: usize,
-    connection_id: Option<String>,
-    database: Option<String>,
-    schema: Option<String>,
-    search: Option<String>,
-    since: Option<String>,
-    until: Option<String>,
-    order: Option<String>,
+    request: HistoryPageRequest,
 ) -> Result<QueryHistoryPage, CommandError> {
-    let order = match order.as_deref() {
-        None | Some("") => HistoryOrder::Recent,
-        Some(other) => HistoryOrder::parse(other)
-            .ok_or_else(|| CommandError::Validation(format!("unknown order: {other}")))?,
-    };
-    let filter = QueryHistoryFilter {
-        limit,
-        connection_id: connection_id.as_deref(),
-        database: database.as_deref(),
-        schema: schema.as_deref(),
-        search: search.as_deref(),
-        since: since.as_deref(),
-        until: until.as_deref(),
-        order,
-    };
+    let filter = request.to_filter()?;
     state
         .store
         .get_query_history_page(&filter)
@@ -328,6 +377,8 @@ pub async fn clear_query_history(state: State<'_, AppState>) -> Result<(), Comma
     clear_query_history_impl(&state).await
 }
 
+/// Tauri requires one parameter per IPC argument, so this signature cannot
+/// shrink. The struct above is how the rest of the code sees it.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn get_query_history_page(
@@ -343,14 +394,16 @@ pub async fn get_query_history_page(
 ) -> Result<QueryHistoryPage, CommandError> {
     get_query_history_page_impl(
         &state,
-        limit,
-        connection_id,
-        database,
-        schema,
-        search,
-        since,
-        until,
-        order,
+        HistoryPageRequest {
+            limit,
+            connection_id,
+            database,
+            schema,
+            search,
+            since,
+            until,
+            order,
+        },
     )
     .await
 }

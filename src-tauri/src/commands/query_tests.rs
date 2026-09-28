@@ -523,3 +523,99 @@ async fn concurrent_begin_is_idempotent() {
         .await
         .unwrap();
 }
+
+// ── HistoryPageRequest → QueryHistoryFilter ───────────────────────────────────
+
+fn request(order: Option<&str>) -> HistoryPageRequest {
+    HistoryPageRequest {
+        limit: 25,
+        order: order.map(str::to_string),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn an_absent_or_blank_order_means_most_recent() {
+    for order in [None, Some("")] {
+        let req = request(order);
+        let filter = req.to_filter().expect("blank order is not an error");
+        assert_eq!(format!("{:?}", filter.order), "Recent");
+    }
+}
+
+#[test]
+fn every_named_order_survives_the_translation() {
+    for (wire, expected) in [
+        ("recent", "Recent"),
+        ("oldest", "Oldest"),
+        ("slowest", "Slowest"),
+    ] {
+        let req = request(Some(wire));
+        let filter = req.to_filter().expect("known order");
+        assert_eq!(format!("{:?}", filter.order), expected, "order {wire}");
+    }
+}
+
+#[test]
+fn an_unknown_order_is_rejected_rather_than_silently_defaulted() {
+    // Defaulting here would hand the UI "most recent" when it asked for
+    // something else, with nothing on screen to reveal the substitution.
+    let req = request(Some("by-vibes"));
+    let err = req.to_filter().expect_err("unknown order must not pass");
+    assert!(
+        err.to_string().contains("unknown order"),
+        "message should name the problem, got: {err}"
+    );
+}
+
+/// The wrapper takes eight same-typed arguments. A reordered pair is a silent
+/// data corruption bug — `database` and `schema` are both `Option<String>` —
+/// so the mapping is pinned by name here rather than by type.
+#[test]
+fn each_field_lands_on_the_filter_field_of_the_same_name() {
+    let req = HistoryPageRequest {
+        limit: 7,
+        connection_id: Some("cfg-1".into()),
+        database: Some("db_a".into()),
+        schema: Some("public".into()),
+        search: Some("users".into()),
+        since: Some("2026-01-01T00:00:00Z".into()),
+        until: Some("2026-02-01T00:00:00Z".into()),
+        order: Some("slowest".into()),
+    };
+    let filter = req.to_filter().expect("valid request");
+
+    assert_eq!(filter.limit, 7);
+    assert_eq!(filter.connection_id, Some("cfg-1"));
+    assert_eq!(filter.database, Some("db_a"));
+    assert_eq!(filter.schema, Some("public"));
+    assert_eq!(filter.search, Some("users"));
+    assert_eq!(filter.since, Some("2026-01-01T00:00:00Z"));
+    assert_eq!(filter.until, Some("2026-02-01T00:00:00Z"));
+    assert_eq!(format!("{:?}", filter.order), "Slowest");
+}
+
+#[test]
+fn a_defaulted_request_asks_for_a_real_page() {
+    // Same trap as `QueryHistoryFilter::default()`: `limit: 0` would make
+    // `LIMIT 0` return an empty page, which a UI cannot tell apart from an
+    // empty table.
+    let req = HistoryPageRequest::default();
+    let filter = req.to_filter().expect("defaults are valid");
+    assert_eq!(filter.limit, DEFAULT_HISTORY_PAGE_SIZE);
+    assert!(filter.limit > 0, "a default page size of 0 hides every row");
+}
+
+#[test]
+fn an_absent_field_stays_absent_rather_than_becoming_an_empty_filter() {
+    // `database = Some("")` means "no database"; `Some("")` is how the caller
+    // says "all", and the store treats empty as no constraint. Asserting the
+    // None case keeps a defaulted request from filtering on "".
+    let req = request(None);
+    let filter = req.to_filter().expect("valid");
+    assert_eq!(filter.database, None);
+    assert_eq!(filter.schema, None);
+    assert_eq!(filter.search, None);
+    assert_eq!(filter.since, None);
+    assert_eq!(filter.until, None);
+}
