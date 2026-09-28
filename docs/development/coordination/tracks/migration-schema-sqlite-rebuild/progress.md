@@ -43,4 +43,4 @@ READY_FOR_TEST
 
 ## Implementation commits
 
-- Pending commit.
+- Implementation commit: `6148cfef39110084d0845442f370e761ecad96ae` (`feat(schema-diff): add safe SQLite table rebuilds`).
