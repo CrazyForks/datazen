@@ -5,6 +5,7 @@ import {
   fixtures,
   sessions,
   pgTables,
+  pgNumericTables,
   renamedTables,
   prepareTransfer,
   executeIfPreviewExists,
@@ -26,7 +27,12 @@ describe('Data Transfer mapped structure independent live journeys', () => {
   });
 
   it('accepts the default target-native suggestion for PostgreSQL identity columns', async () => {
-    await prepareTransfer(fixtures[0], fixtures[3], [pgTables.parent, pgTables.child], 'structure');
+    await prepareTransfer(
+      fixtures[0],
+      fixtures[3],
+      [pgNumericTables.parent, pgNumericTables.child],
+      'structure',
+    );
     const previewError = await $('[data-testid="data-transfer-preview-error"]');
     if (await previewError.isExisting()) {
       throw new Error(`default identity mapping was rejected: ${await previewError.getText()}`);
@@ -36,9 +42,13 @@ describe('Data Transfer mapped structure independent live journeys', () => {
   });
 
   it('preserves PG identity, PK, secondary index, FK and data in a new MySQL target', async () => {
-    await prepareTransfer(fixtures[0], fixtures[3], [pgTables.parent, pgTables.child], 'both', {
-      clearSuggestedTypes: true,
-    });
+    await prepareTransfer(
+      fixtures[0],
+      fixtures[3],
+      [pgNumericTables.parent, pgNumericTables.child],
+      'both',
+      { clearSuggestedTypes: true },
+    );
     const outcome = await executeIfPreviewExists();
     if (outcome.rejected) throw new Error(outcome.text);
     expect(outcome.rejected).toBe(false);
@@ -109,8 +119,8 @@ describe('Data Transfer mapped structure independent live journeys', () => {
   });
 
   it('rejects an omitted referenced table before creating the mapped child', async () => {
-    await prepareTransfer(fixtures[0], fixtures[3], [pgTables.child], 'structure', {
-      renameTables: { [pgTables.child]: renamedTables.omittedChild },
+    await prepareTransfer(fixtures[0], fixtures[3], [pgNumericTables.child], 'structure', {
+      renameTables: { [pgNumericTables.child]: renamedTables.omittedChild },
     });
     const outcome = await executeIfPreviewExists();
     const target = await connectFixture(fixtures[3]);

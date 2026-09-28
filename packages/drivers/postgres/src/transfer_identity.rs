@@ -505,6 +505,7 @@ mod tests {
         next_sequence_value_after, render_sql_file_insert, render_sync_sql, restart_value,
     };
     use crate::postgres::PostgresDriver;
+    use datazen_driver_api::{ConnectionHandle, DriverError};
 
     #[test]
     fn imported_highwater_advances_to_the_next_sequence_value() {
@@ -517,6 +518,8 @@ mod tests {
     fn non_positive_increment_is_refused() {
         assert!(next_sequence_value_after(41, 1, 0).is_err());
         assert!(next_sequence_value_after(41, 1, -1).is_err());
+        assert!(restart_value(41, true, 1, 0, Some(41)).is_err());
+        assert!(restart_value(41, true, 1, -1, Some(41)).is_err());
     }
 
     #[test]
@@ -525,6 +528,51 @@ mod tests {
         assert_eq!(restart_value(1, false, 1, 1, Some(41)).unwrap(), 42);
         assert_eq!(restart_value(7, false, 7, 1, None).unwrap(), 7);
         assert_eq!(restart_value(80, true, 1, 10, Some(41)).unwrap(), 90);
+        assert_eq!(restart_value(5, false, 10, 3, Some(6)).unwrap(), 10);
+        assert_eq!(restart_value(10, true, 1, 10, Some(12)).unwrap(), 21);
+        assert_eq!(
+            restart_value(i64::MAX, true, 1, i64::MAX, Some(i64::MAX)).unwrap(),
+            i128::from(i64::MAX) * 2
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_identity_column_list_is_a_noop_without_a_table_transaction() {
+        let driver = PostgresDriver::new();
+        let handle = ConnectionHandle {
+            id: "missing-transaction".into(),
+            pool_id: "unused-pool".into(),
+        };
+
+        assert!(driver
+            .advance_transfer_identity_sequences_impl(&handle, None, "items", &[])
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn identity_sync_refuses_to_run_outside_the_active_table_transaction() {
+        let driver = PostgresDriver::new();
+        let handle = ConnectionHandle {
+            id: "missing-transaction".into(),
+            pool_id: "unused-pool".into(),
+        };
+        let error = driver
+            .advance_transfer_identity_sequences_impl(
+                &handle,
+                Some("public"),
+                "items",
+                &["id".into()],
+            )
+            .await
+            .unwrap_err();
+
+        match error {
+            DriverError::TransactionError(message) => {
+                assert!(message.contains("active table transaction"));
+            }
+            other => panic!("expected transaction error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -550,6 +598,23 @@ mod tests {
     }
 
     #[test]
+    fn sql_file_sync_escapes_literal_quotes_and_empty_column_lists_emit_no_sql() {
+        let driver = PostgresDriver::new();
+        assert!(render_sync_sql(&driver, Some("ignored"), "items", &[]).is_empty());
+
+        let sql = render_sync_sql(
+            &driver,
+            Some("schema'with'quotes"),
+            "table'with'quotes",
+            &["id'with'quotes".into()],
+        );
+        assert_eq!(sql.len(), 1);
+        assert!(sql[0]
+            .contains("v_relation text := '\"schema''with''quotes\".\"table''with''quotes\"'"));
+        assert!(sql[0].contains("v_column text := 'id''with''quotes'"));
+    }
+
+    #[test]
     fn sql_file_insert_renders_a_single_version_safe_identity_statement() {
         let marker = "/*DATAZEN_TRANSFER_OVERRIDE_TEST*/";
         let insert = format!(
@@ -565,5 +630,9 @@ mod tests {
         assert_eq!(sql.matches("INSERT INTO").count(), 1);
         assert!(!sql.contains("OVERRIDING SYSTEM VALUE VALUES ('text VALUES value')"));
         assert!(render_sql_file_insert("INSERT INTO people (id) VALUES (1)", "").is_err());
+        assert!(render_sql_file_insert("INSERT INTO people (id) VALUES (1)", "missing").is_err());
+        assert!(
+            render_sql_file_insert("{0} INSERT INTO people (id) VALUES (1) {0}", "{0}").is_err()
+        );
     }
 }
