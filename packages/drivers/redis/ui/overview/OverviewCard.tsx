@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { Loader2, TriangleAlert } from 'lucide-react';
-import { Button, cn, useI18n } from '@datazen/ui';
+import { TriangleAlert } from 'lucide-react';
+import { Button, cn, useI18n, Spinner } from '@datazen/ui';
 import type { OverviewSourceStatus } from './useOverviewData';
 
 /**
@@ -101,7 +101,7 @@ export function OverviewCard({
             data-overview-loading={cardId}
             className="flex items-center gap-2 px-3 py-4 text-xs text-fg-muted"
           >
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            <Spinner size="md" />
             {t('redis.overview.loading')}
           </div>
         ) : null}

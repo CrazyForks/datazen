@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import { getCachedTableSchema } from '../../lib/schemaCache';
 import type { ForeignKeyInfo, TableSchema } from '../../types';
 import { useI18n } from '../../hooks/useI18n';
 import { CopyableError } from '../../components/ui/CopyableError';
 import { useSchemaStore } from '../../stores/schemaStore';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface ForeignKeysViewProps {
   dbSessionId: string;
@@ -46,7 +46,7 @@ export function ForeignKeysView({ dbSessionId, tableName, database }: ForeignKey
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-        <Loader2 className="h-5 w-5 animate-spin" />
+        <Spinner size="xl" />
         {t('fk.loading')}
       </div>
     );

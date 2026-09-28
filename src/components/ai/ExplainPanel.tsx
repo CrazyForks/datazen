@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react';
-import { AlertTriangle, ArrowDownToLine, Loader2, Settings, Sparkles, Zap } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, Settings, Sparkles, Zap } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ExplainPlanTree } from '../query/ExplainPlanTree';
 import { DataTable } from '../DataTable/DataTable';
@@ -9,6 +9,7 @@ import { useAiStore } from '../../stores/aiStore';
 import type { ExplainPlanNode } from '../../types';
 import { cn } from '../../lib/cn';
 import { openSettingsWindow } from '../../lib/windowManager';
+import { Spinner } from '../ui/Spinner';
 
 interface ExplainPanelProps {
   dbSessionId: string;
@@ -131,7 +132,7 @@ export function ExplainPanel({
       {/* AI Analysis */}
       {isAnalyzing && (
         <div className="flex items-center gap-2 p-4 text-xs text-fg-muted">
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Spinner size="lg" />
           {t('explain.analyzing')}
         </div>
       )}

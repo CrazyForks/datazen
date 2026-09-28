@@ -3,7 +3,6 @@ import {
   BookOpen,
   Download,
   Gauge,
-  Loader2,
   Pause,
   Pencil,
   Play,
@@ -32,6 +31,7 @@ import { DEFAULT_REFRESH } from '../../types/dashboard';
 import { ChartWidgetTile } from './ChartWidgetTile';
 import { RunHistoryDrawer } from './RunHistoryDrawer';
 import { WidgetEditorDrawer } from './WidgetEditorDrawer';
+import { Spinner } from '../../components/ui/Spinner';
 
 export function createEmptyDashboard(name: string): Dashboard {
   const now = new Date().toISOString();
@@ -434,7 +434,7 @@ export function DashboardPanel({
     <div className="min-h-0 flex-1 overflow-auto p-4" data-testid="dashboard-main">
       {loading && !current && !!dashboardId && (
         <div className="flex h-full items-center justify-center text-sm text-fg-muted">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <Spinner size="lg" className="mr-2" />
           {t('common.loading')}
         </div>
       )}
@@ -489,7 +489,7 @@ export function DashboardPanel({
           className="flex flex-1 items-center justify-center text-sm text-fg-muted"
           data-testid="dashboard-bootstrapping"
         >
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <Spinner size="lg" className="mr-2" />
           {t('common.loading')}
         </div>
       </div>
@@ -650,11 +650,7 @@ export function DashboardPanel({
               onClick={() => void handleRefreshAll()}
               disabled={refreshingAll}
             >
-              {refreshingAll ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
+              {refreshingAll ? <Spinner size="md" /> : <RefreshCw className="h-3.5 w-3.5" />}
             </Button>
             <Button
               variant="ghost"

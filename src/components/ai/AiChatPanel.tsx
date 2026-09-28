@@ -4,7 +4,6 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
-  Loader2,
   MessageSquare,
   Settings,
   Sparkles,
@@ -32,6 +31,7 @@ import { composeKvAiMessage } from '../../lib/kvAiContext';
 import type { KvAiContext } from '../../lib/kvAiContext';
 import type { AiChatMessage, AiQuestion, ContextItem } from '../../types';
 import type { AiChatDraftRequest } from '../../windows/connection/query/aiDraftBridge';
+import { Spinner } from '../ui/Spinner';
 
 interface AiChatPanelProps {
   dbSessionId: string;
@@ -362,7 +362,7 @@ export function AiChatPanel({
               !chatSession.streamContent &&
               !chatSession.streamReasoning && (
                 <div className="flex items-center gap-2 py-2 text-xs text-fg-muted">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Spinner size="md" />
                   {chatSession.streamMcpToolName
                     ? t('chat.callingMcpTool', {
                         name: formatMcpToolDisplayName(chatSession.streamMcpToolName),
@@ -573,7 +573,7 @@ function ChatBubble({
 
         {!message.content && isStreaming && message.reasoning && (
           <div className="flex items-center gap-1 text-[10px] text-fg-muted mt-1">
-            <Loader2 className="h-3 w-3 animate-spin" />
+            <Spinner size="sm" label={t('chat.thinking')} />
           </div>
         )}
       </div>

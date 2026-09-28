@@ -13,7 +13,6 @@ import {
   CirclePlay,
   Clock,
   FileSearch,
-  Loader2,
   Play,
   Save,
   Sparkles,
@@ -46,6 +45,7 @@ import { buildSqlEditorContextMenuItems } from '../../../lib/sqlEditorContextMen
 import type { QueryExecutionViewModel } from '../../../lib/queryExecutionViewModel';
 import type { SqlNamespace } from '../../../lib/sqlNamespace';
 import type { SqlParam } from '../../../lib/sqlBindParams';
+import { Spinner } from '../../../components/ui/Spinner';
 
 export interface QueryEditorSectionProps {
   /** Owning query panel; scopes the visual builder's open state. */
@@ -406,13 +406,7 @@ export function QueryEditorSection({
             variant="run"
             label={t('query.execute')}
             title={`${t('query.execute')} (${executeShortcutLabel})`}
-            icon={
-              running ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Play className="h-3.5 w-3.5" />
-              )
-            }
+            icon={running ? <Spinner size="md" /> : <Play className="h-3.5 w-3.5" />}
             onClick={onExecute}
             disabled={running}
             {...tid('editor-execute-button')}

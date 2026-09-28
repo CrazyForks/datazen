@@ -1,5 +1,5 @@
-import { Loader2 } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { Spinner } from './ui/Spinner';
 
 export interface LocaleDomainLoadingProps {
   /**
@@ -33,7 +33,7 @@ export function LocaleDomainLoading({ variant = 'page', testId, className }: Loc
         className,
       )}
     >
-      <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+      <Spinner size="xl" />
       <span className="text-xs">Loading…</span>
     </div>
   );

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Sparkles, Trash2, Settings, Square, Copy, Check } from 'lucide-react';
+import { Sparkles, Trash2, Settings, Square, Copy, Check } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { SqlCodeBlock } from '../SqlCodeBlock';
 import { useCopyFeedback } from '../ui/useCopyFeedback';
@@ -11,6 +11,7 @@ import { AiInput } from './AiInput';
 import { AiEgressNotice } from './AiEgressNotice';
 import { splitContextItems } from '../../lib/contextItems';
 import type { ContextItem } from '../../types';
+import { Spinner } from '../ui/Spinner';
 
 /** How long the copy button keeps its check icon before reverting. */
 const COPIED_FEEDBACK_MS = 2000;
@@ -174,7 +175,7 @@ export function Nl2SqlPanel({
             <span className="text-[10px] text-fg-muted">
               {nl2sql.isGenerating ? t('nl2sql.preview') : t('nl2sql.result')}
             </span>
-            {nl2sql.isGenerating && <Loader2 className="h-3 w-3 animate-spin text-accent" />}
+            {nl2sql.isGenerating && <Spinner size="sm" tone="accent" />}
           </div>
           <div className="max-h-60 overflow-auto">
             <SqlCodeBlock code={previewSql} />

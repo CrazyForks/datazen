@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
+import { CheckCircle2, XCircle } from 'lucide-react';
 import { Dialog } from '../../components/ui/Dialog';
 import { Button } from '../../components/ui/Button';
 import { useI18n } from '../../hooks/useI18n';
@@ -8,6 +8,7 @@ import { cn } from '../../lib/cn';
 import { createProgressLogPump } from '../../lib/backupProgress';
 import { runSqlFileExecution } from '../../lib/sqlFileExecution';
 import { ProgressLog } from '../backup/ProgressLog';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface ExecuteSqlFileDialogProps {
   open: boolean;
@@ -115,7 +116,7 @@ export function ExecuteSqlFileDialog({
             >
               {running ? (
                 <>
-                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  <Spinner size="sm" className="mr-1" />
                   {t('backup.restoring')}
                 </>
               ) : (
@@ -144,7 +145,7 @@ export function ExecuteSqlFileDialog({
               ) : statusKind === 'success' ? (
                 <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
               ) : statusKind === 'running' ? (
-                <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                <Spinner size="md" className="mt-0.5 shrink-0" />
               ) : null}
               <span className="copyable min-w-0 flex-1 break-words">{statusMessage}</span>
             </div>

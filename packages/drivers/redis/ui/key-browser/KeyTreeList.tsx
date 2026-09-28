@@ -5,13 +5,12 @@ import {
   FileKey2,
   Folder,
   FolderOpen,
-  Loader2,
   Search,
   ShieldAlert,
   Trash2,
   WifiOff,
 } from 'lucide-react';
-import { VirtualTree, ariaLevelOf, cn, useI18n } from '@datazen/ui';
+import { VirtualTree, ariaLevelOf, cn, useI18n, Spinner } from '@datazen/ui';
 import type { VirtualTreeItemAria, VirtualTreeOverlayContext } from '@datazen/ui';
 import type { KeyTreeRow } from './keyTree';
 import { keyUnderFolder } from './keyTree';
@@ -291,7 +290,7 @@ export function KeyTreeList({
         data-testid="redis-tree-load-more"
         data-loading={loading ? 'true' : 'false'}
       >
-        {loading ? <Loader2 className="inline h-3.5 w-3.5 animate-spin" /> : t('redis.loadMore')}
+        {loading ? <Spinner size="md" className="inline" /> : t('redis.loadMore')}
       </button>
     </div>
   ) : null;
@@ -541,7 +540,7 @@ export function KeyTreeList({
         <>
           {loading && rowCount === 0 && (
             <div className="flex items-center justify-center gap-2 py-8 text-xs text-fg-muted">
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Spinner size="lg" />
               {t('common.loading')}
             </div>
           )}

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import { Dialog } from '../../components/ui/Dialog';
 import { Button } from '../../components/ui/Button';
 import { CopyableError } from '../../components/ui/CopyableError';
@@ -12,6 +11,7 @@ import { useConnectionCommand } from '../../hooks/useConnectionCommand';
 import { hasSchemaField } from '../../lib/commandSchema';
 import { toErrorMessage } from '../../lib/errors';
 import { useI18n } from '../../hooks/useI18n';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface CreateUserDialogProps {
   open: boolean;
@@ -161,7 +161,7 @@ export function CreateUserDialog({ open, onClose, dbSessionId, onCreated }: Crea
               onClick={() => void handleCreate()}
               disabled={!username.trim() || running}
             >
-              {running && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {running && <Spinner size="lg" className="mr-2" />}
               {t('common.createUser')}
             </Button>
           </>
@@ -175,7 +175,7 @@ export function CreateUserDialog({ open, onClose, dbSessionId, onCreated }: Crea
               onClick={() => void handleGrant()}
               disabled={selectedPrivileges.size === 0 || running}
             >
-              {running && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {running && <Spinner size="lg" className="mr-2" />}
               {t('createUser.createAndGrant')}
             </Button>
           </>

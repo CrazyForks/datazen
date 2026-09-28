@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Loader2, Upload } from 'lucide-react';
-import { Button } from '@datazen/ui';
+import { Download, Upload } from 'lucide-react';
+import { Button, Spinner } from '@datazen/ui';
 import { Dialog } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { fileCommands } from '@datazen/driver-sdk';
@@ -314,11 +314,7 @@ export function ImportExport({
                 onClick={() => void handleExportZip()}
                 disabled={busy}
               >
-                {busy ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="h-4 w-4" />
-                )}
+                {busy ? <Spinner size="lg" /> : <Download className="h-4 w-4" />}
                 {t('redis.importExportZip')}
               </Button>
               <Button
@@ -351,7 +347,7 @@ export function ImportExport({
               onClick={() => void handleImportZip()}
               disabled={busy}
             >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {busy ? <Spinner size="lg" /> : <Upload className="h-4 w-4" />}
               {t('redis.importExportImportZip')}
             </Button>
           </section>

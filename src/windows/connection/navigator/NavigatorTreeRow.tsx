@@ -6,7 +6,6 @@ import {
   Eye,
   FolderClosed,
   FolderOpen,
-  Loader2,
   Plus,
   Table2,
 } from 'lucide-react';
@@ -25,6 +24,7 @@ import type { UnifiedRow } from './types';
 import { connectionExpandedState } from './treeRowAria';
 import { createDragGhost, depthPadding, namespaceLeafContext, removeDragGhost } from './utils';
 import { useKvDbCounts } from './useKvDbCounts';
+import { Spinner } from '../../../components/ui/Spinner';
 
 /** Parse the numeric database index from a `db{n}` name; NaN when not a db name. */
 function dbIndexFromName(dbName: string): number {
@@ -341,7 +341,7 @@ export function NavigatorTreeRow({
             fallback={Database}
           />
           <span className="selectable min-w-0 truncate">{row.dbName}</span>
-          {row.loading && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-fg-muted" />}
+          {row.loading && <Spinner size="sm" tone="muted" className="shrink-0" />}
           {!row.loading && row.isOpen && (
             // Only open databases carry a marker: a solid green dot meaning the
             // database is open (expanded, or still holding a pool that "Close
@@ -558,7 +558,7 @@ export function NavigatorTreeRow({
           className="flex items-center gap-2 py-1 text-xs text-fg-muted"
           style={{ paddingLeft: depthPadding(row.depth) }}
         >
-          <Loader2 className="h-3 w-3 animate-spin" />
+          <Spinner size="sm" />
           {t('common.loading')}
         </div>
       );
