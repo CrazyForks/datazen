@@ -26,6 +26,24 @@ export { ConfirmDialog, type ConfirmDialogProps } from './ConfirmDialog';
 export { CopyableError, type CopyableErrorProps } from './CopyableError';
 export { ResultMessageDialog, type ResultMessageDialogProps } from './ResultMessageDialog';
 export { LimitationsDialog, type LimitationsDialogProps } from './LimitationsDialog';
+// Shared tree row contract + level/indent/navigation arithmetic. Pure: the
+// host navigator and the driver key browsers both flatten their business
+// objects into the same pre-order row list and used to answer these questions
+// separately.
+export { TREE_TOP_LEVEL, type TreeRow, type TreeRowLevel, type TreeRowNode } from './tree/types';
+export { ariaLevelOf, indentOf, rowLevels, searchedRowLevels } from './tree/geometry';
+export {
+  ancestorIndexes,
+  descendantIndexes,
+  descendantRange,
+  effectiveExpanded,
+  firstChildIndex,
+  nextNavigableIndex,
+  parentIndexOf,
+  showsSubtree,
+  stepIndex,
+  type BranchProbe,
+} from './tree/navigation';
 // The ONE i18n implementation shared by host, drivers and extensions.
 export {
   setLocale,
