@@ -150,6 +150,164 @@ async fn rebuild_plan(
 }
 
 #[tokio::test]
+async fn rebuild_fails_closed_for_column_and_table_conflict_policies() {
+    let (driver, handle, directory) = fixture().await;
+    let cases = [
+        (
+            "conflict_column_unique_ignore",
+            "CREATE TABLE conflict_column_unique_ignore (id INTEGER PRIMARY KEY, value TEXT UNIQUE ON CONFLICT IGNORE)",
+            "IGNORE",
+        ),
+        (
+            "conflict_column_not_null_fail",
+            "CREATE TABLE conflict_column_not_null_fail (id INTEGER PRIMARY KEY, value TEXT NOT NULL ON CONFLICT FAIL)",
+            "FAIL",
+        ),
+        (
+            "conflict_column_primary_key_replace",
+            "CREATE TABLE conflict_column_primary_key_replace (id INTEGER PRIMARY KEY ON CONFLICT REPLACE, value TEXT)",
+            "REPLACE",
+        ),
+        (
+            "conflict_table_unique_abort",
+            "CREATE TABLE conflict_table_unique_abort (id INTEGER PRIMARY KEY, value TEXT, UNIQUE (value) ON CONFLICT ABORT)",
+            "ABORT",
+        ),
+        (
+            "conflict_table_primary_key_rollback",
+            "CREATE TABLE conflict_table_primary_key_rollback (id INTEGER, value TEXT, PRIMARY KEY (id) ON CONFLICT ROLLBACK)",
+            "ROLLBACK",
+        ),
+        (
+            "conflict_table_check_ignore",
+            "CREATE TABLE conflict_table_check_ignore (id INTEGER PRIMARY KEY, value TEXT, CHECK (value <> '') ON /* policy */ CONFLICT IGNORE)",
+            "IGNORE",
+        ),
+    ];
+
+    for (table, ddl, expected_action) in cases {
+        driver.execute(&handle, ddl).await.unwrap();
+        driver
+            .execute(
+                &handle,
+                &format!("INSERT INTO {table} (id, value) VALUES (1, 'kept')"),
+            )
+            .await
+            .unwrap();
+
+        let catalog_before = driver
+            .query(
+                &handle,
+                &format!(
+                    "SELECT sql FROM main.sqlite_master WHERE type = 'table' AND name = '{table}'"
+                ),
+            )
+            .await
+            .unwrap();
+        let rows_before = driver
+            .query(
+                &handle,
+                &format!("SELECT id, value FROM {table} ORDER BY id"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rows_before.rows.len(), 1, "{table}");
+
+        let current = driver
+            .get_table_schema(&handle, table, "main", None)
+            .await
+            .unwrap();
+        let conflict_blocker = current
+            .table_options
+            .migration_blockers
+            .iter()
+            .find(|blocker| blocker.contains("ON CONFLICT"))
+            .unwrap_or_else(|| panic!("{table} did not report its conflict policy"));
+        assert!(
+            conflict_blocker.contains(expected_action),
+            "{table}: {conflict_blocker}"
+        );
+
+        let mut desired = current.clone();
+        desired.columns[0].data_type = "BLOB".into();
+        let error = SqliteMigrationRenderer
+            .render_table_rebuild(table, &desired, &current)
+            .unwrap_err();
+        assert!(error.contains("ON CONFLICT"), "{table}: {error}");
+        assert!(error.contains(expected_action), "{table}: {error}");
+
+        let catalog_after = driver
+            .query(
+                &handle,
+                &format!(
+                    "SELECT sql FROM main.sqlite_master WHERE type = 'table' AND name = '{table}'"
+                ),
+            )
+            .await
+            .unwrap();
+        let rows_after = driver
+            .query(
+                &handle,
+                &format!("SELECT id, value FROM {table} ORDER BY id"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&catalog_after.rows).unwrap(),
+            serde_json::to_value(&catalog_before.rows).unwrap(),
+            "{table} catalog changed while preparing a blocked rebuild"
+        );
+        assert_eq!(
+            serde_json::to_value(&rows_after.rows).unwrap(),
+            serde_json::to_value(&rows_before.rows).unwrap(),
+            "{table} rows changed while preparing a blocked rebuild"
+        );
+    }
+
+    driver
+        .execute(
+            &handle,
+            "CREATE TABLE conflict_words_in_default (id INTEGER PRIMARY KEY, message TEXT DEFAULT 'ON CONFLICT IGNORE')",
+        )
+        .await
+        .unwrap();
+    let safe_table = driver
+        .get_table_schema(&handle, "conflict_words_in_default", "main", None)
+        .await
+        .unwrap();
+    assert!(safe_table.table_options.migration_blockers.is_empty());
+    let mut safe_target = safe_table.clone();
+    safe_target.columns[1].data_type = "BLOB".into();
+    assert!(!SqliteMigrationRenderer
+        .render_table_rebuild("conflict_words_in_default", &safe_target, &safe_table)
+        .unwrap()
+        .is_empty());
+
+    driver
+        .execute(
+            &handle,
+            "INSERT INTO conflict_column_unique_ignore (id, value) VALUES (2, 'kept')",
+        )
+        .await
+        .unwrap();
+    let rows = driver
+        .query(
+            &handle,
+            "SELECT id, value FROM conflict_column_unique_ignore ORDER BY id",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "UNIQUE ON CONFLICT IGNORE must remain intact"
+    );
+
+    driver.disconnect(handle).await.unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
 async fn stale_reviewed_schema_is_rejected_before_rebuild_writes() {
     let (driver, handle, directory) = fixture().await;
     let reviewed = driver

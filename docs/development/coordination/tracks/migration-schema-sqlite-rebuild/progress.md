@@ -44,3 +44,13 @@ READY_FOR_TEST
 ## Implementation commits
 
 - Implementation commit: `6148cfef39110084d0845442f370e761ecad96ae` (`feat(schema-diff): add safe SQLite table rebuilds`).
+
+## R4 conflict-policy gap follow-up (BUG-001)
+
+- **Phase:** `READY_FOR_TEST` (fresh independent tester required; the original R4 candidate failed this acceptance).
+- Added a fail-closed SQLite catalog guard for unquoted `ON CONFLICT` token pairs. It covers column and table constraints, tolerates comments between keywords, avoids string/quoted-identifier false positives, and reports the recognized conflict action. The existing renderer preflight rejects the snapshot before emitting rebuild DDL.
+- Added a file-backed journey for column `UNIQUE IGNORE`, `NOT NULL FAIL`, inline `PRIMARY KEY REPLACE`, table `UNIQUE ABORT`, table `PRIMARY KEY ROLLBACK`, and table `CHECK IGNORE`. It checks catalog DDL and rows remain unchanged after blocked planning/rendering, verifies duplicate UNIQUE IGNORE still leaves one row, and confirms the phrase inside a default string literal does not block an ordinary rebuild.
+- **Validation:** `cargo test --locked -p datazen-driver-sqlite --test schema_rebuild_journey` — 9 passed, including the existing successful ordinary-table rebuild journey. `cargo test --locked -p datazen-driver-sqlite -- --skip command_definitions_include_schema_object_commands` — 78 passed, 1 filtered. `cargo test --locked -p datazen --lib schema_diff::plan::tests::` — 74 passed. `cargo test --locked -p datazen --lib schema_diff::deploy::tests::` — 7 passed. `rustfmt --edition 2021 --check` for the changed Rust files and `git diff --check` passed.
+- The filtered `command_definitions_include_schema_object_commands` assertion is an unchanged baseline failure documented by the independent R4 report (it expects 3 definitions; current API exposes 4). Host compilation emitted existing unused/dead-code warnings outside changed files.
+- No WebdriverIO build was run for this targeted backend repair. The worktree retains its physical `node_modules`; no `.app` or `.profraw` files were removed or modified. Disk availability was 38 GiB after focused driver and Host tests, above the 15-GiB floor.
+- **Implementation commit:** to be recorded after the repair commit is created. A fresh Tester must independently rerun the track suite and verify the zero-write acceptance in `bugs/migration-schema-sqlite-rebuild-BUG-001.md` before this bug is closed.

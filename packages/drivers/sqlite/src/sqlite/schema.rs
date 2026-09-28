@@ -3,14 +3,71 @@ use datazen_driver_api::*;
 use sqlparser::ast::{ColumnOption, Statement as SqlStatement, TableConstraint};
 use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
+use sqlparser::tokenizer::{Token, Tokenizer};
 use sqlx::Row;
 use std::collections::BTreeMap;
+
+fn sqlite_on_conflict_policy_blockers(sql: &str) -> Result<Vec<String>, String> {
+    // sqlparser does not consistently expose table-level conflict clauses in
+    // its AST. Inspect SQLite's stored DDL tokens so neither column nor table
+    // policies can disappear during a rebuild. Tokenizing avoids matching
+    // text inside string literals or quoted identifiers.
+    let tokens = Tokenizer::new(&SQLiteDialect {}, sql)
+        .tokenize()
+        .map_err(|error| format!("could not inspect SQLite conflict policies: {error}"))?;
+    let significant_tokens = tokens
+        .into_iter()
+        .filter(|token| !matches!(token, Token::Whitespace(_)))
+        .collect::<Vec<_>>();
+    let mut blockers = Vec::new();
+
+    for index in 0..significant_tokens.len().saturating_sub(1) {
+        if !sqlite_is_unquoted_word(&significant_tokens[index], "ON")
+            || !sqlite_is_unquoted_word(&significant_tokens[index + 1], "CONFLICT")
+        {
+            continue;
+        }
+
+        let action = significant_tokens
+            .get(index + 2)
+            .and_then(|token| match token {
+                Token::Word(word) if word.quote_style.is_none() => {
+                    Some(word.value.to_ascii_uppercase())
+                }
+                _ => None,
+            });
+        let blocker = match action.as_deref() {
+            Some(action)
+                if matches!(action, "ROLLBACK" | "ABORT" | "FAIL" | "IGNORE" | "REPLACE") =>
+            {
+                format!("SQLite ON CONFLICT {action} behavior is not represented by Schema Diff")
+            }
+            _ => "SQLite ON CONFLICT behavior is not represented by Schema Diff".into(),
+        };
+        blockers.push(blocker);
+    }
+
+    blockers.sort();
+    blockers.dedup();
+    Ok(blockers)
+}
+
+fn sqlite_is_unquoted_word(token: &Token, expected: &str) -> bool {
+    matches!(token, Token::Word(word) if word.quote_style.is_none() && word.value.eq_ignore_ascii_case(expected))
+}
 
 fn parse_sqlite_table_ddl(
     sql: &str,
 ) -> Result<(Vec<CheckConstraint>, Vec<String>, Vec<String>), String> {
-    let statements = Parser::parse_sql(&SQLiteDialect {}, sql)
-        .map_err(|error| format!("could not inspect SQLite table DDL: {error}"))?;
+    let conflict_policy_blockers = sqlite_on_conflict_policy_blockers(sql)?;
+    let statements = Parser::parse_sql(&SQLiteDialect {}, sql).map_err(|error| {
+        let parse_error = format!("could not inspect SQLite table DDL: {error}");
+        if conflict_policy_blockers.is_empty() {
+            parse_error
+        } else {
+            format!("{parse_error}; {}", conflict_policy_blockers.join("; "))
+        }
+    })?;
     if statements.len() != 1 {
         return Err("SQLite table catalog returned an ambiguous DDL statement".into());
     }
@@ -19,7 +76,7 @@ fn parse_sqlite_table_ddl(
     };
 
     let mut checks = Vec::new();
-    let mut blockers = Vec::new();
+    let mut blockers = conflict_policy_blockers;
     let mut auto_increment_columns = Vec::new();
     let mut check_number = 0usize;
     let mut add_check = |name: Option<String>, expression: String| {
