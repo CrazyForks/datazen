@@ -138,6 +138,8 @@ const pack = {
   'sync.pageScopeAll': 'all rows in selected table operations',
   'sync.loadingPage': 'Loading…',
   'sync.refreshPreview': 'Refresh',
+  'sync.sqlPreviewLimitReached':
+    'SQL preview is limited to 16 MiB. Select fewer rows or operations to inspect the SQL. You can still review the row comparison and execute the reviewed changes.',
   'sync.execute': 'Execute',
   'sync.executing': 'Executing sync…',
   'sync.executingSql': 'Running {count} SQL statement(s)…',

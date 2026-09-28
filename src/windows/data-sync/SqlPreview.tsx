@@ -98,6 +98,9 @@ export function SqlPreview({
   const previewText = statements
     ? statementsToPreviewText(filterStatementsByOp(statements, opFilter), opFilter)
     : '';
+  const isPreviewSizeLimitError = previewError.includes(
+    'Data Sync SQL preview exceeds the 16 MiB IPC limit',
+  );
 
   const handleCopy = async () => {
     try {
@@ -142,7 +145,7 @@ export function SqlPreview({
       </div>
       {previewError && (
         <div role="alert" className="p-3 text-sm text-red-500">
-          {previewError}
+          {isPreviewSizeLimitError ? t('sync.sqlPreviewLimitReached') : previewError}
         </div>
       )}
       <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-[11px] leading-relaxed text-fg-secondary">
