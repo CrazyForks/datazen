@@ -642,8 +642,20 @@ export function WorkflowPage({
     [activePanel, embedded, onOpenDashboardInShell, t],
   );
 
+  // All hooks above. Gate the body on the `workflows` locale pack so the UI
+  // never renders raw/un-translated `t('workflows.*')` keys before it loads.
+  if (!localesReady) {
+    return <LocaleDomainLoading testId="workflow-locale-loading" />;
+  }
+
   // ── Render ────────────────────────────────────────────────────────
 
+  // Built AFTER the `localesReady` gate on purpose: the `t('workflows.*')`
+  // calls below run while this constant is *constructed*, and the guard only
+  // stops the element from being *rendered*. Constructing it earlier made
+  // every page load emit four bogus dev-only "[i18n] Missing translation"
+  // lines for keys that are perfectly well registered in the lazy `workflows`
+  // pack. Keep it below the gate.
   const workflowToolbar = (
     <div
       className={`flex items-center gap-1 ${embedded ? 'border-b border-edge px-3 py-2' : 'ml-2'}`}
@@ -692,12 +704,6 @@ export function WorkflowPage({
       </Button>
     </div>
   );
-
-  // All hooks above. Gate the body on the `workflows` locale pack so the UI
-  // never renders raw/un-translated `t('workflows.*')` keys before it loads.
-  if (!localesReady) {
-    return <LocaleDomainLoading testId="workflow-locale-loading" />;
-  }
 
   return (
     <div

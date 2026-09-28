@@ -414,6 +414,22 @@ export function DashboardPanel({
     await loadDashboard(current.id);
   }, [current, monitorPaused, loadDashboard]);
 
+  const tabItems = list;
+
+  // All hooks above. Gate the body on the `dashboard` locale pack so the UI
+  // never renders raw/un-translated `t('dashboard.*')` keys before it loads.
+  if (!localesReady) {
+    return (
+      <LocaleDomainLoading variant="section" testId="dashboard-locale-loading" className="h-full" />
+    );
+  }
+
+  // Built AFTER the `localesReady` gate on purpose: the `t('dashboard.*')`
+  // call below runs while this constant is *constructed*, and the guard only
+  // stops the element from being *rendered*. Constructing it earlier let a
+  // first frame with an already-populated store emit a bogus dev-only
+  // "[i18n] Missing translation" line for a key that is perfectly well
+  // registered in the lazy `dashboard` pack. Keep it below the gate.
   const dashboardMainContent = (
     <div className="min-h-0 flex-1 overflow-auto p-4" data-testid="dashboard-main">
       {loading && !current && !!dashboardId && (
@@ -465,16 +481,6 @@ export function DashboardPanel({
       )}
     </div>
   );
-
-  const tabItems = list;
-
-  // All hooks above. Gate the body on the `dashboard` locale pack so the UI
-  // never renders raw/un-translated `t('dashboard.*')` keys before it loads.
-  if (!localesReady) {
-    return (
-      <LocaleDomainLoading variant="section" testId="dashboard-locale-loading" className="h-full" />
-    );
-  }
 
   if (bootstrapping || (listLoading && !dashboardId && list.length === 0)) {
     return (
