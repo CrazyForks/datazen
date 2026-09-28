@@ -28,11 +28,20 @@
  * `require()`, and `vi.mock()` / `vi.doMock()` all end up as literals, and
  * matching a single keyword is how violations stayed invisible. The tokenizer
  * is shared with the driver boundary guard.
+ *
+ * The set of files that count as source (`SCAN_EXTENSIONS`,
+ * `SKIP_DIR_NAMES`) is shared with it as well, via
+ * `scripts/lib/scanTargets.mjs`. Declaring the set twice is how the two guards
+ * ended up disagreeing about which files exist — one reported
+ * `packages/ui/dist/**` while the other ignored it, and only one of them
+ * looked at `.mjs` — and a guard that quietly watches a different file set is
+ * not a second opinion on the same question.
  */
-import { readFileSync, readdirSync, statSync } from 'fs';
-import { resolve, dirname, relative, posix } from 'path';
+import { readFileSync, readdirSync } from 'fs';
+import { resolve, dirname, extname, relative, posix } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { scanCode } from './lib/scanSourceCode.mjs';
+import { SCAN_EXTENSIONS, SKIP_DIR_NAMES } from './lib/scanTargets.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -73,17 +82,22 @@ export const LAYER_RULES = [
   },
 ];
 
-const SOURCE_EXTENSIONS = ['.ts', '.tsx'];
+const SOURCE_EXTENSIONS = SCAN_EXTENSIONS;
 
 /** Every source file under `dir`, recursively. */
 function collectSourceFiles(dir) {
   const out = [];
   const walk = (current) => {
-    for (const entry of readdirSync(current)) {
-      const full = resolve(current, entry);
-      if (statSync(full).isDirectory()) {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      // Vendored / generated trees are somebody else's source. Skipping them
+      // here matters more than it looks: `packages/ui/` has no `node_modules`
+      // or `dist` today, so without this a single `npm install` under the
+      // design system would start failing the gate on third-party code.
+      if (entry.isDirectory() && SKIP_DIR_NAMES.has(entry.name)) continue;
+      const full = resolve(current, entry.name);
+      if (entry.isDirectory()) {
         walk(full);
-      } else if (SOURCE_EXTENSIONS.some((ext) => entry.endsWith(ext))) {
+      } else if (SOURCE_EXTENSIONS.has(extname(entry.name))) {
         out.push(full);
       }
     }

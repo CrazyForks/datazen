@@ -70,16 +70,59 @@ export function withProbeLock(fn) {
  * @returns {T}
  */
 export function withTempSourceFile(rel, contents, run) {
+  return withTempSourceFiles([[rel, contents]], run);
+}
+
+/**
+ * Run `run` while every `[relPath, contents]` pair exists on disk. Missing
+ * parent directories are created and — and only those that did not exist
+ * before — removed again afterwards, so a probe can exercise a guard's
+ * directory-skipping behaviour (`dist/`, `node_modules/`, …) without leaving a
+ * tree behind or deleting a real one.
+ *
+ * @template T
+ * @param {Array<[string, string]>} entries repo-relative POSIX path → file body
+ * @param {() => T} run
+ * @returns {T}
+ */
+export function withTempSourceFiles(entries, run) {
   return withProbeLock(() => {
-    const full = join(REPO_ROOT, rel);
-    if (existsSync(full)) {
-      throw new Error(`withTempSourceFile refused to overwrite a tracked file: ${rel}`);
+    const createdDirs = [];
+    const createdFiles = [];
+    for (const [rel, contents] of entries) {
+      const full = join(REPO_ROOT, rel);
+      if (existsSync(full)) {
+        cleanup();
+        throw new Error(`withTempSourceFiles refused to overwrite a tracked file: ${rel}`);
+      }
+      let dir = dirname(full);
+      const missing = [];
+      while (!existsSync(dir)) {
+        missing.push(dir);
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+      for (const d of missing.reverse()) {
+        mkdirSync(d);
+        createdDirs.push(d);
+      }
+      writeFileSync(full, contents);
+      createdFiles.push(full);
     }
-    writeFileSync(full, contents);
+
+    function cleanup() {
+      for (const file of createdFiles) rmSync(file, { force: true });
+      // Deepest first, and only directories this helper created.
+      for (const d of createdDirs.sort((a, b) => b.length - a.length)) {
+        rmSync(d, { recursive: true, force: true });
+      }
+    }
+
     try {
       return run();
     } finally {
-      rmSync(full, { force: true });
+      cleanup();
     }
   });
 }

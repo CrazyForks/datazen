@@ -78,23 +78,9 @@ import { readdirSync, existsSync, readFileSync } from 'fs';
 import { dirname, join, posix, relative, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { scanCode } from './lib/scanSourceCode.mjs';
+import { SCAN_EXTENSIONS, SKIP_DIR_NAMES } from './lib/scanTargets.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-
-/** Source files the boundary rules speak to (never `.rs`, `.css`, `.md`, …). */
-export const SCAN_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
-
-/** Vendored / generated directories that are not authored source. */
-export const SKIP_DIR_NAMES = new Set([
-  'node_modules',
-  'dist',
-  'build',
-  'coverage',
-  'target',
-  '.git',
-  '.turbo',
-  '__snapshots__',
-]);
 
 /**
  * Gitignored codegen. `src/extensions/generated*.ts` is the *sanctioned* place
@@ -121,9 +107,18 @@ export const UI_DIR = 'packages/ui';
  * Bare specifier prefixes that only make sense inside a Tauri webview, against
  * a host-owned store, or above the design system in the dependency graph. They
  * are matched as prefixes (not exact names) so a newly published
- * `@tauri-apps/plugin-*` is covered the day it appears. Kept in sync with
- * `LAYER_RULES` in `check-module-layers.mjs`; both guards must be at least as
- * strict as each other.
+ * `@tauri-apps/plugin-*` is covered the day it appears.
+ *
+ * Kept in sync with the `packages/ui` entry of `LAYER_RULES` in
+ * `check-module-layers.mjs`. "Kept in sync" is a statement about these two
+ * lists, not a safety net: the two guards are deliberately redundant, and
+ * neither is a fallback for the other. If R4 is deleted from this script, this
+ * one goes quiet while the other keeps working, and vice versa — the protection
+ * against that is the mutation tests in `scripts/__tests__/`, not the other
+ * script. What the two guards *do* share is the scan-target set
+ * (`scripts/lib/scanTargets.mjs`) and the tokenizer, so they cannot drift on
+ * *which files* or *how* they are read — only on rule logic, which the tests
+ * cover.
  */
 export const R4_FORBIDDEN_PACKAGES = [
   '@tauri-apps/',

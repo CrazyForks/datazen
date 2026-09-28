@@ -1,7 +1,8 @@
 /** @vitest-environment node */
 import { describe, expect, it } from 'vitest';
 import { checkModuleLayers, LAYER_RULES } from '../check-module-layers.mjs';
-import { withProbeLock, withTempSourceFile } from './boundaryMutation';
+import { checkDriverImportBoundaries } from '../check-driver-import-boundaries.mjs';
+import { withProbeLock, withTempSourceFile, withTempSourceFiles } from './boundaryMutation';
 
 /** Collect the messages a run logged, and its exit code. */
 function run() {
@@ -145,5 +146,96 @@ describe('checkModuleLayers · @datazen/ui must stay a host-free leaf', () => {
       () => run(),
     );
     expect(output).not.toContain('__boundaryProbe__');
+  });
+});
+
+describe('checkModuleLayers watches the same file set as the driver boundary guard', () => {
+  const TAIURI_IMPORT =
+    "import { open } from '@tauri-apps/plugin-dialog';\nexport const pick = open;\n";
+
+  it('ignores vendored and generated directories under the design system', () => {
+    // `packages/ui/` ships no `dist/` or `node_modules/`, so a guard that walks
+    // them is only wrong the day somebody installs or builds inside the design
+    // system — at which point it starts failing this repository's gate on
+    // third-party code. `SKIP_DIR_NAMES` is shared with the driver boundary
+    // guard for the same reason.
+    const { code, output } = withTempSourceFiles(
+      [
+        ['packages/ui/dist/bundle.js', TAIURI_IMPORT],
+        ['packages/ui/node_modules/vendored-lib/index.js', TAIURI_IMPORT],
+        ['packages/ui/build/out.js', TAIURI_IMPORT],
+        ['packages/ui/coverage/report.js', TAIURI_IMPORT],
+      ],
+      () => run(),
+    );
+    expect(code).toBe(0);
+    expect(output).not.toMatch(/violation/);
+  });
+
+  it('still scans those directories when the rule points straight at them', () => {
+    // The control: the skip list is scoped to directory *names* below a rule's
+    // `from`, never a blanket "don't look here".
+    LAYER_RULES.push({
+      name: 'probe',
+      from: 'packages/ui/dist',
+      forbiddenPackages: ['@tauri-apps/'],
+    });
+    try {
+      const { code } = withTempSourceFiles([['packages/ui/dist/bundle.ts', TAIURI_IMPORT]], () =>
+        run(),
+      );
+      expect(code).toBe(1);
+    } finally {
+      LAYER_RULES.pop();
+    }
+  });
+
+  // The driver boundary guard scans six extensions; a guard that watches only
+  // `.ts`/`.tsx` is a guard with a hole shaped exactly like the thing it is
+  // meant to forbid.
+  for (const ext of ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']) {
+    it(`scans a ${ext} file under packages/ui`, () => {
+      const rel = `packages/ui/src/__boundaryProbe__${ext}`;
+      const { code, output } = withTempSourceFile(rel, TAIURI_IMPORT, () => run());
+      expect(code).toBe(1);
+      expect(output).toContain(rel);
+    });
+  }
+
+  it('reaches the same verdict as check-driver-import-boundaries on one file', () => {
+    // The regression this pins: the two guards used to declare their scan
+    // targets independently, so one reported a file the other ignored. They
+    // are redundant, not a fallback for each other — this asserts they really
+    // are looking at the same thing, on the real tree, today.
+    const rel = 'packages/ui/src/__boundaryProbe__.ts';
+    withTempSourceFile(rel, TAIURI_IMPORT, () => {
+      const mine = run();
+      const theirs: string[] = [];
+      const theirCode = checkDriverImportBoundaries({
+        log: (msg: unknown) => theirs.push(String(msg)),
+        error: (msg: unknown) => theirs.push(String(msg)),
+      });
+      const theirOutput = theirs.join('\n');
+
+      expect(mine.code).toBe(1);
+      expect(theirCode).toBe(1);
+      expect(mine.output).toContain(rel);
+      expect(theirOutput).toContain(rel);
+    });
+  });
+
+  it('agrees with check-driver-import-boundaries on a skipped file too', () => {
+    const rel = 'packages/ui/dist/__boundaryProbe__.ts';
+    withTempSourceFiles([[rel, TAIURI_IMPORT]], () => {
+      const mine = run();
+      const theirs: string[] = [];
+      const theirCode = checkDriverImportBoundaries({
+        log: (msg: unknown) => theirs.push(String(msg)),
+        error: (msg: unknown) => theirs.push(String(msg)),
+      });
+      expect(mine.code).toBe(0);
+      expect(theirCode).toBe(0);
+      expect(theirs.join('\n')).not.toContain(rel);
+    });
   });
 });
