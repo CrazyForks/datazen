@@ -194,7 +194,18 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
           }
         } else if (objs.length > 0) {
           for (const obj of objs) {
-            rows.push({ type: 'object', obj, ...levels(baseDepth + 1), catId: cat.id });
+            // Carries its owner tuple, exactly as the `table` variant does: two
+            // connections can each hold an object with the same name, and a key
+            // built from `(catId, name)` alone would collide across them.
+            rows.push({
+              type: 'object',
+              obj,
+              ...levels(baseDepth + 1),
+              catId: cat.id,
+              connectionId,
+              dbName,
+              ...(schemaName === undefined ? {} : { schemaName }),
+            });
           }
         }
       }
@@ -220,7 +231,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
     : grouped;
 
   if (sections.length === 0) {
-    rows.push({ type: 'no-connections' });
+    rows.push({ type: 'no-connections', depth: 0, levelDepth: 0 });
     return rows;
   }
   for (const { group: groupName, connections: groupConns } of sections) {
@@ -241,6 +252,8 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
     if (isPinnedSection || isRecentSection) {
       rows.push({
         type: 'section',
+        depth: 0,
+        levelDepth: 0,
         section: isPinnedSection ? 'pinned' : 'recent',
         displayName,
         count: filteredConns.length,
@@ -249,6 +262,8 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
     } else if (!query) {
       rows.push({
         type: 'group',
+        depth: 0,
+        levelDepth: 0,
         groupName,
         displayName,
         count: filteredConns.length,
@@ -259,7 +274,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
     if (!expanded) continue;
 
     if (filteredConns.length === 0) {
-      rows.push({ type: 'empty-group', groupName });
+      rows.push({ type: 'empty-group', groupName, depth: 1, levelDepth: 1 });
       continue;
     }
 
@@ -285,14 +300,24 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
       if ((!isConnected && !isConnecting) || (!isExpanded && !query)) continue;
 
       if (isConnecting) {
-        rows.push({ type: 'db-loading', ...levels(CONNECTION_CHILD_DEPTH) });
+        // The connection is still dialling: this spinner *is* the connection row.
+        rows.push({
+          type: 'db-loading',
+          ...levels(CONNECTION_CHILD_DEPTH),
+          ownerKey: `conn:${conn.id}`,
+        });
         continue;
       }
 
       const dbSessionId = entry!.dbSessionId!;
       const schemaData = schemas.get(dbSessionId);
       if (!schemaData) {
-        rows.push({ type: 'db-loading', ...levels(CONNECTION_CHILD_DEPTH) });
+        // The session exists but its schema has not arrived: owned by the session.
+        rows.push({
+          type: 'db-loading',
+          ...levels(CONNECTION_CHILD_DEPTH),
+          ownerKey: `session:${dbSessionId}`,
+        });
         continue;
       }
 
@@ -303,7 +328,11 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
         const treeEmpty = isLeaf(tree) || Object.keys(tree).length === 0;
         if (treeEmpty) {
           if (!query && (schemaData.loading || schemaData.ensuringCount > 0)) {
-            rows.push({ type: 'db-loading', ...levels(CONNECTION_CHILD_DEPTH) });
+            rows.push({
+              type: 'db-loading',
+              ...levels(CONNECTION_CHILD_DEPTH),
+              ownerKey: `session:${dbSessionId}`,
+            });
           }
           continue;
         }
@@ -326,7 +355,12 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
       if (meta?.isKeyValue) {
         const dbs = schemaData.databases;
         if (schemaData.loading && dbs.length === 0) {
-          rows.push({ type: 'db-loading', ...levels(CONNECTION_CHILD_DEPTH) });
+          // The key-value db list itself is still loading: owned by the session.
+          rows.push({
+            type: 'db-loading',
+            ...levels(CONNECTION_CHILD_DEPTH),
+            ownerKey: `session:${dbSessionId}`,
+          });
         } else {
           const filteredDbs = query ? dbs.filter((d) => d.toLowerCase().includes(query)) : dbs;
           for (const dbName of filteredDbs) {
@@ -376,7 +410,12 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
 
           if (!isDbExpanded) continue;
           if (isLoading) {
-            rows.push({ type: 'db-loading', ...levels(DATABASE_CHILD_DEPTH) });
+            // This database's tables are loading: owned by that database.
+            rows.push({
+              type: 'db-loading',
+              ...levels(DATABASE_CHILD_DEPTH),
+              ownerKey: `db:${conn.id}::${dbName}`,
+            });
             continue;
           }
 
@@ -465,7 +504,11 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
         if (!isDbExpanded) continue;
 
         if (schemaData.loading && schemaData.tables.length === 0) {
-          rows.push({ type: 'db-loading', ...levels(DATABASE_CHILD_DEPTH) });
+          rows.push({
+            type: 'db-loading',
+            ...levels(DATABASE_CHILD_DEPTH),
+            ownerKey: `db:${conn.id}::${dbName}`,
+          });
           continue;
         }
 

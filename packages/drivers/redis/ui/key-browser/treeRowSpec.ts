@@ -34,6 +34,29 @@ export const INDENT_STEP = 10;
 /** A `folder` row owns a child list; a `key` row never does. */
 const isFolder = (row: KeyTreeRow): boolean => row.kind === 'folder';
 
+/** The same predicate, for the shared tree shell's `isBranch` probe. */
+export const isFolderRow = isFolder;
+
+/**
+ * Stable identity of a row, derived from the row itself and never from its
+ * position.
+ *
+ * The renderer used to build these keys inline while mapping the virtual
+ * window, which put the key contract one indentation level away from the data
+ * that has to satisfy it — and left the *folder* keys unprefixed while the key
+ * rows used the raw Redis name, so a key literally called `folder:app` and a
+ * folder at `app` produced the same React key.
+ *
+ * The prefix matters because a virtualizer recycles DOM nodes by key: a key
+ * that changes when a sibling is inserted, removed, expanded or collapsed
+ * silently re-points a live node (and its focus, its checkbox state and its
+ * in-flight click) at a different row. `path` and `entry.key` are the row's
+ * own identity, so neither fold nor filter nor scroll can change them.
+ */
+export function keyTreeRowKey(row: KeyTreeRow): string {
+  return row.kind === 'folder' ? `folder:${row.path}` : `key:${row.entry.key}`;
+}
+
 /** Left padding of a row at `depth` (root rows are depth 0). */
 export function rowIndent(depth: number): number {
   return indentOf(depth, INDENT_BASE, INDENT_STEP);

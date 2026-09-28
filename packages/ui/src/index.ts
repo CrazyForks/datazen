@@ -55,6 +55,29 @@ export {
   stepIndex,
   type BranchProbe,
 } from './tree/navigation';
+// The shared tree widget: one virtualization + ARIA + keyboard mechanism, so
+// the host navigator and the driver key browsers stop hand-rolling four copies
+// of it (and stop disagreeing about what a stable row key is).
+export {
+  VirtualTree,
+  firstVisibleTreeIndex,
+  type VirtualTreeItemAria,
+  type VirtualTreeNavigation,
+  type VirtualTreeOverlayContext,
+  type VirtualTreeProps,
+  type VirtualTreeRowContext,
+} from './tree/VirtualTree';
+export {
+  planTreeNavigation,
+  type TreeKeyEventLike,
+  type TreeNavAction,
+  type TreeNavCommand,
+  type TreeNavMove,
+  type TreeNavNone,
+  type TreeNavPlan,
+  type TreeNavPlanInput,
+  type TreeNavRowAction,
+} from './tree/keyboard';
 // Shared "copy to clipboard" confirmation. Exported so the host, drivers and
 // extensions converge on the same optimistic-rollback semantics instead of
 // re-implementing a 1.5s `setCopied(true)` / `setTimeout` pair per call site.
