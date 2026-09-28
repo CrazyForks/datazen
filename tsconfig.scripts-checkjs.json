@@ -9,7 +9,7 @@
     "It is deliberately NOT wired into `pnpm typecheck` or into CI: a permanently",
     "failing command teaches people to ignore it. `pnpm typecheck:scripts:checkjs`",
     "is opt-in and reports the count; see",
-    "docs/development/coordination/tracks/scripts-gate/progress.md for the",
+    "docs/development/interaction-and-testing-principles.md for the",
     "measurement recorded when this config was added.",
     "",
     "What IS enforced is tsconfig.scripts.json: the 23 .ts test files that guard",

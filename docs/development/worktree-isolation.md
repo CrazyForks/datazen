@@ -1,7 +1,7 @@
 # Worktree 隔离边界
 
 > 本文只回答一件事：**多个子代理各自在 worktree 里开发，为什么合并阶段仍会互相影响。**
-> 角色模型见 [README.md](README.md)，派单与写锁见 [coordinator.md](coordinator.md)，子代理红线见 [coder.md](coder.md)。
+> 本文只讲 git 与 worktree 的实测行为，不含任何轨道台账或进度约定。
 
 ## 1. 隔离的是工作树，不是仓库
 
@@ -89,7 +89,7 @@ git worktree remove --force /tmp/<name>
 
 ## 5. 红线补充
 
-在 [coder.md](coder.md) 既有红线之外：
+在下列红线之外：
 
 - 禁止 `git branch -f`、`git update-ref`、`git worktree remove`、`git gc`——它们作用于共享状态。
 - 禁止在 worktree 内 `git checkout` **他人分支**；需要别人的产物时读对方的 worktree 绝对路径。

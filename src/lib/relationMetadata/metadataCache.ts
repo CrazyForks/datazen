@@ -449,7 +449,7 @@ export function createMetadataCache(deps: MetadataCacheDeps = {}): MetadataCache
  * dimension, mirroring `src/stores/paneKeys.ts`) or make the cache reference
  * counted per pane and tear a session down when its last pane closes. Until then
  * only one pane per tab may exist, so this hazard is currently unreachable.
- * See `docs/development/coordination/tracks/pane-layout/progress.md` §三.
+ * Only one pane per tab may exist today, so the cache is keyed by session.
  */
 export const metadataCache = createMetadataCache({
   subscribeInvalidation: subscribeSchemaInvalidation,

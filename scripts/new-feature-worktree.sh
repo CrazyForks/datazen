@@ -580,7 +580,7 @@ printf '轨道就绪。代理简报必须写明:\n'
 printf '  - 工作目录 %s（禁止修改主检出与其他 worktree）\n' "$WT"
 printf '  - 环境注意三件套: Grep 工具搜索(禁 bash 全仓 grep) / CARGO_TARGET_DIR 策略 / 禁 add 未跟踪文档\n'
   printf '  - 进度管理: 不写进度台账或缺陷清单文件，结论直接落到代码、测试与 docs/ 正式文档\n'
-printf '  - 活性与死亡恢复协议见 docs/development/subagent/README.md\n'
+printf '  - worktree 隔离边界见 docs/development/worktree-isolation.md\n'
 if [ "${#SK_NAME[@]}" -gt 0 ]; then
   printf '\n如需彻底清理本轨道（确认无用后）：\n'
   printf '  git -C %s worktree remove --force %s\n' "$MAIN" "$WT"
