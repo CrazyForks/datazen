@@ -31,10 +31,19 @@ export type TreeNavAction =
   | 'refresh'
   | 'clear';
 
-/** The subset that resolves to a destination row index. */
+/**
+ * The caret moves to `index` and nothing is done to that row.
+ *
+ * `action` records which keystroke asked, not what happens to the row. It
+ * includes the row-scoped keys because a re-seed is one: pressing Enter with
+ * nothing active lands the caret on the first navigable row and deliberately
+ * does *not* open it. See the re-seed branch in `planTreeNavigation` — the key
+ * browser has a test pinning exactly that, and "act on whatever the caret just
+ * happened to land on" is not a thing either tree wants.
+ */
 export interface TreeNavMove {
   kind: 'move';
-  action: 'next' | 'previous' | 'expand' | 'fold';
+  action: 'next' | 'previous' | 'expand' | 'fold' | 'activate';
   index: number;
 }
 
@@ -125,10 +134,24 @@ export function planTreeNavigation<R>(input: TreeNavPlanInput<R>): TreeNavPlan {
     return { kind: 'move', action, index: landed };
   }
 
-  // expand / fold / activate are row-scoped: with no active row there is
-  // nothing for the keystroke to mean, and guessing one would move the caret
-  // out of nowhere.
-  if (from < 0) return { kind: 'none' };
+  // expand / fold / activate are row-scoped: they need a row to act on. That
+  // row is the active one, and the active one has to be *navigable* — a
+  // breadcrumb is painted but is not something ↑/↓ should ever land on, and a
+  // row whose subtree was filtered away underneath it is gone. In both cases
+  // the keystroke re-seeds the caret onto the first navigable row rather than
+  // guessing: moving to "somewhere plausible" is worse than moving to the one
+  // row the user can definitely act on.
+  //
+  // The re-seed moves and stops. It does not then perform the key's own action
+  // on the row it just landed on, so Enter on an unfocused tree enters the
+  // list instead of opening its first key — pinned by
+  // `keyTreeTesterCoverage.test.tsx` ("→ / ← / Enter with no active row enter
+  // the list instead of acting on nothing"). Acting on a row the user never
+  // chose is the failure mode this guard exists to prevent.
+  if (from < 0 || !isNavigable(from)) {
+    const first = input.nextNavigableIndex(0, 1);
+    return first < 0 ? { kind: 'none' } : { kind: 'move', action, index: first };
+  }
   const row = input.rowAt(from);
 
   if (action === 'expand') {

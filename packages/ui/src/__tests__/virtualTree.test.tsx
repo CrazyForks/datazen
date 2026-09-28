@@ -24,7 +24,11 @@ const virtualWindow = vi.hoisted(() => ({ offset: 0, size: 20 }));
  * suites in this repo mock it. A shell that trusted it would paint index keys.
  */
 vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: (opts: { count: number; estimateSize: () => number; getItemKey: (i: number) => string }) => {
+  useVirtualizer: (opts: {
+    count: number;
+    estimateSize: () => number;
+    getItemKey: (i: number) => string;
+  }) => {
     const size = opts.estimateSize();
     const first = Math.max(0, virtualWindow.offset);
     const last = Math.min(opts.count, first + virtualWindow.size);
@@ -116,7 +120,9 @@ describe('VirtualTree · virtualization', () => {
     virtualWindow.size = 2;
     const { container, rerender } = setup(fixture());
     const ids = () =>
-      [...container.querySelectorAll<HTMLElement>('[data-testid^="row-"]')].map((el) => el.dataset.testid);
+      [...container.querySelectorAll<HTMLElement>('[data-testid^="row-"]')].map(
+        (el) => el.dataset.testid,
+      );
     expect(ids()).toEqual(['row-app', 'row-app:user']);
     virtualWindow.offset = 5;
     rerender(
@@ -157,7 +163,15 @@ describe('VirtualTree · key stability', () => {
     const rendered = wrappers.map((w) => w.textContent);
     // React strips `key` from the DOM, so prove it structurally: reordering
     // the list must carry each row's own identity with it.
-    expect(rendered).toEqual(['app', 'app:user', 'app:user:1', 'app:user:2', 'app:cfg', 'cache', 'cache:hit']);
+    expect(rendered).toEqual([
+      'app',
+      'app:user',
+      'app:user:1',
+      'app:user:2',
+      'app:cfg',
+      'cache',
+      'cache:hit',
+    ]);
 
     const reversed = [...fixture()].reverse();
     const { container: c2 } = setup(reversed);
@@ -191,12 +205,22 @@ describe('VirtualTree · key stability', () => {
     expect(container.querySelector('[data-testid="row-app:cfg"]')).toBe(third);
   });
 
-  it('exposes no index parameter on getKey, so a positional key cannot compile', () => {
-    // Behavioural stand-in for the type-level guarantee: a consumer that
-    // ignores the row and keys by position breaks as soon as the list shifts.
-    const rows = fixture();
-    const positional = (index: number) => `row-${index}`;
-    expect(positional(2)).not.toBe((r: Row) => r.id(rows[2]!));
+  it('uses getKey(row) verbatim as the React key, and nothing else', () => {
+    // React keys are not observable in the DOM, so observe them through React
+    // itself: two rows whose `getKey` collides make React report the collision.
+    // If the shell keyed on the virtualizer's index (which every in-repo mock
+    // reports as `key: index`) the list below would be keyed "0" and "1" and
+    // stay silent — so this case distinguishes the two key sources directly.
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args);
+    });
+    try {
+      setup([row('same', 0), row('same', 1)]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(errors.flat().join(' ')).toContain('same');
   });
 });
 
@@ -220,7 +244,9 @@ describe('VirtualTree · ARIA semantics', () => {
   it('omits aria-expanded on leaves and leaves it to the consumer on branches', () => {
     const { container } = setup(fixture(), {
       getRowAria: (r: Row) =>
-        r.hasChildren ? { role: 'treeitem', 'aria-level': ariaLevelOf(r), 'aria-expanded': r.expanded } : { role: 'treeitem', 'aria-level': ariaLevelOf(r) },
+        r.hasChildren
+          ? { role: 'treeitem', 'aria-level': ariaLevelOf(r), 'aria-expanded': r.expanded }
+          : { role: 'treeitem', 'aria-level': ariaLevelOf(r) },
     });
     const items = [...container.querySelectorAll('[role="treeitem"]')];
     const byId = (id: string) => items.find((el) => el.textContent === id)!;
@@ -278,8 +304,8 @@ describe('VirtualTree · keyboard navigation', () => {
         getKey={(r) => r.id}
         isBranch={isBranch}
         rowHeight={28}
-        tabIndex={0}
         className="tree"
+        containerProps={{ tabIndex: 0 }}
         navigation={{
           mapKey: (e) => NAV_KEYS[e.key] ?? null,
           activeIndex,
@@ -444,6 +470,7 @@ describe('planTreeNavigation · pure transition', () => {
       step: (from: number, d: 1 | -1) => stepIndex(from, d, 3),
       isBranch: (r) => r.id === '1',
       isExpanded: (i) => i === 1,
+      isNavigable: () => true,
       firstChildIndex: (i) => (i === 1 ? 2 : -1),
       parentIndexOf: (i) => (i > 0 ? 1 : -1),
       nextNavigableIndex: (from, direction) => {
@@ -453,7 +480,7 @@ describe('planTreeNavigation · pure transition', () => {
         return -1;
       },
       clamp: (i) => (i < 0 ? -1 : Math.min(i, 2)),
-      rowAt: (i) => ({ id: String(i) } as Row),
+      rowAt: (i) => ({ id: String(i) }) as Row,
     };
     return planTreeNavigation<Row>({ ...base, ...over });
   }
@@ -507,6 +534,64 @@ describe('planTreeNavigation · pure transition', () => {
 
   it('clamps a stale activeIndex into the painted range before moving', () => {
     expect(plan({ activeIndex: 99 })).toEqual({ kind: 'move', action: 'next', index: 2 });
+  });
+
+  /*
+   * Row-scoped keys on a list whose active row is not navigable.
+   *
+   * This is not a corner case invented for the planner: the Redis key browser
+   * back-fills pattern breadcrumbs as decoration, and a filter applied while a
+   * row was active can leave `activeIndex` pointing at one. `keyTreeBreadcrumb
+   * KeyboardJourney.test.tsx` is the executable version of the same situation.
+   * Guessing a destination from a row that is not there is worse than the one
+   * destination a user can definitely act on, so the key re-seeds at the top.
+   */
+  it('re-seeds a row-scoped key when nothing is active yet', () => {
+    // All three, including `activate`: the re-seed moves the caret and stops.
+    // Enter on a tree with no selection enters the list; it does not open the
+    // first key. `keyTreeTesterCoverage.test.tsx` pins the same outcome against
+    // the real key browser, so the planner and the driver agree by construction.
+    for (const action of ['expand', 'fold', 'activate'] as const) {
+      expect(plan({ action, activeIndex: -1 })).toEqual({ kind: 'move', action, index: 0 });
+    }
+  });
+
+  it('re-seeds a row-scoped key when the active row is decoration, not a destination', () => {
+    // Row 0 is a breadcrumb; row 1 is the first row a user can land on.
+    const isNavigable = (i: number) => i !== 0;
+    for (const action of ['expand', 'fold', 'activate'] as const) {
+      expect(plan({ action, activeIndex: 0, isNavigable })).toEqual({
+        kind: 'move',
+        action,
+        index: 1,
+      });
+    }
+  });
+
+  it('still acts on the active row when there is one', () => {
+    // The re-seed must not swallow Enter: with a real selection it activates
+    // that row, exactly as before.
+    expect(plan({ action: 'activate', activeIndex: 2 })).toEqual({
+      kind: 'activate',
+      action: 'activate',
+      index: 2,
+    });
+  });
+
+  it('has nowhere to re-seed to when every row is decoration', () => {
+    for (const action of ['expand', 'fold', 'activate'] as const) {
+      expect(plan({ action, activeIndex: 0, isNavigable: () => false })).toEqual({ kind: 'none' });
+    }
+  });
+
+  it('does not re-seed forward-motion: ↑/↓ keep their own walk', () => {
+    // A breadcrumb at the top must not swallow ↓ into a re-seed — ↓ is defined
+    // as "one step from here", and the re-seed is a fallback, not a shortcut.
+    expect(plan({ action: 'next', activeIndex: -1, isNavigable: (i) => i !== 0 })).toEqual({
+      kind: 'move',
+      action: 'next',
+      index: 1,
+    });
   });
 });
 
