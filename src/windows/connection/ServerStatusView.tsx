@@ -17,6 +17,7 @@ import {
 import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { CopyableError } from '../../components/ui/CopyableError';
+import { Tabs } from '../../components/ui/Tabs';
 import { ChartCanvas } from '../../components/chart/ChartCanvas';
 import { cn } from '../../lib/cn';
 import { driverCommands } from '../../commands/driver';
@@ -729,32 +730,33 @@ export function ServerStatusView({
         </Button>
       </div>
 
-      <div
+      {/* Bar-only: the three view bodies below are siblings of this strip, not
+          panels it owns, so `Tabs` renders the tablist alone. The tab semantics,
+          the roving tabindex and arrow/Home/End come from the shared shell —
+          this bar previously had `role`/`aria-selected` but no keyboard support
+          at all, so the arrows were dead until a tab was clicked first. */}
+      <Tabs
+        items={SUB_TABS.map((tab) => ({
+          id: tab.id,
+          label: tab.label,
+          testId: `server-view-tab-${tab.id}`,
+        }))}
+        activeId={viewTab}
+        onChange={(id) => {
+          // Narrow through the list rather than casting: `Tabs` hands back a
+          // bare string and only a known sub-tab id can be a valid view.
+          const next = SUB_TABS.find((tab) => tab.id === id);
+          if (next) setViewTab(next.id);
+        }}
         className="flex shrink-0 items-center border-b border-edge bg-surface-alt"
-        role="tablist"
-        aria-label={t('serverStatus.dashboardTitle')}
-      >
-        <div className="flex min-w-0 flex-1">
-          {SUB_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={viewTab === tab.id}
-              className={cn(
-                'relative px-5 py-2 text-[13px] transition-colors',
-                viewTab === tab.id
-                  ? 'bg-surface text-fg font-medium'
-                  : 'text-fg-secondary hover:text-fg',
-              )}
-              onClick={() => setViewTab(tab.id)}
-              data-testid={`server-view-tab-${tab.id}`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
+        getTabClassName={({ selected }) =>
+          cn(
+            'relative px-5 py-2 text-[13px] transition-colors',
+            selected ? 'bg-surface text-fg font-medium' : 'text-fg-secondary hover:text-fg',
+          )
+        }
+        ariaLabel={t('serverStatus.dashboardTitle')}
+      />
 
       <div className="min-h-0 flex-1 overflow-auto p-4">
         {viewTab === 'dashboard' && (

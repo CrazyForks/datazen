@@ -1,5 +1,4 @@
-import { useI18n } from '@datazen/ui';
-import { cn } from '@datazen/ui';
+import { Tabs, cn, useI18n } from '@datazen/ui';
 
 export type SearchMode = 'key' | 'value' | 'all';
 
@@ -23,34 +22,37 @@ export interface SearchModeTabsProps {
  * `key` / `value` / `all` are already unambiguous words. The selected state is
  * carried by `bg-accent/10 text-accent` plus `aria-selected`, so nothing that
  * identified the scope depended on the icon.
+ *
+ * This strip owns no panel (the key tree is the panel), so it runs `Tabs` in
+ * bar-only mode and keeps the segmented chrome: one `h-7` row, a `border-l`
+ * divider between segments. The tab semantics — `role`, `aria-selected`, the
+ * roving tabindex and arrow/Home/End — come from the shared shell, which is
+ * where the keyboard support this switcher lacked now lives.
  */
 export function SearchModeTabs({ mode, onChange }: SearchModeTabsProps) {
   const { t } = useI18n();
   return (
-    <div
+    <Tabs
+      items={MODES.map(({ value, labelKey }) => ({
+        id: value,
+        label: t(labelKey as 'redis.search.modeKey'),
+        testId: `redis-search-mode-${value}`,
+      }))}
+      activeId={mode}
+      onChange={(id) => {
+        // Narrow through the list rather than casting — see JsonModeBar.
+        const next = MODES.find((entry) => entry.value === id);
+        if (next) onChange(next.value);
+      }}
       className="flex overflow-hidden rounded-md border border-edge"
-      role="tablist"
-      data-testid="redis-search-mode-tabs"
-    >
-      {MODES.map(({ value, labelKey }, idx) => (
-        <button
-          key={value}
-          type="button"
-          role="tab"
-          aria-selected={mode === value}
-          data-testid={`redis-search-mode-${value}`}
-          onClick={() => onChange(value)}
-          className={cn(
-            'flex h-7 items-center px-2 text-xs transition-colors',
-            idx > 0 && 'border-l border-edge',
-            mode === value
-              ? 'bg-accent/10 text-accent'
-              : 'text-fg-secondary hover:bg-surface-raised',
-          )}
-        >
-          {t(labelKey as 'redis.search.modeKey')}
-        </button>
-      ))}
-    </div>
+      getTabClassName={({ index, selected }) =>
+        cn(
+          'flex h-7 items-center px-2 text-xs transition-colors',
+          index > 0 && 'border-l border-edge',
+          selected ? 'bg-accent/10 text-accent' : 'text-fg-secondary hover:bg-surface-raised',
+        )
+      }
+      testId="redis-search-mode-tabs"
+    />
   );
 }
