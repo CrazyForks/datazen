@@ -3,16 +3,19 @@ import type { ConnectionMatch } from '../../../lib/connectionLocator';
 import type { ConnectionOpenTarget } from '../../../lib/connectionViews/types';
 import type { SchemaTreeCategoryDef } from '../schema-tree/schemaTreeCategories';
 import type { TableContextInput, TableSqlActionKind } from '../../../lib/tableSqlActions';
+import type { TreeRowLevel } from '@datazen/ui';
 
-export type UnifiedRow =
-  | {
-      type: 'section';
-      section: 'pinned' | 'recent';
-      displayName: string;
-      count: number;
-      expanded: boolean;
-    }
-  | { type: 'group'; groupName: string; displayName: string; count: number; expanded: boolean }
+/**
+ * Every row that sits inside a nesting ladder: where it is *painted*, and
+ * optionally where it is *announced*.
+ *
+ * These two are not the same number, and they used to disagree — the renderer
+ * subtracted a level for a search while the builder painted the unchanged
+ * depth, so the rule that made `aria-level` match the visible parent lived in
+ * the component. `levelDepth` moves that decision onto the row that owns it;
+ * `ariaLevelOf` from `@datazen/ui` is then the only conversion in the tree.
+ */
+type DepthBearing =
   | {
       type: 'connection';
       conn: ConnectionConfig;
@@ -93,7 +96,35 @@ export type UnifiedRow =
       key: string;
       connectionId: string;
       dbSessionId: string;
+    };
+
+/**
+ * `TreeRowLevel` makes `levelDepth` optional so that a tree which never shifts
+ * its levels can leave it out. The navigator always shifts them — a search
+ * removes exactly one rung — so here it is required: a row that forgets to
+ * announce its level would silently fall back to its painted depth and
+ * over-nest by one under a search, which is the drift this contract exists to
+ * prevent. Building it from the shared type keeps the two in step.
+ */
+type Announced = Required<Pick<TreeRowLevel, 'depth' | 'levelDepth'>>;
+
+export type UnifiedRow =
+  /**
+   * A `section` and a `group` are the tree's roots: they have no parent to be
+   * nested under, so they carry no depth and announce at
+   * `TREE_TOP_LEVEL`. They are siblings of each other by construction —
+   * `buildFlatRows` emits a `section` XOR a `group`, never one inside the
+   * other.
+   */
+  | {
+      type: 'section';
+      section: 'pinned' | 'recent';
+      displayName: string;
+      count: number;
+      expanded: boolean;
     }
+  | { type: 'group'; groupName: string; displayName: string; count: number; expanded: boolean }
+  | (DepthBearing & Announced)
   | { type: 'empty-group'; groupName?: string }
   | { type: 'no-connections' };
 

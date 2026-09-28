@@ -1,8 +1,34 @@
+import { effectiveExpanded, searchedRowLevels } from '@datazen/ui';
 import { isLeaf, pathKey, type SqlNamespace } from '../../../lib/sqlNamespace';
 import { escapeIdent } from '../../../lib/databaseTypes';
 import type { DatabaseTypeMeta } from '../../../lib/databaseMeta';
 import type { ConnectionConfig, TableInfo } from '../../../types';
 import type { UnifiedRow } from './types';
+
+/**
+ * The depth every child of a connection is painted at — databases, namespace
+ * branches, and their loading placeholders alike.
+ *
+ * A connection is emitted at depth 1 beneath its section/group header, or at
+ * depth 0 when a search suppresses that header. Its children do not move with
+ * it: they always start here, so a search removes exactly one level of parent
+ * between a connection and its databases.
+ *
+ * It lives here rather than in `buildFlatRows` because `flattenNamespaceTree`
+ * builds rows of the same ladder and would otherwise have to import from a
+ * module that already imports it.
+ */
+export const CONNECTION_CHILD_DEPTH = 2;
+
+/**
+ * The depth a database's children are painted at — its schema row, and the
+ * placeholders shown while it loads.
+ *
+ * Derived rather than declared, so the ladder has a single root: move
+ * `CONNECTION_CHILD_DEPTH` and every level below it follows. A database with
+ * no schemas puts its categories here instead of one level deeper.
+ */
+export const DATABASE_CHILD_DEPTH = CONNECTION_CHILD_DEPTH + 1;
 
 /**
  * Multi-DB tree when the driver supports it, unless connection.database is a
@@ -123,6 +149,8 @@ export function flattenNamespaceTree(
 ): void {
   if (isLeaf(tree)) return;
 
+  const searching = query !== '';
+  const levels = (depth: number) => searchedRowLevels(depth, CONNECTION_CHILD_DEPTH, searching);
   const entries = Object.entries(tree).sort(([a], [b]) => a.localeCompare(b));
   for (const [name, child] of entries) {
     if (query && !name.toLowerCase().includes(query)) {
@@ -138,7 +166,7 @@ export function flattenNamespaceTree(
       rows.push({
         type: 'namespace-node',
         name,
-        depth: baseDepth,
+        ...levels(baseDepth),
         expanded: false,
         isLeaf: true,
         leafKind: tableTypeMap.get(name) ?? 'table',
@@ -148,11 +176,11 @@ export function flattenNamespaceTree(
         dbSessionId,
       });
     } else {
-      const expanded = expandedDbs.has(nodeKey) || !!query;
+      const expanded = effectiveExpanded(expandedDbs.has(nodeKey), searching);
       rows.push({
         type: 'namespace-node',
         name,
-        depth: baseDepth,
+        ...levels(baseDepth),
         expanded,
         isLeaf: false,
         segments,
@@ -164,7 +192,7 @@ export function flattenNamespaceTree(
         const childEntries = Object.entries(child);
         const pathLoaded = loadedPaths.has(pathKey(segments));
         if (childEntries.length === 0 && !pathLoaded && !query) {
-          rows.push({ type: 'db-loading', depth: baseDepth + 1 });
+          rows.push({ type: 'db-loading', ...levels(baseDepth + 1) });
         } else {
           flattenNamespaceTree(
             child,

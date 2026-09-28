@@ -1,6 +1,14 @@
 import { TREE_TOP_LEVEL, type TreeRowLevel } from './types';
 
 /**
+ * A depth pair with both numbers pinned: a row built by {@link rowLevels} or
+ * {@link searchedRowLevels} always announces a level, so the builders below can
+ * say so and a caller that forgets to spread the result into its row fails to
+ * compile rather than silently over-nesting by one.
+ */
+export type ResolvedRowLevel = Required<TreeRowLevel>;
+
+/**
  * Level and indent arithmetic for tree rows.
  *
  * This is the single source of truth for "what level does a screen reader hear
@@ -29,7 +37,7 @@ export function ariaLevelOf(row: TreeRowLevel): number {
  * `hiddenLevels` is clamped at 0 so a caller that over-counts can never push a
  * row below level 1.
  */
-export function rowLevels(painted: number, hiddenLevels = 0): TreeRowLevel {
+export function rowLevels(painted: number, hiddenLevels = 0): ResolvedRowLevel {
   return { depth: painted, levelDepth: Math.max(0, painted - Math.max(0, hiddenLevels)) };
 }
 
@@ -53,7 +61,7 @@ export function searchedRowLevels(
   painted: number,
   firstHiddenDepth: number,
   searching: boolean,
-): TreeRowLevel {
+): ResolvedRowLevel {
   const hidden = searching && painted >= firstHiddenDepth ? 1 : 0;
   return rowLevels(painted, hidden);
 }

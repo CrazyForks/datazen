@@ -31,7 +31,13 @@ export { LimitationsDialog, type LimitationsDialogProps } from './LimitationsDia
 // objects into the same pre-order row list and used to answer these questions
 // separately.
 export { TREE_TOP_LEVEL, type TreeRow, type TreeRowLevel, type TreeRowNode } from './tree/types';
-export { ariaLevelOf, indentOf, rowLevels, searchedRowLevels } from './tree/geometry';
+export {
+  ariaLevelOf,
+  indentOf,
+  rowLevels,
+  searchedRowLevels,
+  type ResolvedRowLevel,
+} from './tree/geometry';
 export {
   ancestorIndexes,
   descendantIndexes,
