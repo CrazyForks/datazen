@@ -122,6 +122,13 @@ cargo test -p datazen-ai-api --lib
 - **Basic**：四平台 × basic 驱动（与 PR CI 同套核心驱动，但做完整 `tauri build`）。
 - **All**：四平台 × 全部 path 驱动（**不进 PR CI** 的集成验证点）。
 - **Akulaku**：三平台（Windows / macOS）× 含 git 私有驱动；Secrets 在 GitHub Environment `release`。
+- **更新通道（每个 SKU 各自独立）**：三个 SKU 都产出签名 updater 产物并各自发布清单
+  `latest.json` / `latest-all.json` / `latest-akulaku.json`；构建时按 `matrix.variant`
+  注入该 SKU 自己的 endpoint（`ci-tauri-build.mjs` 以 JSON Merge Patch 覆盖
+  `plugins.updater.endpoints`）。Tauri updater 只按**平台**在清单里查条目、不认 SKU，
+  因此共用一份清单就等于把变体更新成 Basic（丢掉 Basic 不含的驱动）。SKU 名单、清单名
+  与平台集合的唯一来源是 `scripts/release-variants.mjs`；变体清单缺平台即失败，Basic
+  仅告警。详见 [updater.md](./updater.md)。
 
 ### 6.1 构建耗时优化：driver union 预热
 
@@ -135,7 +142,7 @@ driver feature 集变化**：driver crate 和第三方依赖在所有 variant �
 | 唯一写入者 | 只有 `warm-driver-deps` 写该缓存 key；`build` 全部 `save-if: false`。此前同 key 的 3 个 variant 竞争，只有最先结束（恒为最便宜的 basic）能落盘，缓存被永久钉死在 basic 上 |
 | 预热时机 | `rust-cache` 必须在 `with-driver-inject` **之前**（干净工作区），两个 job 的 key 才一致 |
 | 编译范围 | `--lib`：跳过每 variant 各不相同的 LTO 链接与 `generate_context!` 嵌入的 `dist/` |
-| Cargo profile | 统一 `ci-release`（`[profile.ci-release]`，thin LTO）；产物目录随之为 `target/<triple>/ci-release`，`upx-compress` 与 workflow 的路径读取同一 `DATAZEN_BUILD_PROFILE` |
+| Cargo profile | 统一默认 `release` profile（tauri-cli 2.10.1 无 `--profile` 参数，自定义 profile 无法选择）；产物目录为 `target/<triple>/release`，预热与 `build` job 读取同一路径 |
 | 类型检查 | 预热 job 对 union 做一次 `tsc --noEmit`（是各 variant 的严格超集），variant job 以 `DATAZEN_CI_TYPECHECK_ONCE=1` 改用 `pnpm build:bundle`（codegen + Vite，不含 tsc） |
 
 本地 `pnpm build` / `pnpm tauri:build` 不受影响：仍用 `release` profile，仍做完整类型检查。
