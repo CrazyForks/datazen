@@ -1,8 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { CheckCircle2, Clock, Copy, Check, Rows } from 'lucide-react';
 import type { StatementResult } from '../../../types';
 import { useI18n } from '../../../hooks/useI18n';
+import { useCopyFeedback } from '../../../components/ui/useCopyFeedback';
 import { tid } from '../../../lib/tid';
+
+/** How long the "已复制" overlay stays before reverting to "复制". */
+const COPIED_FEEDBACK_MS = 2000;
 
 export interface ExecutionSummaryCardProps {
   result: StatementResult;
@@ -11,14 +15,12 @@ export interface ExecutionSummaryCardProps {
 
 export function ExecutionSummaryCard({ result, statusBar }: Readonly<ExecutionSummaryCardProps>) {
   const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
 
-  const handleCopy = () => {
+  const handleCopy = useCallback(() => {
     if (!result.sql) return;
-    void navigator.clipboard?.writeText(result.sql);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+    copy(result.sql);
+  }, [copy, result.sql]);
 
   const rowsAffectedText =
     result.rowsAffected !== undefined && result.rowsAffected !== null

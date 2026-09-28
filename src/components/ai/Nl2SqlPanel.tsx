@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Sparkles, Trash2, Settings, Square, Copy, Check } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { SqlCodeBlock } from '../SqlCodeBlock';
+import { useCopyFeedback } from '../ui/useCopyFeedback';
 import { useI18n } from '../../hooks/useI18n';
 import { useAiStore } from '../../stores/aiStore';
 import { aiCommands } from '../../commands/ai';
@@ -10,6 +11,9 @@ import { AiInput } from './AiInput';
 import { AiEgressNotice } from './AiEgressNotice';
 import { splitContextItems } from '../../lib/contextItems';
 import type { ContextItem } from '../../types';
+
+/** How long the copy button keeps its check icon before reverting. */
+const COPIED_FEEDBACK_MS = 2000;
 
 interface Nl2SqlPanelProps {
   dbSessionId: string;
@@ -34,9 +38,8 @@ export function Nl2SqlPanel({
   const clearNl2Sql = useAiStore((s) => s.clearNl2Sql);
 
   const [contextItems, setContextItems] = useState<ContextItem[]>([]);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
   const lastWrittenRef = useRef('');
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Write SQL into the editor only when generation finishes (not streaming).
   useEffect(() => {
@@ -78,11 +81,8 @@ export function Nl2SqlPanel({
   const handleCopySql = useCallback(() => {
     const sql = nl2sql.generatedSql;
     if (!sql) return;
-    void navigator.clipboard.writeText(sql);
-    setCopied(true);
-    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
-  }, [nl2sql.generatedSql]);
+    copy(sql);
+  }, [copy, nl2sql.generatedSql]);
 
   // Determine what SQL to show in the preview
   const showPreview = nl2sql.isGenerating || !!nl2sql.generatedSql;

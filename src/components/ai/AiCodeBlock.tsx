@@ -2,10 +2,14 @@ import { useCallback, useState } from 'react';
 import { Check, Copy, Code2, Play, Plus, Maximize2, Minimize2 } from 'lucide-react';
 import { SqlCodeBlock } from '../SqlCodeBlock';
 import { Select } from '../ui/Select';
+import { useCopyFeedback } from '../ui/useCopyFeedback';
 import { useI18n } from '../../hooks/useI18n';
 import { cn } from '../../lib/cn';
 import { isSqlCodeBlock } from '../../lib/aiMessageBlocks';
 import type { SelectOption } from '../ui/Select';
+
+/** How long the copied confirmation stays up before reverting to the copy icon. */
+const COPIED_FEEDBACK_MS = 1500;
 
 const SQL_DIALECTS: readonly SelectOption[] = [
   { value: 'postgresql', label: 'PostgreSQL' },
@@ -39,17 +43,13 @@ export function AiCodeBlock({
   isStreaming = false,
 }: AiCodeBlockProps) {
   const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
   const [fullscreen, setFullscreen] = useState(false);
   const [selectedDialect, setSelectedDialect] = useState(sqlDialect);
   const isSql = isSqlCodeBlock(language, code);
   const label = language || (isSql ? 'sql' : 'code');
 
-  const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }, [code]);
+  const handleCopy = useCallback(() => copy(code), [copy, code]);
 
   const handleRun = useCallback(() => {
     onRunCode?.(code, language || 'sql');

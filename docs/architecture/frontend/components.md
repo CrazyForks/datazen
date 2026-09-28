@@ -975,7 +975,52 @@ S 形绕行。同一套形态实测：**反向边 7/10 → 0/10，跨越 18 → 
 - 支持 `mode` 属性：`file` / `directory` / `save`
 - 已在所有需要路径输入的位置替换（SQLite 数据库路径、备份路径、上下文目录等）
 
-## 10. 开发阶段规划
+## 10. 复制反馈（useCopyFeedback）
+
+`packages/ui/src/useCopyFeedback.ts`（`@datazen/ui` 导出）— 统一的「已复制」确认：
+
+```ts
+const { copied, copy } = useCopyFeedback(feedbackMs); // feedbackMs 必填，无默认值
+```
+
+契约（不得随意更改）：
+
+- **乐观**：点击立刻置位，不等 `navigator.clipboard.writeText` 的 Promise。
+- **失败回滚**：写入被拒则回到「复制」态。
+- **按请求绑定**：`copy()` 自增 `requestId`，迟到的失败既不会抹掉后续成功的标记，
+  也不会动后续调用的定时器。
+- **卸载清理**：组件卸载时 `clearTimeout` 掉未到期的窗口。
+
+第二条是存在的原因：React 18 取消了「卸载后 setState」告警，泄漏的定时器**完全静默**，
+既不报错也不留痕。回归测试因此不比对源码，而是 `spyOn(window, 'setTimeout' /
+'clearTimeout')` 指认出这次点击排的句柄，再断言卸载时该句柄确实到达了
+`clearTimeout`（`src/test/copyFeedbackHarness.ts` 的 `spyOnWindowTimers()`）。
+直接比较 `getTimerCount()` 前后的差值并不可靠——挂载本身也可能排队定时器，卸载会把
+它们一并清掉，那个下降与复制窗口无关。
+
+**多行场景的组合方式**：hook 只返回一个布尔量，行/块 id 仍由调用方自己保存，渲染时
+两者同时成立才算命中（`const copiedRowId = copied ? copiedId : null`）。这样回滚会顺带
+丢掉过期标记，迟到失败不会把标记甩回旧行。
+
+**时长按站点传入，不改默认值**。当前分布：1500ms（`AiCodeBlock`、`WorkflowChatPanel`、
+`ProgressLog`、`QueryErrorPanel`）、2000ms（`SqlPreview`、`ExecutionSummaryCard`、
+`McpSettingsSection`、`McpPromoBar`、`GlobalQueryHistoryDialog`、`RecentQueriesList`、
+`ConnectionWorkspaceHome`）、1200ms（Redis `KeyHeaderRow`——它的 `data-copied` 是驱动
+专属按钮态，窗口本来就是 1200ms，改了就是改用户可见行为）。
+
+**不适用本 hook 的两类站点**（不要硬套）：
+
+1. **不自己写剪贴板**、只通过 `onCopyReport` 之类回调上抛的组件（如
+   `CompareSummary`）。hook 负责**执行**写入，套上去会写两次。
+2. **有降级链**的写入（如 `DDLView` 经 `src/lib/fetchRelationDdl.ts` 的
+   Clipboard API → Tauri `invoke('write_clipboard')` → `document.execCommand`）。
+   hook 无条件走 `navigator.clipboard.writeText`，套上去等于删掉降级路径。
+
+另：原先写作 `navigator.clipboard?.writeText` 的站点，收敛后失去了「无剪贴板则静默跳过」
+这条路径——hook 在 `navigator.clipboard` 不存在时会抛。Tauri 恒为 secure context，
+且这与既有 3 个 Wave-1 组件一致，属于统一口径而非回退。
+
+## 11. 开发阶段规划
 
 | 阶段 | 内容 | 输出 |
 |------|------|------|
