@@ -9,11 +9,14 @@ import {
   buildDataTableContextMenuItems,
   formatRowAsSqlInsert,
   formatRowAsSqlUpdate,
+  formatRowsAsSqlInsert,
+  formatRowsAsSqlUpdate,
   resolveDataTableCellFromEvent,
   resolveDataTableHeaderColFromEvent,
   rowToNamedRecord,
   serializeDataTableColumnValues,
   serializeDataTableRowsAsCsv,
+  serializeDataTableRowsAsJson,
   serializeDataTableRowsAsTsv,
 } from '../../lib/dataTableContextMenu';
 import { showNativeContextMenu } from '../../lib/nativeContextMenu';
@@ -221,6 +224,17 @@ export function DataTable({
         .filter((r): r is unknown[] => Array.isArray(r));
       const hasSelectedRows = selectedDataRows.length > 0;
       const hasCellContext = hit != null && Array.isArray(hitRow);
+      /**
+       * The right-click landed inside a selection of more than one row: the menu
+       * must act on the whole selection, not just the clicked row, so every
+       * single-row / single-cell action is dropped below.
+       */
+      const multiRowSelection =
+        hasCellContext && hit != null && selectedRows.size > 1 && selectedRows.has(hit.rowIndex);
+      /** Row the cell-scoped actions operate on; null in selection mode. */
+      const actionRow = hasCellContext && hitRow && !multiRowSelection ? hitRow : null;
+      /** Rows the selection-scoped actions operate on. */
+      const selectionRowActions = multiRowSelection || !hasCellContext ? selectedDataRows : [];
       const canFilterByValue = !loading && hasCellContext && !!onAddFilter && !!hit;
       const setNullAllowed = enableSetNull ?? !!onCellEdit;
       const canSetNull = hasCellContext && setNullAllowed && !!onCellEdit && !!hit;
@@ -228,12 +242,7 @@ export function DataTable({
       const canDelete =
         !!onDeleteRows && (primaryKeyColumns?.length ?? 0) > 0 && deleteIndices.length > 0;
 
-      const csvRows =
-        hasSelectedRows && !hasCellContext
-          ? selectedDataRows
-          : hasCellContext && hitRow
-            ? [hitRow]
-            : selectedDataRows;
+      const csvRows = actionRow ? [actionRow] : selectedDataRows;
       const canCopyCsv = csvRows.length > 0;
 
       const copyText = (text: string) => {
@@ -254,7 +263,10 @@ export function DataTable({
             copyColumnData: t('dataTable.copyColumnData'),
             setNull: t('dataTable.setNull'),
             filterByValue: t('dataTable.filterByValue'),
-            copySelectedRows: `${t('common.copy')} ${t('export.selectedRows')}`,
+            copySelectedRows:
+              selectedRows.size > 1
+                ? `${t('common.copy')} ${t('export.selectedRows')} (${selectedRows.size})`
+                : `${t('common.copy')} ${t('export.selectedRows')}`,
             deleteRow:
               deleteIndices.length > 1
                 ? `${t('dataTable.deleteRow')} (${deleteIndices.length})`
@@ -265,44 +277,68 @@ export function DataTable({
                 : t('export.export'),
           },
           handlers: {
-            onCopy: hasCellContext
+            onCopy:
+              hasCellContext && !multiRowSelection
+                ? () => {
+                    copyText(cellTextForCopy);
+                  }
+                : undefined,
+            onCopyRow: actionRow
               ? () => {
-                  copyText(cellTextForCopy);
+                  copyText(serializeDataTableRowsAsTsv([actionRow]));
                 }
               : undefined,
-            onCopyRow:
-              hasCellContext && hitRow
+            onCopyAsJson: actionRow
+              ? () => {
+                  copyText(JSON.stringify(rowToNamedRecord(columnNames, actionRow), null, 2));
+                }
+              : selectionRowActions.length > 0
                 ? () => {
-                    copyText(serializeDataTableRowsAsTsv([hitRow]));
+                    copyText(serializeDataTableRowsAsJson(columnNames, selectionRowActions));
                   }
                 : undefined,
-            onCopyAsJson:
-              hasCellContext && hitRow
-                ? () => {
-                    copyText(JSON.stringify(rowToNamedRecord(columnNames, hitRow), null, 2));
-                  }
-                : undefined,
-            onCopyAsSqlInsert:
-              hasCellContext && hitRow
+            onCopyAsSqlInsert: actionRow
+              ? () => {
+                  copyText(
+                    formatRowAsSqlInsert(
+                      exportTableName || 'table',
+                      columnNames,
+                      actionRow,
+                      databaseType as DatabaseType,
+                    ),
+                  );
+                }
+              : selectionRowActions.length > 0
                 ? () => {
                     copyText(
-                      formatRowAsSqlInsert(
+                      formatRowsAsSqlInsert(
                         exportTableName || 'table',
                         columnNames,
-                        hitRow,
+                        selectionRowActions,
                         databaseType as DatabaseType,
                       ),
                     );
                   }
                 : undefined,
-            onCopyAsUpdate:
-              hasCellContext && hitRow
+            onCopyAsUpdate: actionRow
+              ? () => {
+                  copyText(
+                    formatRowAsSqlUpdate(
+                      exportTableName || 'table',
+                      columnNames,
+                      actionRow,
+                      primaryKeyColumns,
+                      databaseType as DatabaseType,
+                    ),
+                  );
+                }
+              : selectionRowActions.length > 0
                 ? () => {
                     copyText(
-                      formatRowAsSqlUpdate(
+                      formatRowsAsSqlUpdate(
                         exportTableName || 'table',
                         columnNames,
-                        hitRow,
+                        selectionRowActions,
                         primaryKeyColumns,
                         databaseType as DatabaseType,
                       ),
@@ -326,7 +362,7 @@ export function DataTable({
                   }
                 : undefined,
             onSetNull:
-              canSetNull && hit
+              canSetNull && !multiRowSelection && hit
                 ? () => {
                     onCellEdit?.(hit.rowIndex, hit.columnName, null);
                   }
@@ -360,6 +396,7 @@ export function DataTable({
           hasCellContext,
           hasHeaderContext: !!hitHeaderCol,
           hasSelectedRows,
+          multiRowSelection,
           exportEnabled,
           canFilterByValue,
           canSetNull,

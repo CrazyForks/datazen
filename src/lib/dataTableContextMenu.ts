@@ -45,6 +45,13 @@ export type BuildDataTableContextMenuArgs = {
   hasHeaderContext?: boolean;
   /** One or more rows are selected. */
   hasSelectedRows?: boolean;
+  /**
+   * The menu targets the whole row selection rather than the right-clicked
+   * cell: several rows are selected and the click landed inside that selection.
+   * Single-cell / single-row actions are then omitted, because they cannot act
+   * on more than one row.
+   */
+  multiRowSelection?: boolean;
   /** Export action available. */
   exportEnabled?: boolean;
   /** Filter-by-value available (needs cell context + filter handler). */
@@ -93,6 +100,15 @@ export function serializeDataTableRowsAsCsv(columnNames: string[], rows: unknown
   const header = columnNames.map(escapeCsvCell).join(',');
   const body = rows.map((row) => columnNames.map((_, i) => escapeCsvCell(row[i])).join(','));
   return [header, ...body].join('\n');
+}
+
+/** Serialize rows as a pretty-printed JSON array of named records. */
+export function serializeDataTableRowsAsJson(columnNames: string[], rows: unknown[][]): string {
+  return JSON.stringify(
+    rows.map((row) => rowToNamedRecord(columnNames, row)),
+    null,
+    2,
+  );
 }
 
 /** Build a JSON object row from column names + cell values. */
@@ -192,6 +208,29 @@ export function formatRowAsSqlDelete(
   return `DELETE FROM ${quoteIdent(tableName, dialect)} WHERE ${where};`;
 }
 
+/** One `INSERT` statement per row (joined by newlines). */
+export function formatRowsAsSqlInsert(
+  tableName: string,
+  columnNames: string[],
+  rows: unknown[][],
+  dialect?: DatabaseType,
+): string {
+  return rows.map((row) => formatRowAsSqlInsert(tableName, columnNames, row, dialect)).join('\n');
+}
+
+/** One `UPDATE` statement per row (joined by newlines). */
+export function formatRowsAsSqlUpdate(
+  tableName: string,
+  columnNames: string[],
+  rows: unknown[][],
+  primaryKeyColumns?: string[],
+  dialect?: DatabaseType,
+): string {
+  return rows
+    .map((row) => formatRowAsSqlUpdate(tableName, columnNames, row, primaryKeyColumns, dialect))
+    .join('\n');
+}
+
 /**
  * Resolve which cell was targeted by a contextmenu event.
  * Expects VirtualBody cells to set `data-dt-row` / `data-dt-col`.
@@ -249,6 +288,7 @@ export function buildDataTableContextMenuItems(
     hasCellContext = false,
     hasHeaderContext = false,
     hasSelectedRows = false,
+    multiRowSelection = false,
     exportEnabled = false,
     canFilterByValue = false,
     canSetNull = false,
@@ -271,7 +311,7 @@ export function buildDataTableContextMenuItems(
     return headerItems;
   }
 
-  if (hasCellContext) {
+  if (hasCellContext && !multiRowSelection) {
     const frequent = push(
       item('copy', labels.copy, handlers.onCopy),
       item('copy-row', labels.copyRow, handlers.onCopyRow),
@@ -314,21 +354,45 @@ export function buildDataTableContextMenuItems(
     return out;
   }
 
-  const moreActions = push(
-    hasSelectedRows
-      ? item('copy-selected-rows', labels.copySelectedRows, handlers.onCopySelectedRows)
+  // Selection-scoped layout: either the right-click landed inside a multi-row
+  // selection, or it landed on empty space while rows are selected. Everything
+  // here acts on the whole selection, so single-cell / single-row-only items
+  // (copy cell, copy row, set NULL) are deliberately omitted and the primary
+  // "copy" is the whole selection.
+  const frequent = push(
+    item('copy-selected-rows', labels.copySelectedRows, handlers.onCopySelectedRows),
+    canFilterByValue
+      ? item('filter-by-value', labels.filterByValue, handlers.onFilterByValue)
       : null,
-    hasSelectedRows ? item('copy-as-csv', labels.copyAsCsv, handlers.onCopyAsCsv) : null,
   );
 
-  // No cell hit: keep Export at the root and group selection copy actions.
-  const frequent = push(
+  const danger =
     canDelete && hasSelectedRows
-      ? item('delete-row', labels.deleteRow, handlers.onDeleteRow)
-      : null,
-    exportEnabled ? item('export', labels.export, handlers.onExport) : null,
+      ? push(item('delete-row', labels.deleteRow, handlers.onDeleteRow))
+      : [];
+
+  const moreActions = push(
+    item('copy-as-csv', labels.copyAsCsv, handlers.onCopyAsCsv),
+    item('copy-as-json', labels.copyAsJson, handlers.onCopyAsJson),
+    item('copy-as-sql-insert', labels.copyAsSqlInsert, handlers.onCopyAsSqlInsert),
+    item('copy-as-update', labels.copyAsUpdate, handlers.onCopyAsUpdate),
+    item('copy-column-name', labels.copyColumnName, handlers.onCopyColumnName),
+    item('copy-column-data', labels.copyColumnData, handlers.onCopyColumnData),
   );
+
+  let out = frequent;
+  if (danger.length > 0) {
+    out = out.length > 0 ? [...out, { kind: 'separator' }, ...danger] : danger;
+  }
+  if (exportEnabled) {
+    const exportItem = item('export', labels.export, handlers.onExport);
+    if (exportItem) {
+      out = out.length > 0 ? [...out, { kind: 'separator' }, exportItem] : [exportItem];
+    }
+  }
   const more = submenu('more-actions', labels.moreActions, moreActions);
-  if (!more) return frequent;
-  return frequent.length > 0 ? [...frequent, { kind: 'separator' }, more] : [more];
+  if (more) {
+    out = out.length > 0 ? [...out, { kind: 'separator' }, more] : [more];
+  }
+  return out;
 }
