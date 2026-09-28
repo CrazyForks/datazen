@@ -50,6 +50,29 @@ export {
   stepIndex,
   type BranchProbe,
 } from './tree/navigation';
+// The shared tree widget: one virtualization + ARIA + keyboard mechanism, so
+// the host navigator and the driver key browsers stop hand-rolling four copies
+// of it (and stop disagreeing about what a stable row key is).
+export {
+  VirtualTree,
+  firstVisibleTreeIndex,
+  type VirtualTreeItemAria,
+  type VirtualTreeNavigation,
+  type VirtualTreeOverlayContext,
+  type VirtualTreeProps,
+  type VirtualTreeRowContext,
+} from './tree/VirtualTree';
+export {
+  planTreeNavigation,
+  type TreeKeyEventLike,
+  type TreeNavAction,
+  type TreeNavCommand,
+  type TreeNavMove,
+  type TreeNavNone,
+  type TreeNavPlan,
+  type TreeNavPlanInput,
+  type TreeNavRowAction,
+} from './tree/keyboard';
 // The ONE i18n implementation shared by host, drivers and extensions.
 export {
   setLocale,
