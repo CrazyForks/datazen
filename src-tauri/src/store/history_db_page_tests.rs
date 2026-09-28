@@ -5,7 +5,7 @@
 //! an honest `total`, filters the backend can actually evaluate, and a delete
 //! that removes one row instead of the table.
 
-use super::tests::sample_query;
+use super::fixtures::sample_query;
 use super::*;
 use chrono::Utc;
 
