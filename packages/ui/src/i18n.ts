@@ -12,6 +12,8 @@
  *   dictionaries) feeds the same registry through `registerTranslations`.
  * - Lookup chain per key: `registry[locale] ?? registry['en'] ?? key`,
  *   then `{param}` interpolation.
+ * - The last resort (the raw key) is reported once per key in dev builds:
+ *   see {@link reportMissingKey}.
  */
 
 import { useSyncExternalStore } from 'react';
@@ -80,12 +82,60 @@ function formatMessage(template: string, params?: I18nParams): string {
 }
 
 /**
+ * Keys already reported by {@link reportMissingKey}, so a key rendered on
+ * every table row costs exactly one console line instead of one per render.
+ * Deliberately module-private and never cleared: a missing key is a
+ * development-time defect, not a per-navigation event, so reporting it once
+ * for the lifetime of the page is the whole point.
+ */
+const reportedMissingKeys = new Set<string>();
+
+/**
+ * Dev-only report for the last-resort branch of {@link t}.
+ *
+ * Falling back to the raw key keeps the UI renderable, but it is otherwise
+ * invisible: a typo, a dictionary entry nobody wrote, or a locale pack that
+ * failed to load all paint the same thing — an English key string
+ * (`common.close`) where a sentence belongs. At the scale of the locale
+ * registry — two host locales eagerly, four lazy domain packs loaded on
+ * demand, plus every driver and extension pack self-registering into the same
+ * table — that class of bug accumulates silently and is only ever caught by
+ * reading the screen.
+ *
+ * Gated on `import.meta.env.DEV`, the same dev/prod discriminator the rest of
+ * the host uses (e.g. `src/lib/globalTextSelection.ts`). Vite folds it to a
+ * literal at build time, so a production bundle has no live branch, no
+ * allocation and no `Set` traffic: the cost is one predictable comparison on a
+ * path that already performed two dictionary lookups.
+ */
+function reportMissingKey(key: string): void {
+  if (!import.meta.env.DEV) return;
+  if (reportedMissingKeys.has(key)) return;
+  reportedMissingKeys.add(key);
+  const locales =
+    currentLocale === DEFAULT_LOCALE
+      ? `"${DEFAULT_LOCALE}"`
+      : `"${currentLocale}" nor for "${DEFAULT_LOCALE}"`;
+  console.warn(
+    `[i18n] Missing translation for key "${key}": not registered for ${locales}, ` +
+      'so the raw key is rendered. Add it to the owning locale pack ' +
+      '(en is the source of truth).',
+  );
+}
+
+/**
  * Translate `key` in the active locale, falling back to 'en', then to the
  * raw key itself. `{param}` tokens are interpolated from `params`.
  */
 export function t(key: string, params?: I18nParams): string {
-  const raw = registry[currentLocale]?.[key] ?? registry[DEFAULT_LOCALE]?.[key];
-  return formatMessage(raw ?? key, params);
+  const message = registry[currentLocale]?.[key] ?? registry[DEFAULT_LOCALE]?.[key];
+  if (message === undefined) {
+    // Neither the active locale nor 'en' knows this key. An empty string is a
+    // real translation, not a miss, so the check is against `undefined` only.
+    reportMissingKey(key);
+    return formatMessage(key, params);
+  }
+  return formatMessage(message, params);
 }
 
 function subscribeLocale(listener: () => void): () => void {
