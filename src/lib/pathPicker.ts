@@ -1,4 +1,4 @@
-import { open, type OpenDialogOptions } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 import type { PathPicker } from '@datazen/ui';
 
 /**
@@ -12,6 +12,6 @@ import type { PathPicker } from '@datazen/ui';
  * when the call still lived inside the package.
  */
 export const pickPath: PathPicker = async (options) => {
-  const selected = await open({ multiple: false, ...(options as OpenDialogOptions | undefined) });
+  const selected = await open({ multiple: false, ...options });
   return typeof selected === 'string' ? selected : null;
 };

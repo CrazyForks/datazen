@@ -991,24 +991,39 @@ S 形绕行。同一套形态实测：**反向边 7/10 → 0/10，跨越 18 → 
 更难排查，因此任何漏改的调用点都会直接 `tsc` 报错。
 
 连接表单里的路径字段通过 `ConnectionFormState.pickPath` 传递，驱动（如 Redis 的
-TLS 证书）因此也能拿到宿主选择器，而驱动包自身依旧不引入宿主运行时。
+TLS 证书）因此也能拿到宿主选择器。驱动包自身不 import 宿主的 `src/**`、宿主
+Store 或兄弟 DataZen 包；`packages/drivers/**` 中唯一一处直接 import 宿主运行时的
+是 `redis/ui/observe/PubSubPanel.tsx`（`@tauri-apps/api/event` —— 驱动本就运行在
+宿主 webview 内，用它监听 Redis 事件），该点不在 §9.2 的守卫范围内。
 
 ### 9.2 设计系统纯净性由脚本强制
 
 `@datazen/ui` 被宿主、每个驱动和每个扩展打包，其中若干运行在没有 Tauri
-webview 的环境里。因此设计系统必须是依赖图里的**叶子**：只允许 React 与包内
-自身，不允许出现宿主运行时、宿主 Store 或兄弟 DataZen 包。该约束由两个脚本
-同时执行，任何一个变弱另一个就会兜住：
+webview 的环境里。因此设计系统必须是依赖图里的**叶子**：只允许 React、纯样式/图标
+第三方包（`react` / `react-dom` / `clsx` / `lucide-react` / `tailwind-merge`）与
+包内自身，不允许出现宿主运行时、宿主 Store 或兄弟 DataZen 包。该约束由两个脚本
+同时执行：
 
 | 脚本                                         | 规则                                | 覆盖                            |
 | -------------------------------------------- | ----------------------------------- | ------------------------------- |
 | `scripts/check-module-layers.mjs`            | `LAYER_RULES` 的 `packages/ui` 条目 | 相对路径解析后的子树 + 裸包前缀 |
 | `scripts/check-driver-import-boundaries.mjs` | `RULES.R4`（blocking）              | 同上，规则表见脚本头部          |
 
-两处共用 `scripts/lib/scanSourceCode.mjs` 的分词器，扫描文件内的**全部字符串
-字面量**，因此普通 `import` / `export … from`、动态 `import()`、`require()`、
-`vi.mock()` 都会被检出，注释与字符串正文不会被误判。新增一类破坏方式时只改
-规则表，不需要改检测逻辑。
+两个脚本**共用扫描面与检测能力，而不是互相兜底**：
+
+- 共用 `scripts/lib/scanTargets.mjs` 的扫描面（`SCAN_EXTENSIONS` 六种后缀、
+  `SKIP_DIR_NAMES` 跳过的 vendored/生成目录）。二者曾各写一份，结果是
+  `packages/ui/dist/**` 只有一个脚本会报、`.mjs` 只有一个脚本会看；声明在同一处
+  之后，它们无法在「看哪些文件」这件事上漂移。
+- 共用 `scripts/lib/scanSourceCode.mjs` 的分词器，扫描文件内的**全部字符串
+  字面量**，因此普通 `import` / `export … from`、动态 `import()`、`require()`、
+  `vi.mock()` 都会被检出，注释与字符串正文不会被误判。新增一类破坏方式时只改
+  规则表，不需要改检测逻辑。
+
+规则逻辑本身仍是两份独立实现，**没有**「一个变弱另一个会拦住」的保证：删掉 R4，
+边界脚本会安静下来而 layer 脚本照常拦，反之亦然。防这件事的是
+`scripts/__tests__/` 里的变异用例（把真实违规文件写进真实 `packages/ui/` 树，跑完
+再删掉），不是另一个脚本。
 
 ## 10. 开发阶段规划
 

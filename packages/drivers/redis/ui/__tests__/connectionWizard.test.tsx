@@ -10,6 +10,34 @@ vi.mock('@datazen/ui', async (importOriginal) => ({
   useI18n: () => ({ t: (key: string) => key }),
 }));
 
+/**
+ * The subset of `ConnectionFormState` these wizard tests drive, named rather
+ * than laundered through a bare `as`: a field the wizard actually reads being
+ * renamed fails here, and the one widening cast below says out loud that the
+ * rest of the contract is not what this suite is about.
+ */
+type RedisFormSubset = Pick<
+  ConnectionFormState,
+  | 'name'
+  | 'host'
+  | 'port'
+  | 'database'
+  | 'username'
+  | 'password'
+  | 'options'
+  | 'validationErrors'
+  | 'setName'
+  | 'setHost'
+  | 'setPort'
+  | 'setDatabase'
+  | 'setUsername'
+  | 'setPassword'
+  | 'setOptions'
+  | 'setSslMode'
+  | 'setShowAdvanced'
+  | 'pickPath'
+>;
+
 function stubForm(overrides: Partial<ConnectionFormState> = {}): ConnectionFormState {
   return {
     name: '',
@@ -32,7 +60,7 @@ function stubForm(overrides: Partial<ConnectionFormState> = {}): ConnectionFormS
     // Host-supplied native picker; the TLS `PathInput`s can only ask for it.
     pickPath: vi.fn(async () => null),
     ...overrides,
-  } as ConnectionFormState;
+  } satisfies RedisFormSubset as unknown as ConnectionFormState;
 }
 
 function mockClipboard(text: string | Promise<string> | Error) {
