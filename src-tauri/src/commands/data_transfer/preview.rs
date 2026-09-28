@@ -569,6 +569,23 @@ pub(crate) async fn preview_data_transfer_impl(
         target_schemas.insert(table.target_table.clone(), schema);
     }
 
+    // Preserve the actual target namespace for qualified FK references. A
+    // bare table name alone is ambiguous when the connection can see multiple
+    // schemas containing the same relation name.
+    let target_relations = if job.mode == crate::data_transfer::TransferMode::Data {
+        target_driver
+            .get_tables(&target_handle, &target.database, target.normalized_schema())
+            .await
+            .cmd_err("preview_data_transfer")?
+            .into_iter()
+            .filter(|table| {
+                crate::data_transfer::metadata::table_in_endpoint_schema(&target, table)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
     let target_read_only_ok = !tgt_config.read_only;
 
     // Keep the raw source snapshot for immutable-plan validation. The
@@ -797,7 +814,20 @@ pub(crate) async fn preview_data_transfer_impl(
             Some("target connection is read-only; Data Transfer cannot execute".into());
     }
 
-    let plan_id = super::plans::issue_plan(
+    let target_table_dependencies = if job.mode == crate::data_transfer::TransferMode::Data {
+        let dependencies = crate::data_transfer::capture_target_fk_dependencies(
+            &preview.write_plans,
+            &target_schemas,
+            &target_relations,
+            &target,
+        );
+        crate::data_transfer::reorder_preview_write_plans(&mut preview, &dependencies);
+        dependencies
+    } else {
+        Vec::new()
+    };
+
+    let plan_id = super::plans::issue_plan_with_target_dependencies(
         job,
         &preview,
         src_driver.as_ref(),
@@ -805,6 +835,7 @@ pub(crate) async fn preview_data_transfer_impl(
         &source_schemas_for_plan,
         &target_schemas,
         tgt_config.read_only,
+        target_table_dependencies,
     )
     .map_err(CommandError::from)?;
     preview.plan_id = plan_id;

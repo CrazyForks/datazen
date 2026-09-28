@@ -18,7 +18,9 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::data_transfer::{DdlPreviewItem, TransferError, TransferJob, TransferPreview};
+use crate::data_transfer::{
+    DdlPreviewItem, TargetTableDependency, TransferError, TransferJob, TransferPreview,
+};
 
 pub(crate) const TRANSFER_PLAN_TTL: Duration = Duration::from_secs(15 * 60);
 pub(crate) const TRANSFER_CHECKPOINT_TTL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -63,6 +65,10 @@ pub(crate) struct StoredTransferPlan {
     /// executor consumes this exact sequence so a changed source catalog or
     /// adapter cannot silently alter object mappings after review.
     pub(crate) database_structure: Option<Vec<DdlPreviewItem>>,
+    /// Target foreign-key edges captured from the same schema snapshot used
+    /// by the target-schema fingerprint. They are applied only to the user's
+    /// final table selection immediately before execution.
+    pub(crate) target_table_dependencies: Vec<TargetTableDependency>,
     expires_at: Instant,
     active_until: Option<Instant>,
     state: PlanState,
@@ -203,6 +209,57 @@ impl TransferPlanStore {
         target_read_only: bool,
         ttl: Duration,
     ) -> Result<String, TransferError> {
+        self.issue_with_dependencies(
+            job,
+            preview,
+            source_driver,
+            target_driver,
+            source_schemas,
+            target_schemas,
+            target_read_only,
+            Vec::new(),
+            ttl,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn issue_with_target_dependencies(
+        &self,
+        job: TransferJob,
+        preview: &TransferPreview,
+        source_driver: &dyn DatabaseDriver,
+        target_driver: &dyn DatabaseDriver,
+        source_schemas: &HashMap<String, TableSchema>,
+        target_schemas: &HashMap<String, TableSchema>,
+        target_read_only: bool,
+        target_table_dependencies: Vec<TargetTableDependency>,
+    ) -> Result<String, TransferError> {
+        self.issue_with_dependencies(
+            job,
+            preview,
+            source_driver,
+            target_driver,
+            source_schemas,
+            target_schemas,
+            target_read_only,
+            target_table_dependencies,
+            TRANSFER_PLAN_TTL,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn issue_with_dependencies(
+        &self,
+        job: TransferJob,
+        preview: &TransferPreview,
+        source_driver: &dyn DatabaseDriver,
+        target_driver: &dyn DatabaseDriver,
+        source_schemas: &HashMap<String, TableSchema>,
+        target_schemas: &HashMap<String, TableSchema>,
+        target_read_only: bool,
+        target_table_dependencies: Vec<TargetTableDependency>,
+        ttl: Duration,
+    ) -> Result<String, TransferError> {
         let source_entries = participating_tables(&job).map(|table| {
             (
                 table.source_table.clone(),
@@ -245,6 +302,7 @@ impl TransferPlanStore {
             target_read_only_at_preview: target_read_only,
             sql_file_structure,
             database_structure,
+            target_table_dependencies,
             expires_at: Instant::now() + ttl,
             active_until: None,
             state: PlanState::Available,
@@ -347,6 +405,29 @@ pub(crate) fn issue_plan(
         source_schemas,
         target_schemas,
         target_read_only,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn issue_plan_with_target_dependencies(
+    job: TransferJob,
+    preview: &TransferPreview,
+    source_driver: &dyn DatabaseDriver,
+    target_driver: &dyn DatabaseDriver,
+    source_schemas: &HashMap<String, TableSchema>,
+    target_schemas: &HashMap<String, TableSchema>,
+    target_read_only: bool,
+    target_table_dependencies: Vec<TargetTableDependency>,
+) -> Result<String, TransferError> {
+    global_store().issue_with_target_dependencies(
+        job,
+        preview,
+        source_driver,
+        target_driver,
+        source_schemas,
+        target_schemas,
+        target_read_only,
+        target_table_dependencies,
     )
 }
 

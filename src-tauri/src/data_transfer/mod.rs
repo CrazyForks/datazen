@@ -17,6 +17,7 @@ mod scan;
 pub mod sql_file;
 mod sql_structure;
 pub mod structure;
+mod table_order;
 mod writer;
 
 pub use error::TransferError;
@@ -38,6 +39,10 @@ pub use profile::TransferProfile;
 pub(crate) use sql_structure::build_database_structure_plan;
 pub(crate) use structure::create_target_tables_with_write_observer;
 pub use structure::{column_ir_types_by_source, create_target_tables, source_schema_to_target_ir};
+pub(crate) use table_order::{
+    capture_target_fk_dependencies, order_selected_tables, reorder_inspected_tables,
+    reorder_preview_write_plans, TargetTableDependency,
+};
 
 #[cfg(test)]
 pub(crate) static TEST_COMMIT_ACK_LOSS_TEST_LOCK: tokio::sync::Mutex<()> =
