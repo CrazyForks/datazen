@@ -8,20 +8,26 @@ import {
   openConnectionsWorkspace,
   expandConnectedConnectionInNavigator,
   waitForConnectionToolbar,
-  executeSQL,
   invokeBackend,
 } from '../helpers.js';
 
 /**
- * SQL Editor Productivity tests (Host-safe subset).
+ * SQL Editor Productivity — Host-owned editor gestures.
  *
- * Tests table/column drop from the schema tree, Mod+D next occurrence, and
- * multi-cursor support. Requires a PostgreSQL connection (seeded by wdio.conf.ts).
+ * Every case here is **Community** behaviour: Mod+D, multi-cursor and
+ * rectangular selection come from `paste/multipleSelections.ts`, which reaches
+ * `@codemirror/search` directly and holds zero references to
+ * `sqlEditorEnhancedEP`. Run on any build:
+ * `pnpm tauri:build:webdriver` → `pnpm e2e:sql-editor-prod`.
  *
- * NOTE: the paste-as-IN cases (SE-PROD-001..004) are Pro S5-A. SE-PROD-004
- * (strong assertion: paste-as-IN replaces the selected placeholder) is migrated
- * to packages/pro-extensions/sql-editor-pro/e2e/specs/sql-editor-productivity.ts.
- * Weak-assertion SE-PROD-001..003 stay here (they pass on Community).
+ * The paste-as-IN and schema-tree drop cases used to live here. They are Pro
+ * capabilities — `paste/createPasteExtensions.ts` returns
+ * `enhanced.createPasteExtensions?.(opts) ?? []`, so on Community neither the
+ * clipboard read nor the drop handler is installed. They now live in
+ * `packages/pro-extensions/sql-editor-pro/e2e/specs/sql-editor-productivity.ts`
+ * (SE-PROD-001..004, SE-PROD-010) and assert exact documents.
+ *
+ * Requires a PostgreSQL connection (seeded by wdio.conf.ts).
  *
  * Uses Host generic behavior — no specific database dialect assertions.
  */
@@ -176,8 +182,7 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
         let node: HTMLElement | null = fromLine;
         while (node && !contentDOM) {
           const host = node.closest<HTMLElement>('.cm-editor');
-          const view = (host as (HTMLElement & { cmView?: { view?: View } }) | null)?.cmView
-            ?.view;
+          const view = (host as (HTMLElement & { cmView?: { view?: View } }) | null)?.cmView?.view;
           if (view?.contentDOM) contentDOM = view.contentDOM;
           node = node.parentElement;
         }
@@ -221,20 +226,20 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     doc: string;
     mounted: boolean;
   }> =>
-    browser.execute((): {
-      rangeCount: number;
-      ranges: { from: number; to: number; fromLine: number; toLine: number }[];
-      doc: string;
-      mounted: boolean;
-    } => {
-      const empty = {
-        rangeCount: 0,
-        ranges: [],
-        doc: '',
-        mounted: false,
-      };
-      const view = (
-        Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'))
+    browser.execute(
+      (): {
+        rangeCount: number;
+        ranges: { from: number; to: number; fromLine: number; toLine: number }[];
+        doc: string;
+        mounted: boolean;
+      } => {
+        const empty = {
+          rangeCount: 0,
+          ranges: [],
+          doc: '',
+          mounted: false,
+        };
+        const view = Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'))
           .map((el) => (el as HTMLElement & { cmView?: { view?: unknown } }).cmView?.view)
           .find((v) => Boolean(v)) as
           | {
@@ -243,219 +248,22 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
                 selection: { ranges: readonly { from: number; to: number }[] };
               };
             }
-          | undefined
-      );
-      if (!view) return empty;
-      const { doc, selection } = view.state;
-      return {
-        rangeCount: selection.ranges.length,
-        ranges: selection.ranges.map((r) => ({
-          from: r.from,
-          to: r.to,
-          fromLine: doc.lineAt(r.from).number,
-          toLine: doc.lineAt(r.to).number,
-        })),
-        doc: doc.toString(),
-        mounted: true,
-      };
-    });
-
-  // ── 粘贴为 IN (Mod+Shift+V) ────────────────────────────────────
-
-  it('SE-PROD-001: Mod+Shift+V 应触发粘贴为 IN 子句', async () => {
-    // Prepare clipboard with delimited values
-    await browser.execute(() => {
-      (window as any).__e2e_clipboard = 'apple\nbanana\ncherry';
-    });
-
-    await setEditorContent('SELECT * FROM users WHERE name IN ');
-    await browser.pause(300);
-
-    // Position cursor at end
-    const editor = await $('.cm-editor .cm-content');
-    await editor.click();
-    await browser.pause(200);
-
-    // Trigger Mod+Shift+V
-    await browser.keys(['Meta', 'Shift', 'V']);
-    await browser.pause(500);
-
-    const editorContent = await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content');
-      return el?.textContent || '';
-    });
-    // Should have inserted IN (...) with values
-    const hasInClause =
-      editorContent.includes('IN') &&
-      (editorContent.includes('apple') || editorContent.includes("'apple'"));
-    expect(typeof hasInClause).toBe('boolean');
-
-    await captureJourneyStep('paste-as-in-clause');
-  });
-
-  it('SE-PROD-002: 粘贴为 IN 应处理带引号的值', async () => {
-    await browser.execute(() => {
-      (window as any).__e2e_clipboard = '"hello world"\n"foo bar"';
-    });
-
-    await setEditorContent('SELECT * FROM items WHERE label IN ');
-    await browser.pause(300);
-
-    const editor = await $('.cm-editor .cm-content');
-    await editor.click();
-    await browser.pause(200);
-
-    await browser.keys(['Meta', 'Shift', 'V']);
-    await browser.pause(500);
-
-    const editorContent = await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content');
-      return el?.textContent || '';
-    });
-    expect(typeof editorContent).toBe('string');
-  });
-
-  it('SE-PROD-003: 粘贴为 IN 应处理逗号分隔值', async () => {
-    await browser.execute(() => {
-      (window as any).__e2e_clipboard = '100, 200, 300';
-    });
-
-    await setEditorContent('SELECT * FROM records WHERE id IN ');
-    await browser.pause(300);
-
-    const editor = await $('.cm-editor .cm-content');
-    await editor.click();
-    await browser.pause(200);
-
-    await browser.keys(['Meta', 'Shift', 'V']);
-    await browser.pause(500);
-
-    const editorContent = await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content');
-      return el?.textContent || '';
-    });
-    const hasValues = editorContent.includes('100') || editorContent.includes("'100'");
-    expect(typeof hasValues).toBe('boolean');
-  });
-
-  // ── 表/列拖放 ─────────────────────────────────────────────────
-
-  it('SE-PROD-010: 拖放表到编辑器应插入表名', async () => {
-    await executeSQL(
-      'CREATE TABLE IF NOT EXISTS _e2e_prod_drop (id SERIAL PRIMARY KEY, name TEXT)',
+          | undefined;
+        if (!view) return empty;
+        const { doc, selection } = view.state;
+        return {
+          rangeCount: selection.ranges.length,
+          ranges: selection.ranges.map((r) => ({
+            from: r.from,
+            to: r.to,
+            fromLine: doc.lineAt(r.from).number,
+            toLine: doc.lineAt(r.to).number,
+          })),
+          doc: doc.toString(),
+          mounted: true,
+        };
+      },
     );
-
-    await openQueryTab();
-    await setEditorContent('SELECT * FROM ');
-    await browser.pause(500);
-
-    // Simulate a drop event with table payload
-    await browser.execute(() => {
-      const cmContent = document.querySelector('.cm-editor .cm-content');
-      if (!cmContent) return;
-
-      const payload = {
-        version: 1,
-        kind: 'table',
-        namespace: {
-          database: 'postgres',
-          schema: 'public',
-          table: '_e2e_prod_drop',
-        },
-        connectionId: 'test-conn',
-        databaseType: 'postgresql',
-      };
-
-      const dropEvent = new DragEvent('drop', {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer: new DataTransfer(),
-      });
-      // Override data type
-      Object.defineProperty(dropEvent, 'dataTransfer', {
-        value: {
-          getData: (type: string) => {
-            if (type === 'application/json') return JSON.stringify(payload);
-            if (type === 'text/plain') return '_e2e_prod_drop';
-            return '';
-          },
-          types: ['application/json', 'text/plain'],
-        },
-      });
-      cmContent.dispatchEvent(dropEvent);
-    });
-    await browser.pause(500);
-
-    const editorContent = await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content');
-      return el?.textContent || '';
-    });
-    // Table name should be inserted
-    const hasTableName =
-      editorContent.includes('_e2e_prod_drop') || editorContent.includes('"_e2e_prod_drop"');
-    expect(typeof hasTableName).toBe('boolean');
-
-    await captureJourneyStep('table-drop-insert');
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_prod_drop');
-  });
-
-  it('SE-PROD-011: 拖放列到编辑器应插入限定列名', async () => {
-    await executeSQL('CREATE TABLE IF NOT EXISTS _e2e_prod_col (id SERIAL PRIMARY KEY, name TEXT)');
-
-    await openQueryTab();
-    await setEditorContent('SELECT ');
-    await browser.pause(500);
-
-    // Simulate a column drop event
-    await browser.execute(() => {
-      const cmContent = document.querySelector('.cm-editor .cm-content');
-      if (!cmContent) return;
-
-      const payload = {
-        version: 1,
-        kind: 'column',
-        namespace: {
-          database: 'postgres',
-          schema: 'public',
-          table: '_e2e_prod_col',
-        },
-        column: 'name',
-        connectionId: 'test-conn',
-        databaseType: 'postgresql',
-      };
-
-      const dropEvent = new DragEvent('drop', {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer: new DataTransfer(),
-      });
-      Object.defineProperty(dropEvent, 'dataTransfer', {
-        value: {
-          getData: (type: string) => {
-            if (type === 'application/json') return JSON.stringify(payload);
-            if (type === 'text/plain') return 'name';
-            return '';
-          },
-          types: ['application/json', 'text/plain'],
-        },
-      });
-      cmContent.dispatchEvent(dropEvent);
-    });
-    await browser.pause(500);
-
-    const editorContent = await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content');
-      return el?.textContent || '';
-    });
-    // Column name should be inserted (possibly with table qualifier)
-    const hasColumnName = editorContent.includes('name') || editorContent.includes('"name"');
-    expect(typeof hasColumnName).toBe('boolean');
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_prod_col');
-  });
 
   // ── Mod+D 下一个匹配 ──────────────────────────────────────────
 
@@ -476,9 +284,7 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
             const view = (editors[i] as any)?.cmView?.view;
             if (
               view &&
-              view.state.doc
-                .toString()
-                .includes('SELECT test_col, test_col, test_col FROM t')
+              view.state.doc.toString().includes('SELECT test_col, test_col, test_col FROM t')
             )
               return true;
           }
@@ -516,9 +322,7 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
             if (!view) continue;
             const ranges = view.state.selection.ranges;
             if (ranges.length !== 1) continue;
-            return (
-              view.state.doc.sliceString(ranges[0].from, ranges[0].to) === 'test_col'
-            );
+            return view.state.doc.sliceString(ranges[0].from, ranges[0].to) === 'test_col';
           }
           return false;
         }),

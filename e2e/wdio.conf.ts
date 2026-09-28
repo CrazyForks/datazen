@@ -310,6 +310,15 @@ export const config: WebdriverIO.Config = {
     contract: ['./specs/host-contract-matrix.ts'],
     // Redis driver's own E2E, not part of default full run (`pnpm e2e:redis`)
     redis: ['../packages/drivers/redis/e2e/*.ts'],
+    // Host-owned SQL editor gestures: Mod+D, multi-cursor, rectangular
+    // selection (`pnpm e2e:sql-editor-prod`). Both specs are Community
+    // behaviour, so this suite runs on any build. The Pro-only counterparts
+    // (paste-as-IN, schema-tree drop) live in the Pro package's own e2e dir
+    // and are covered by `pro-sql-editor` above.
+    'sql-editor-prod': [
+      './specs/sql-editor-productivity.ts',
+      './specs/sql-editor-multicursor-gestures.ts',
+    ],
     // SQL Editor Pro enhanced features (S4-A statement frame/gutter, S5-B bind-param panel),
     // migrated to the Pro extension's own e2e dir — requires a Pro build:
     // `pnpm e2e:pro:sql-editor`. Not part of the default Community run.
