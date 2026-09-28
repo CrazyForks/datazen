@@ -7,28 +7,28 @@
  * in `Dialog.tsx`) is a deliberate behaviour change of the `wave2/dialog-i18n`
  * track, and it is the one part of that change with no rendering surface of its
  * own. A component that merely calls `t()` at render time is byte-identical to
- * one that subscribes until something *else* re-renders it, and every other
- * suite in this track either remounts or re-asserts in a new language — so
- * swapping `useI18n()` back for a bare `t` leaves all of them green. Only a
- * switch performed in place, on a dialog that is already mounted and whose
- * props never change, separates the two implementations.
+ * one that subscribes until something *else* re-renders it, so what separates
+ * the two implementations is a locale switch performed in place, on a dialog
+ * that is already mounted and whose props never change.
  *
- * No probe copy: every expected string is read back from a *shipped* host
- * dictionary (`en` / `zh-CN` / `ja`), so nothing here depends on wording
- * invented for an assertion — which is exactly what the English-only suites in
- * this track could not do while `common.close` was the literal `'Close'` in
- * both `en` and the component. The precondition case below re-checks that the
+ * No invented copy: every string this file expects from the *registry* is read
+ * back out of a shipped host dictionary (`en` / `zh-CN` / `ja`), so nothing
+ * depends on wording invented for an assertion — which is exactly what the
+ * English-only suites in this track could not do while `common.close` was the
+ * literal `'Close'` in both `en` and the component. The only hand-written literal
+ * this file ever compares against a rendered label is the `CUSTOM` sentinel, and
+ * that reaches the component as a `closeLabel` argument rather than as a registry
+ * read — the opposite case. The precondition case below re-checks that the
  * three copies still differ from each other, so a future copy change that
  * collapses them turns this suite red instead of quietly voiding its own
  * discriminating power.
  *
- * Landing in host `src/test/__tests__/` is mandatory, not stylistic: boundary
- * rule R2 (`scripts/check-driver-import-boundaries.mjs`) scans `packages/**`
- * for `setLocale(` and exempts exactly two paths (`R2_FILE_CARVEOUTS` =
- * `packages/ui/src/i18n.ts` and `packages/ui/src/__tests__/i18n.test.tsx`).
- * That is a literal path set, not a glob, so no additional file under
- * `packages/` may drive the locale, and the component under test cannot be
- * covered from there.
+ * Boundary rule R2 (`scripts/check-driver-import-boundaries.mjs`) scans
+ * `packages/**` for `setLocale(` and exempts exactly two paths —
+ * `R2_FILE_CARVEOUTS` is a literal `Set` of `packages/ui/src/i18n.ts` and
+ * `packages/ui/src/__tests__/i18n.test.tsx`, matched with `.has(rel)` rather than
+ * a glob. `Dialog` is a `packages/ui` component and this suite calls
+ * `setLocale`, which is why it is a host file.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
@@ -82,6 +82,10 @@ describe('Dialog close label follows the locale of an already-open dialog', () =
     expect(getRegisteredTranslations(EAGER_ALT_LOCALE)[CLOSE_LABEL_KEY]).toBe(ZH_CLOSE);
     expect(EN_CLOSE).not.toBe(ZH_CLOSE);
     expect(JA_CLOSE).not.toBe(EN_CLOSE);
+    // The third pair. `ja` is reached through the lazy-pack path, so a copy
+    // change that collapsed it onto `zh-CN` would leave the lazy case
+    // indistinguishable from the eager one and go unnoticed by the two above.
+    expect(JA_CLOSE).not.toBe(ZH_CLOSE);
   });
 
   it('relabels an open dialog in place when the locale changes, without remounting it', () => {

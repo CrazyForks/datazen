@@ -7,15 +7,15 @@
  * English-only assertion therefore cannot tell "the registry supplied the copy"
  * from "the component ignored the registry and hardcoded it". The fix in
  * `Dialog.tsx` has exactly zero English-language surface, so the probe below is
- * the only way to give this contract teeth:
+ * what gives this contract teeth:
  *
  *   - register `common.close` with wording that appears nowhere else, render a
  *     bare `<Dialog>` (no `closeLabel` prop) and require that wording;
  *   - require that *no* button carries the literal `'Close'` any more.
  *
  * The counter-case (registry has no entry at all ⇒ the literal is kept) lives in
- * `dialogCloseLabelUnregistered.test.tsx`, which needs a pristine module
- * registry to observe the empty-registry state.
+ * `dialogCloseLabelUnregistered.test.tsx`, which registers nothing and pins the
+ * empty-registry state.
  *
  * The probe is registered into the DEFAULT locale rather than selected with
  * `setLocale()`: boundary rule R2 in `scripts/check-driver-import-boundaries.mjs`
