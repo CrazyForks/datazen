@@ -103,7 +103,12 @@ export function Spinner({
   // being read on its own. No prop type can express "not inside a button", so
   // this is checked against the real DOM instead. Only runs when `label` is
   // set — the decorative path never mounts the wrapper.
+  //
+  // Dev-only, on the same `import.meta.env.DEV` latch as `i18n.ts`: this is a
+  // lint-level mistake in the source, not a runtime condition a shipped user
+  // can be in, and a production console is not the place to report it.
   useLayoutEffect(() => {
+    if (!import.meta.env.DEV) return;
     if (label === undefined) return;
     const interactive = statusRef.current?.closest('button, a[href], [role="button"]');
     if (!interactive) return;

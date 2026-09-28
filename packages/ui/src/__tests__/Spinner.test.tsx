@@ -17,7 +17,10 @@ import { render, cleanup } from '@testing-library/react';
 import { Spinner } from '../Spinner';
 import type { SpinnerSize, SpinnerTone } from '../Spinner';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 
 /**
  * The single element the spinner renders when it is purely decorative.
@@ -168,11 +171,37 @@ describe('Spinner accessibility', () => {
 });
 
 describe('Spinner label inside an interactive element', () => {
+  /**
+   * The warn text is the only thing a developer gets from this guard, so it
+   * has to actually help. These assert the three structural parts of an
+   * actionable message — what happened, and what to do about it — rather than
+   * the exact wording, so a punctuation fix is not a red test but degrading
+   * the text into "do not do this." is.
+   */
+  function expectActionable(message: string): void {
+    // Names the component and the prop that triggered it.
+    expect(message).toContain('Spinner');
+    expect(message).toContain('label');
+    // At least one concrete remedy: an imperative, not a restatement of the ban.
+    expect(message).toMatch(/\b(Move|drop|Remove|Use|Place|Render)\w*/);
+    // A remedy phrased as a sentence, not a fragment glued onto the diagnosis.
+    expect(message.split(/(?<=[.!?])\s+/).length).toBeGreaterThanOrEqual(2);
+  }
+
+  it('[tester] this suite runs with the dev latch OPEN', () => {
+    // Precondition, not a tautology: the guard is gated on import.meta.env.DEV,
+    // so if a runner ever ran this file with DEV=false the warn assertions
+    // below would go permanently green while the guard was dead. Asserting it
+    // turns that silent false-pass into a red one.
+    expect(import.meta.env.DEV).toBe(true);
+  });
+
   // Pinned, not aspirational: this is the exact failure the guard below exists
   // to prevent. If a future change to the wrapper (say, moving the text into
   // `aria-label` instead of visually hidden text) fixes it, this goes red and
   // the JSDoc has to be updated to match.
   it('[tester] the hidden label really does leak into the button name', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { getByRole, queryByRole } = render(
       <button type="button">
         <Spinner label="Thinking" />
@@ -181,9 +210,10 @@ describe('Spinner label inside an interactive element', () => {
     );
     expect(getByRole('button', { name: 'ThinkingGo' })).toBeTruthy();
     expect(queryByRole('button', { name: 'Go' })).toBeNull();
+    warn.mockRestore();
   });
 
-  it('[tester] warns when a label is nested inside a button', () => {
+  it('[tester] warns once when a label is nested inside a button', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     render(
       <button type="button">
@@ -191,29 +221,38 @@ describe('Spinner label inside an interactive element', () => {
       </button>,
     );
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(String(warn.mock.calls[0][0])).toContain('<Spinner label="Thinking">');
+    const message = String(warn.mock.calls[0]?.[0] ?? '');
+    expect(message).toContain('<Spinner label="Thinking">');
+    expect(message).toContain('button');
+    expectActionable(message);
     warn.mockRestore();
   });
 
-  it('[tester] warns when a label is nested inside an anchor', () => {
+  it.each([
+    ['an anchor', <Spinner label="Busy" key="s" />],
+    ['a role=button element', <Spinner label="Busy" key="s" />],
+  ])('[tester] warns when a label is nested inside %s', (_name, inner) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    render(
-      <a href="#">
-        <Spinner label="Busy" />
-      </a>,
+    const { container } = render(
+      _name === 'an anchor' ? <a href="#">{inner}</a> : <div role="button">{inner}</div>,
     );
+    expect(container.querySelector('[role="status"]')).toBeTruthy();
     expect(warn).toHaveBeenCalledTimes(1);
+    expectActionable(String(warn.mock.calls[0]?.[0] ?? ''));
     warn.mockRestore();
   });
 
-  it('[tester] warns when a label is nested inside a role=button element', () => {
+  it('[tester] the remedy names both ways out, not just the ban', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     render(
-      <div role="button">
-        <Spinner label="Busy" />
-      </div>,
+      <button type="button">
+        <Spinner label="Thinking" />
+      </button>,
     );
-    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]?.[0] ?? '');
+    // Two distinct remedies: relocate the live region, or drop the label.
+    expect(message).toMatch(/Move/);
+    expect(message).toMatch(/drop/);
     warn.mockRestore();
   });
 
@@ -250,6 +289,22 @@ describe('Spinner label inside an interactive element', () => {
       </button>,
     );
     expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('[tester] production build: fully silent, but still renders the live region', () => {
+    vi.stubEnv('DEV', false);
+    expect(import.meta.env.DEV).toBe(false);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { getByRole } = render(
+      <button type="button">
+        <Spinner label="Thinking" />
+      </button>,
+    );
+    // The latch gates the *diagnostic*, never the accessibility output: the
+    // role=status region is correct in production and must still be there.
+    expect(warn).not.toHaveBeenCalled();
+    expect(getByRole('status').getAttribute('aria-busy')).toBe('true');
     warn.mockRestore();
   });
 });
