@@ -1,8 +1,17 @@
 /** @vitest-environment node */
+import { spawnSync } from 'child_process';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 import { checkModuleLayers, LAYER_RULES } from '../check-module-layers.mjs';
 import { checkDriverImportBoundaries } from '../check-driver-import-boundaries.mjs';
-import { withProbeLock, withTempSourceFile, withTempSourceFiles } from './boundaryMutation';
+import { SKIP_DIR_NAMES } from '../lib/scanTargets.mjs';
+import {
+  PROBE_PATHS,
+  withProbeLock,
+  withTempSourceFile,
+  withTempSourceFiles,
+} from './boundaryMutation';
 
 /** Collect the messages a run logged, and its exit code. */
 function run() {
@@ -161,10 +170,9 @@ describe('checkModuleLayers watches the same file set as the driver boundary gua
     // guard for the same reason.
     const { code, output } = withTempSourceFiles(
       [
-        ['packages/ui/dist/bundle.js', TAIURI_IMPORT],
-        ['packages/ui/node_modules/vendored-lib/index.js', TAIURI_IMPORT],
-        ['packages/ui/build/out.js', TAIURI_IMPORT],
-        ['packages/ui/coverage/report.js', TAIURI_IMPORT],
+        ['packages/ui/dist/__boundaryProbe__.js', TAIURI_IMPORT],
+        ['packages/ui/node_modules/vendored-lib/__boundaryProbe__.js', TAIURI_IMPORT],
+        ['packages/ui/coverage/__boundaryProbe__.js', TAIURI_IMPORT],
       ],
       () => run(),
     );
@@ -181,8 +189,9 @@ describe('checkModuleLayers watches the same file set as the driver boundary gua
       forbiddenPackages: ['@tauri-apps/'],
     });
     try {
-      const { code } = withTempSourceFiles([['packages/ui/dist/bundle.ts', TAIURI_IMPORT]], () =>
-        run(),
+      const { code } = withTempSourceFiles(
+        [['packages/ui/dist/__boundaryProbe__.ts', TAIURI_IMPORT]],
+        () => run(),
       );
       expect(code).toBe(1);
     } finally {
@@ -202,6 +211,34 @@ describe('checkModuleLayers watches the same file set as the driver boundary gua
     });
   }
 
+  // The three probes above prove the walk *honours* the skip list; they cannot
+  // prove which names are in it, and `build/` is deliberately not among the
+  // probed ones (see the gitignore test below). Pin the list itself instead.
+  it('skips exactly the vendored and generated directory names', () => {
+    expect([...SKIP_DIR_NAMES].sort()).toEqual([
+      '.git',
+      '.turbo',
+      '__snapshots__',
+      'build',
+      'coverage',
+      'dist',
+      'node_modules',
+      'target',
+    ]);
+  });
+
+  // A probe outside a gitignored path shows up in `git status -uall` for as
+  // long as it lives, which is a `git add -A` away from a committed test
+  // artifact. Cheap to assert, expensive to notice by eye.
+  it('keeps every probe path invisible to git status', () => {
+    for (const rel of PROBE_PATHS) {
+      const ignored = spawnSync('git', ['check-ignore', '-q', '--', rel], {
+        cwd: resolve(dirname(fileURLToPath(import.meta.url)), '../..'),
+      });
+      expect({ rel, status: ignored.status }).toEqual({ rel, status: 0 });
+    }
+  });
+
   it('reaches the same verdict as check-driver-import-boundaries on one file', () => {
     // The regression this pins: the two guards used to declare their scan
     // targets independently, so one reported a file the other ignored. They
@@ -214,6 +251,9 @@ describe('checkModuleLayers watches the same file set as the driver boundary gua
       const theirCode = checkDriverImportBoundaries({
         log: (msg: unknown) => theirs.push(String(msg)),
         error: (msg: unknown) => theirs.push(String(msg)),
+        // Probe names are gitignored on purpose, so the gitignore downgrade
+        // would hide a real finding from the guard being compared with.
+        isIgnored: () => false,
       });
       const theirOutput = theirs.join('\n');
 
@@ -232,6 +272,9 @@ describe('checkModuleLayers watches the same file set as the driver boundary gua
       const theirCode = checkDriverImportBoundaries({
         log: (msg: unknown) => theirs.push(String(msg)),
         error: (msg: unknown) => theirs.push(String(msg)),
+        // Probe names are gitignored on purpose, so the gitignore downgrade
+        // would hide a real finding from the guard being compared with.
+        isIgnored: () => false,
       });
       expect(mine.code).toBe(0);
       expect(theirCode).toBe(0);

@@ -503,6 +503,10 @@ describe('R4 · the shared design system must stay host-free and runtime-free', 
         checkDriverImportBoundaries({
           log: () => {},
           error: (msg) => err.push(String(msg)),
+          // Probe names are gitignored on purpose (see .gitignore), so the
+          // gitignore downgrade would swallow the finding. That downgrade is
+          // asserted on its own below; this case is about the R4 rule.
+          isIgnored: () => false,
         }),
     );
     expect(code).toBe(1);
