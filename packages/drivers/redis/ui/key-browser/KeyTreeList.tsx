@@ -308,6 +308,11 @@ export function KeyTreeList({
       scrollRef={scrollRef}
       testId="redis-key-tree"
       className="min-h-0 flex-1 overflow-auto outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      // The shell added `role="tree"`, and a tree without an accessible name is
+      // announced as an unlabelled tree — two of them on a page are then
+      // indistinguishable. This row list is the only `role="tree"` in the
+      // driver, so it owns the name outright.
+      ariaLabel={t('redis.keyBrowser.tree')}
       // I-9: the tree is a focusable list surface, so ⌘A / ⌘R / arrows have one
       // owner instead of racing the browser default.
       containerProps={({ stickyIndexes }) => ({

@@ -284,6 +284,86 @@ describe('navigator row variants · ARIA contract', () => {
   });
 });
 
+describe('navigator row variants · the two ARIA functions must agree', () => {
+  /**
+   * `navigatorRowAria` and `isNavigatorBranch` both answer "does this row own a
+   * child list", and for a `namespace-node` they are required to give the same
+   * answer. They used to disagree: the announcement wrote `aria-expanded` for
+   * every `namespace-node` while the branch probe read `isLeaf`, so a namespace
+   * leaf announced itself as a collapsed disclosure of a list it does not have.
+   *
+   * This is the cross-check that gap was missing. It is deliberately phrased
+   * against `isNavigatorBranch` rather than against a hand-listed set of leaf
+   * *types*, because `namespace-node` is polymorphic — one type that is a branch
+   * at depth 2 and a leaf at depth 4 — and any type-keyed list has to lie about
+   * one of those two.
+   */
+  it('never announces a disclosure on a row the shell calls a leaf', () => {
+    // The polymorphic variant has to be present in *both* shapes, or this check
+    // is vacuous exactly where it matters: the table above only carries the
+    // branch form, and the branch form is the one that was already correct.
+    const branch = VARIANTS.find((r) => r.type === 'namespace-node') as Extract<
+      UnifiedRow,
+      { type: 'namespace-node' }
+    >;
+    const rows = [...VARIANTS, { ...branch, isLeaf: true, name: 'mv1' }];
+    // A guard against the list silently losing its one leaf of that type.
+    expect(rows.filter((r) => r.type === 'namespace-node' && r.isLeaf)).toHaveLength(1);
+
+    for (const row of rows) {
+      if (DECORATIONS.has(row.type)) continue;
+      const announced = navigatorRowAria(row)?.['aria-expanded'];
+      if (!isNavigatorBranch(row)) {
+        // The defect: this read `aria-expanded="false"`.
+        expect(announced, `${rowKeyLabel(row)} is a leaf but announced a disclosure`).toBe(
+          undefined,
+        );
+      }
+    }
+  });
+
+  it('covers the polymorphic variant in both of its states, not just the branch one', () => {
+    const branch = VARIANTS.find((r) => r.type === 'namespace-node') as Extract<
+      UnifiedRow,
+      { type: 'namespace-node' }
+    >;
+    // The leaf state is not in the 13-variant table, because the table is keyed
+    // by type and this type has two shapes. It has to be spelled out.
+    const leaf: Extract<UnifiedRow, { type: 'namespace-node' }> = { ...branch, isLeaf: true };
+
+    expect(isNavigatorBranch(branch)).toBe(true);
+    expect(navigatorRowAria(branch)?.['aria-expanded']).toBe(false);
+
+    expect(isNavigatorBranch(leaf)).toBe(false);
+    // Absent, not `false`. Both halves are asserted, because the bug was one
+    // function being right while the other was wrong.
+    expect(navigatorRowAria(leaf)).toEqual({ role: 'treeitem', 'aria-level': ariaLevelOf(leaf) });
+    expect(navigatorRowAria(leaf)).not.toHaveProperty('aria-expanded');
+  });
+
+  it('keeps the connection exception explicit rather than accidental', () => {
+    // The one variant where the two answers are *meant* to differ: a database's
+    // parent is its connection even while the connection is idle, so the shell
+    // must keep treating the row as a branch — but there is nothing to disclose
+    // yet, so no `aria-expanded`. If this ever starts announcing `false`, the
+    // exception has turned into the bug above.
+    //
+    // Note the deliberate difference from the leaf case, asserted differently
+    // below: here the property is *present and undefined* (React omits an
+    // attribute whose value is `undefined`, so the DOM is identical), whereas a
+    // namespace leaf is now genuinely keyless. Both are correct; only the
+    // keyless form is the stronger statement, so only it claims one.
+    const base = VARIANTS.find((r) => r.type === 'connection') as Extract<
+      UnifiedRow,
+      { type: 'connection' }
+    >;
+    const idle = { ...base, status: 'error' as const, expanded: false };
+    expect(isNavigatorBranch(idle)).toBe(true);
+    expect(navigatorRowAria(idle)?.['aria-expanded']).toBeUndefined();
+    expect(navigatorRowAria(idle)).toEqual({ role: 'treeitem', 'aria-level': ariaLevelOf(idle) });
+  });
+});
+
 describe('navigator row variants · search shifts the level by exactly one', () => {
   /**
    * The builder's rule, restated: under a search the group header that sat
@@ -376,11 +456,13 @@ function schemaState(): ConnectionSchemaState {
 function params(
   query: string,
   grouped: BuildNavigatorFlatRowsParams['grouped'],
+  expandedGroups: Set<string> = new Set([PINNED_GROUP_KEY, RECENT_GROUP_KEY]),
+  expandedConnections: Set<string> = new Set([`${PINNED_GROUP_KEY}::c1`]),
 ): BuildNavigatorFlatRowsParams {
   return {
     grouped,
-    expandedGroups: new Set([PINNED_GROUP_KEY, RECENT_GROUP_KEY]),
-    expandedConnections: new Set([`${PINNED_GROUP_KEY}::c1`]),
+    expandedGroups,
+    expandedConnections,
     expandedDbs: new Set(['c1::db1']),
     expandedSchemas: new Set(['c1::db1::public']),
     expandedCats: new Set(['c1::db1::public::tables', 'c1::db1::public::routines']),
@@ -404,6 +486,28 @@ const plain = dump(buildNavigatorFlatRows(params('', GROUPED)));
 const searching = dump(buildNavigatorFlatRows(params('users', GROUPED)));
 /** No groups at all, which is the only way to reach `no-connections`. */
 const bare = dump(buildNavigatorFlatRows(params('', [])));
+/**
+ * The same tree under a *user-created* group name.
+ *
+ * `GROUPED` above uses the two reserved group keys, and the builder special-
+ * cases them: pinned renders as a `section`. A group whose name is the user's
+ * own renders as a `group` instead. Both are ordinary and both are in the
+ * product, so the plain-state set is fixture-dependent and must be labelled as
+ * such wherever it is written down.
+ */
+// Same shape as `GROUPED` — one group with a connection, one empty — but with
+// user-chosen names, so the builder has to spell the root `group` instead of
+// `section`. Comparing the two sets isolates the root spelling and nothing else.
+const CUSTOM = [
+  { group: 'team-b', connections: [connection('c1')] },
+  { group: 'team-z', connections: [] },
+];
+// A connection is keyed `group::connectionId`, so moving it into a custom group
+// moves its expansion key too — otherwise the group paints and stops there.
+const CUSTOM_EXPANDED = [new Set(['team-b', 'team-z']), new Set(['team-b::c1'])] as const;
+const customGrouped = dump(
+  buildNavigatorFlatRows(params('', CUSTOM, CUSTOM_EXPANDED[0], CUSTOM_EXPANDED[1])),
+);
 const find = (rows: Dump[], label: string) => rows.find((r) => `${r.type}:${r.label}` === label);
 
 describe('buildNavigatorFlatRows · the shift on real rows', () => {
@@ -413,6 +517,10 @@ describe('buildNavigatorFlatRows · the shift on real rows', () => {
     // empty group is filtered away rather than padded with its hint row. The
     // point of writing both sets out is that a future change to *which* row
     // roots a search has to be a deliberate edit here.
+    //
+    // FIXTURE PRECONDITION on the plain set: it is measured under the two
+    // *reserved* group keys, where pinned renders as a `section`. It is not a
+    // claim about every navigator. The next test pins the other case.
     expect([...new Set(plain.map((r) => r.type))].sort()).toEqual([
       'category',
       'connection',
@@ -430,6 +538,34 @@ describe('buildNavigatorFlatRows · the shift on real rows', () => {
       'table',
     ]);
     expect(bare.map((r) => r.type)).toContain('no-connections');
+  });
+
+  it('adds a `group` row under a user-created group name, and a search still does not', () => {
+    // The plain set above is a fact about the reserved group keys, not about
+    // the navigator. With a group the user named, the builder emits `group`
+    // where it emits `section` for pinned — so the ordinary union is eight, not
+    // seven. Quoting the seven-set without this precondition would overstate it.
+    expect([...new Set(customGrouped.map((r) => r.type))].sort()).toEqual([
+      'category',
+      'connection',
+      'db',
+      'empty-group',
+      'group',
+      'schema',
+      'table',
+    ]);
+    // `group` and `section` are the two roots; exactly one of them is present,
+    // decided by which kind of group the user has.
+    expect(customGrouped.some((r) => r.type === 'section')).toBe(false);
+    expect(plain.some((r) => r.type === 'group')).toBe(false);
+    // And the searched set is genuinely root-free either way, so the level
+    // shift below does not depend on which root spelling was in play.
+    const searchedCustom = dump(
+      buildNavigatorFlatRows(params('users', CUSTOM, CUSTOM_EXPANDED[0], CUSTOM_EXPANDED[1])),
+    );
+    expect([...new Set(searchedCustom.map((r) => r.type))].sort()).toEqual(
+      [...new Set(searching.map((r) => r.type))].sort(),
+    );
   });
 
   it('drops one level for every row below the header the search removed', () => {

@@ -60,6 +60,7 @@ vi.mock('@datazen/ui', async (importOriginal) => ({
 import { KeyTreeList } from '../key-browser/KeyTreeList';
 import { isFolderRow, keyTreeRowKey, ROW_HEIGHT } from '../key-browser/treeRowSpec';
 import type { KeyTreeRow } from '../key-browser/keyTree';
+import redisEn from '../../locales/en';
 
 /*
  * `key:<name>` is a legal Redis key name, and `folder:<path>` is a legal
@@ -144,6 +145,20 @@ describe('key tree · ARIA container semantics', () => {
     expect(grid).toBeTruthy();
     // Every painted row lives inside the grid, not beside it.
     expect(grid.querySelectorAll('[data-row-index]').length).toBe(TREE.length);
+  });
+
+  it('carries an accessible name, because the shell gave it a role', () => {
+    // Before the shell this was a plain column of buttons: no role, so nothing
+    // needed naming. Adding `role="tree"` made the container something a screen
+    // reader announces — unnamed, and indistinguishable from any other tree.
+    const grid = treeGrid(renderList().container)!;
+    const name = grid.getAttribute('aria-label') ?? grid.getAttribute('aria-labelledby');
+    expect(name, 'role="tree" must have an accessible name').toBe('redis.keyBrowser.tree');
+    // This harness has no i18n runtime, so `t()` hands back the key path itself.
+    // That is the gap: it proves the container is wired, not that the key
+    // resolves. Assert the real English value, so "added the aria-label but
+    // never added the locale key" cannot pass.
+    expect(redisEn['redis.keyBrowser.tree']).toBe('Key browser');
   });
 
   it('gives every painted row role="treeitem" and a level one past its depth', () => {
