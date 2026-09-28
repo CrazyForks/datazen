@@ -455,6 +455,39 @@ describe('DataTransferWindow', () => {
     expect(screen.getByTestId('data-transfer-next')).toBeDisabled();
   });
 
+  it('disables Redis to Redis before opening the transfer setup', async () => {
+    const redisSrc: ConnectionConfig = {
+      ...pgSrc,
+      id: 'redis-src',
+      name: 'Redis Src',
+      databaseType: 'redis',
+    };
+    const redisTgt: ConnectionConfig = {
+      ...pgTgt,
+      id: 'redis-tgt',
+      name: 'Redis Tgt',
+      databaseType: 'redis',
+    };
+    urlParamMock.mockImplementation((name) => {
+      const params: Record<string, string> = { sourceId: 'redis-src', targetId: 'redis-tgt' };
+      return params[name] ?? null;
+    });
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_connections') return [redisSrc, redisTgt];
+      return null;
+    });
+    const { DataTransferWindow } = await import('../DataTransferWindow');
+    render(<DataTransferWindow />);
+    await dismissLimitationsDialog();
+    await waitFor(() => expect(screen.getByTestId('data-transfer-path')).toBeTruthy());
+
+    expect(screen.getByTestId('data-transfer-next')).toBeDisabled();
+    expect(screen.getByTestId('data-transfer-path')).toHaveTextContent('adapters');
+    fireEvent.click(within(screen.getByTestId('data-transfer-target')).getAllByRole('button')[0]);
+    const options = await waitFor(() => screen.getAllByTestId('select-option'));
+    expect(options.some((option) => option.getAttribute('aria-disabled') === 'true')).toBe(true);
+  });
+
   it('[tester] drops only the dedicated side reported closed by the event bus', async () => {
     await advanceToSetupStep();
     const handler = crossWindowHandlers.get('datazen:connection-closed');
