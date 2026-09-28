@@ -31,6 +31,23 @@ impl Store {
         Ok(())
     }
 
+    /// Paged history read carrying the untruncated match count.
+    pub async fn get_query_history_page(
+        &self,
+        filter: &super::history_db::QueryHistoryFilter<'_>,
+    ) -> Result<super::history_db::QueryHistoryPage, StoreError> {
+        self.history_db
+            .query_history_page(filter)
+            .map_err(|e| StoreError::WriteError(e.to_string()))
+    }
+
+    /// Delete one history row. `Ok(0)` means the id was already gone.
+    pub async fn delete_query_history(&self, id: &str) -> Result<u64, StoreError> {
+        self.history_db
+            .delete_query_history(id)
+            .map_err(|e| StoreError::WriteError(e.to_string()))
+    }
+
     pub async fn purge_history(
         &self,
         scope: super::HistoryScope,

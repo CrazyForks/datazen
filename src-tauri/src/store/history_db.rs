@@ -89,6 +89,90 @@ pub enum HistoryDbError {
     Other(String),
 }
 
+/// Sort order for the paged query-history read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HistoryOrder {
+    /// Newest first (the historical default).
+    #[default]
+    Recent,
+    /// Oldest first.
+    Oldest,
+    /// Slowest first — surfaces the statements that actually hurt.
+    Slowest,
+}
+
+impl HistoryOrder {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "recent" => Some(Self::Recent),
+            "oldest" => Some(Self::Oldest),
+            "slowest" => Some(Self::Slowest),
+            _ => None,
+        }
+    }
+
+    fn order_by(self) -> &'static str {
+        match self {
+            Self::Recent => "executed_at DESC, id DESC",
+            Self::Oldest => "executed_at ASC, id ASC",
+            Self::Slowest => "execution_time_ms DESC, executed_at DESC",
+        }
+    }
+}
+
+/// Filters for the paged query-history read.
+///
+/// `search` is applied **before** `limit` so a caller never has to widen the
+/// page to find a row that exists. `since`/`until` are RFC3339 instants.
+#[derive(Debug, Clone)]
+pub struct QueryHistoryFilter<'a> {
+    pub limit: usize,
+    pub connection_id: Option<&'a str>,
+    pub database: Option<&'a str>,
+    pub schema: Option<&'a str>,
+    pub search: Option<&'a str>,
+    pub since: Option<&'a str>,
+    pub until: Option<&'a str>,
+    pub order: HistoryOrder,
+}
+
+/// Page size used when a caller does not name one.
+///
+/// Hand-written rather than `#[derive(Default)]` on purpose: a derived default
+/// would be `limit: 0`, and `LIMIT 0` returns an empty page that reads as "you
+/// have no history" instead of "you asked for nothing". Every `..Default` call
+/// site would silently render an empty list.
+pub const DEFAULT_HISTORY_PAGE_SIZE: usize = 200;
+
+impl Default for QueryHistoryFilter<'_> {
+    fn default() -> Self {
+        Self {
+            limit: DEFAULT_HISTORY_PAGE_SIZE,
+            connection_id: None,
+            database: None,
+            schema: None,
+            search: None,
+            since: None,
+            until: None,
+            order: HistoryOrder::Recent,
+        }
+    }
+}
+
+/// One page of query history plus the number of rows the filter matched *before*
+/// the page was cut.
+///
+/// Without `total` a truncated page is indistinguishable from a complete one, so
+/// the UI cannot tell "you searched and found nothing" from "the row you are
+/// looking for fell outside the 200 most recent".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryHistoryPage {
+    pub entries: Vec<QueryHistoryEntry>,
+    /// Rows matching the filter with `limit` ignored.
+    pub total: u64,
+}
+
 pub struct HistoryDb {
     #[allow(dead_code)] // exposed via `db_path()` for the upcoming cleanup/purge flows
     db_path: PathBuf,
@@ -405,6 +489,121 @@ impl HistoryDb {
         self.with_conn(|conn| {
             conn.execute("DELETE FROM query_history", [])?;
             Ok(())
+        })
+    }
+
+    /// Delete exactly one history row. Returns the number of rows removed, which
+    /// is `0` for an unknown id — callers can tell a no-op from a real delete
+    /// instead of assuming success.
+    pub fn delete_query_history(&self, id: &str) -> Result<u64, HistoryDbError> {
+        self.with_conn(|conn| {
+            let deleted = conn.execute("DELETE FROM query_history WHERE id = ?1", params![id])?;
+            Ok(deleted as u64)
+        })
+    }
+
+    /// Build the shared `WHERE` fragment for both the page and the total count.
+    ///
+    /// Kept in one place so the count and the page can never drift apart: a
+    /// count computed from different predicates than the rows it describes is
+    /// how a "showing N of M" label starts lying.
+    fn history_predicate(
+        filter: &QueryHistoryFilter<'_>,
+    ) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+        let mut clauses: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(cid) = filter.connection_id {
+            clauses.push(format!("connection_id = ?{}", params.len() + 1));
+            params.push(Box::new(cid.to_string()));
+        }
+        if let Some(db) = filter.database {
+            clauses.push(format!("database = ?{}", params.len() + 1));
+            params.push(Box::new(db.to_string()));
+        }
+        if let Some(s) = filter.schema {
+            // Empty string means "rows with no schema" (NULL); else exact match.
+            if s.is_empty() {
+                clauses.push("schema IS NULL".to_string());
+            } else {
+                clauses.push(format!("schema = ?{}", params.len() + 1));
+                params.push(Box::new(s.to_string()));
+            }
+        }
+        if let Some(needle) = filter.search {
+            let needle = needle.trim();
+            if !needle.is_empty() {
+                // ESCAPE so a literal % or _ in the user's needle is not a
+                // wildcard. Matches the old client-side `includes()` semantics
+                // closely enough while narrowing to the two indexed-ish columns.
+                let idx = params.len() + 1;
+                clauses.push(format!(
+                    "(LOWER(sql) LIKE ?{idx} ESCAPE '\\' OR LOWER(database) LIKE ?{idx} ESCAPE '\\' \
+                      OR LOWER(COALESCE(schema, '')) LIKE ?{idx} ESCAPE '\\')"
+                ));
+                let pattern = format!(
+                    "%{}%",
+                    needle
+                        .to_lowercase()
+                        .replace('\\', "\\\\")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_")
+                );
+                params.push(Box::new(pattern));
+            }
+        }
+        if let Some(since) = filter.since {
+            clauses.push(format!("executed_at >= ?{}", params.len() + 1));
+            params.push(Box::new(since.to_string()));
+        }
+        if let Some(until) = filter.until {
+            clauses.push(format!("executed_at <= ?{}", params.len() + 1));
+            params.push(Box::new(until.to_string()));
+        }
+
+        let where_sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        (where_sql, params)
+    }
+
+    /// Paged read with an honest total. See [`QueryHistoryPage`].
+    pub fn query_history_page(
+        &self,
+        filter: &QueryHistoryFilter<'_>,
+    ) -> Result<QueryHistoryPage, HistoryDbError> {
+        let (where_sql, params) = Self::history_predicate(filter);
+        self.with_conn(|conn| {
+            // The count reuses the identical predicate and binds no LIMIT, so
+            // `total` is the size of the full match set.
+            let total: i64 = conn.query_row(
+                &format!("SELECT COUNT(*) FROM query_history {where_sql}"),
+                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                |r| r.get(0),
+            )?;
+
+            let mut bound = params;
+            bound.push(Box::new(filter.limit as i64));
+            let sql = format!(
+                "SELECT id, connection_id, database, schema, sql, executed_at, \
+                 execution_time_ms, rows_affected, success, error_message \
+                 FROM query_history {where_sql} ORDER BY {} LIMIT ?{}",
+                filter.order.order_by(),
+                bound.len(),
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(
+                rusqlite::params_from_iter(bound.iter().map(|p| p.as_ref())),
+                map_query_row,
+            )?;
+            let entries = rows.collect::<Result<Vec<_>, _>>()?;
+
+            Ok(QueryHistoryPage {
+                entries,
+                total: total.max(0) as u64,
+            })
         })
     }
 
@@ -942,6 +1141,12 @@ fn rename_aside(from: &Path, to: &Path) -> Result<(), HistoryDbError> {
     Ok(())
 }
 
+/// Paging/search/delete coverage for the global history dialog lives in a
+/// sibling file so this module does not keep growing.
+#[cfg(test)]
+#[path = "history_db_page_tests.rs"]
+mod page_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -949,7 +1154,8 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
-    fn sample_query(sql: &str, days_ago: i64) -> QueryHistoryEntry {
+    /// Shared with the sibling `page_tests` module.
+    pub(super) fn sample_query(sql: &str, days_ago: i64) -> QueryHistoryEntry {
         QueryHistoryEntry {
             id: Uuid::new_v4().to_string(),
             connection_id: "cfg1".into(),
@@ -978,6 +1184,9 @@ mod tests {
             error_message: None,
         }
     }
+
+    // ── Baseline suite follows. Paging/search/delete coverage lives in the
+    // sibling `page_tests` module, split out only to bound file size.
 
     fn make_test_result(success: bool) -> WorkflowExecutionResult {
         WorkflowExecutionResult {

@@ -18,7 +18,10 @@ pub use app_db::{
     WorkflowRecord, WorkflowVisibility, APP_DB_FILE,
 };
 pub(crate) use favorites::NewFavorite;
-pub use history_db::{HistoryDb, HistoryEntry, HistoryListItem, HistoryScope};
+pub use history_db::{
+    HistoryDb, HistoryEntry, HistoryListItem, HistoryOrder, HistoryScope, QueryHistoryFilter,
+    QueryHistoryPage,
+};
 pub use models::{FavoriteQuery, QueryHistoryEntry, SyncTask};
 pub use settings::{clamp_connection_pool_size, AppSettings, OnboardingState};
 
