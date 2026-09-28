@@ -68,6 +68,68 @@ export function isUpdaterSupported(): boolean {
   return getUpdateChannel() === 'auto';
 }
 
+/** Normalize a SKU name so `all` and `-all` compare equal. */
+function normalizeSku(value: string): string {
+  return value.trim().toLowerCase().replace(/^-+/, '');
+}
+
+/**
+ * The manifest's top-level `variant`, as written by
+ * `scripts/generate-updater-latest-json.mjs`. Missing, non-string or blank all
+ * collapse to `null`.
+ */
+export function readManifestVariant(rawJson: unknown): string | null {
+  if (typeof rawJson !== 'object' || rawJson === null) return null;
+  const value = (rawJson as Record<string, unknown>).variant;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * Whether this manifest belongs to the build that is reading it.
+ *
+ * The endpoint is a compile-time constant, so drift in the build scripts or in
+ * `tauri.conf.json` lets a variant read another SKU's manifest — and that update
+ * replaces it with a build missing drivers. The plugin hands us the manifest
+ * verbatim (`rawJson` is the parsed response body; tauri-plugin-updater stores
+ * `res.json()` as-is), so the SKU can be re-checked here as a second line of
+ * defence that does not depend on the endpoint having been configured right.
+ *
+ * A manifest with no `variant` splits two ways. Basic keeps the manifest name
+ * from earlier releases, so manifests published before this field existed are
+ * still legitimate — rejecting them would strand every installed Basic build.
+ * Variant manifests only came into existence with per-SKU channels, so a missing
+ * field there can only mean the manifest belongs to someone else.
+ */
+export function manifestBelongsToBuild(
+  rawJson: unknown,
+  variant: string = currentVariant(),
+): boolean {
+  const found = readManifestVariant(rawJson);
+  if (found === null) return normalizeSku(variant) === 'basic';
+  return normalizeSku(found) === normalizeSku(variant);
+}
+
+/** Shown when a manifest fails the SKU check. Healthy builds never reach it. */
+const MANIFEST_MISMATCH_MESSAGE =
+  'This update belongs to a different DataZen build and was skipped — install the matching build from GitHub Releases';
+
+/**
+ * Last check before anything is downloaded or installed.
+ *
+ * Returns the reason to refuse, or `null` to proceed. Both `checkForUpdates` and
+ * `downloadAndInstallUpdate` route through it, so neither path can be left
+ * unguarded.
+ */
+function refuseForeignManifest(rawJson: unknown): string | null {
+  if (manifestBelongsToBuild(rawJson)) return null;
+  console.warn(
+    `[updater] refusing update: manifest variant=${readManifestVariant(rawJson) ?? '<missing>'} build variant=${currentVariant()}`,
+  );
+  return MANIFEST_MISMATCH_MESSAGE;
+}
+
 export async function checkForUpdates(): Promise<UpdateCheckResult> {
   if (!isUpdaterSupported()) {
     return { status: 'error', message: 'Updater is not available in this build' };
@@ -77,6 +139,10 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
     const update = await check();
     if (!update) {
       return { status: 'upToDate' };
+    }
+    const refusal = refuseForeignManifest(update.rawJson);
+    if (refusal) {
+      return { status: 'error', message: refusal };
     }
     return { status: 'available', version: update.version };
   } catch (e) {
@@ -101,6 +167,12 @@ export async function downloadAndInstallUpdate(
     if (!update) {
       onProgress?.({ phase: 'idle' });
       return { status: 'upToDate' };
+    }
+
+    const refusal = refuseForeignManifest(update.rawJson);
+    if (refusal) {
+      onProgress?.({ phase: 'idle' });
+      return { status: 'error', message: refusal };
     }
 
     let downloaded = 0;
@@ -137,7 +209,15 @@ export async function downloadAndInstallUpdate(
 
 /** Silent startup check; installs when an update is available and setting is on. */
 export async function maybeCheckOnStartup(enabled: boolean): Promise<void> {
-  if (!enabled || !isUpdaterSupported()) return;
+  const channel = getUpdateChannel();
+  if (!enabled || channel !== 'auto') {
+    // Diagnosable on purpose: "why did this build not check for updates?" is
+    // answered by the channel, and the SKU says which manifest it would read.
+    console.info(
+      `[updater] startup check skipped: setting=${enabled} channel=${channel} variant=${currentVariant()}`,
+    );
+    return;
+  }
 
   const result = await downloadAndInstallUpdate();
   if (result.status === 'error') {

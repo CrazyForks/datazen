@@ -128,7 +128,8 @@ cargo test -p datazen-ai-api --lib
   `plugins.updater.endpoints`）。Tauri updater 只按**平台**在清单里查条目、不认 SKU，
   因此共用一份清单就等于把变体更新成 Basic（丢掉 Basic 不含的驱动）。SKU 名单、清单名
   与平台集合的唯一来源是 `scripts/release-variants.mjs`；变体清单缺平台即失败，Basic
-  仅告警。详见 [updater.md](./updater.md)。
+  仅告警。发布前用 `pnpm test:release-variants` 校验矩阵 / `tauri.conf.json` / 清单步骤 /
+  打包模板四方一致（`scripts/check-release-variants.mjs`）。详见 [updater.md](./updater.md)。
 
 ### 6.1 构建耗时优化：driver union 预热
 

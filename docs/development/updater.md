@@ -70,10 +70,15 @@ done
 - **Variant identity** — `scripts/resolve-drivers.mjs` bakes `DATAZEN_VARIANT` and `DATAZEN_UPDATER_CHANNEL` into the gitignored `src/extensions/generated.ts`, from `--variant=<sku>` / `DATAZEN_VARIANT` (default `custom`).
 - **Settings → General**: “Check for updates” (manual) and optional “Check on startup” (default off). Builds with no published channel (`custom`, private SKUs) show a **manual download** card instead and never self-update.
 - `getUpdateChannel()` in `src/lib/updater.ts` is the single runtime gate: `auto` (has a channel) / `manual` (desktop build without one) / `none` (not a desktop build).
+- **Manifest SKU re-check** — before anything is downloaded or installed, `src/lib/updater.ts` compares the manifest's own `variant` field with the build's SKU (`manifestBelongsToBuild()`). The plugin exposes the manifest verbatim as `Update.rawJson`, so this is a second line of defence that does not depend on the endpoint having been configured correctly: a manifest naming another SKU is refused instead of installed, and the refusal is logged as `[updater] refusing update: manifest variant=… build variant=…`. A manifest *without* the field is accepted for Basic only — Basic's manifest name is inherited from earlier releases, so pre-field manifests are legitimate there, while variant manifests only exist because of per-SKU channels.
+
+## Consistency guard
+
+`pnpm test:release-variants` (`scripts/check-release-variants.mjs`) checks that the four files which must agree about SKUs still do: the release matrix, `tauri.conf.json`, the manifest job in `release.yml`, and the Homebrew / WinGet templates. It covers the failure shapes that are otherwise silent — a variant reading Basic's manifest, a SKU that lost a platform leg, a missing `plugins.updater.pubkey` (which breaks signature verification for every SKU at once), and a packaging template naming an artifact that does not exist. `scripts/__tests__/check-release-variants.test.ts` re-runs it against mutated copies of the real files, so each check is proven to fire. The frozen `0.1.1` manifests under `packaging/winget/manifests/` are intentionally excluded: they record what was submitted for that version.
 
 ## Linux and other install channels
 
-- **In-app updater:** Basic Linux builds publish **AppImage** + `.sig` in `latest.json`. Install or replace the AppImage when an update is offered.
+- **In-app updater:** every SKU that builds for Linux publishes **AppImage** + `.sig` in its own manifest (`latest.json` / `latest-all.json`); Akulaku has no Linux leg by design. Install or replace the AppImage when an update is offered.
 - **deb / rpm:** Not served by the updater; download new packages from [GitHub Releases](https://github.com/flyxl/datazen/releases). See [`packaging.md`](packaging.md) for install commands and dependencies.
 - **Homebrew / WinGet:** Package managers track release tags separately and follow the **Basic** artifacts only; they do not use `latest.json`. Pick one channel and stick to it, or disable “Check on startup” in Settings. If you installed the All/Akulaku installer by hand, keep updating that SKU from Releases — the updater will only ever offer a build of the SKU you installed.
 
@@ -85,6 +90,7 @@ Release DMGs may be unsigned with respect to **notarization** even when updater 
 
 - **Update check fails in dev**: local builds are `DATAZEN_VARIANT=custom` (no channel) and `createUpdaterArtifacts` is off by default; use a release build or pass `--variant=basic` explicitly.
 - **Update UI shows a manual download card**: expected — this SKU has no published manifest.
+- **Update refused as "belongs to a different DataZen build"**: the manifest named another SKU, so the SKU check refused it (see “Manifest SKU re-check” above). Confirm the build's endpoint points at its own `latest-<sku>.json` and that the manifest's `variant` matches `currentVariant()`. `pnpm test:release-variants` catches the configuration side of this.
 - **Signature invalid**: pubkey in `tauri.conf.json` must match the private key used to sign the release.
 - **A variant was replaced by Basic**: check that the build really is the SKU it claims (`currentVariant()`), that asset names carry the `-<sku>` suffix, and that the matching `latest-<sku>.json` was uploaded. The per-SKU manifest generator refuses to build a manifest from another SKU's artifacts, so this now fails the release job instead of reaching users.
 - **Lost private key**: generate a new pair, update pubkey, and users on old keys cannot receive signed updates until they reinstall manually.

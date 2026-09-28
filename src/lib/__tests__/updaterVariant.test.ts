@@ -49,8 +49,10 @@ describe('updater on a SKU with no published channel', () => {
     // Regression guard for the reported bug: a variant whose SKU has no channel
     // used to read Basic's manifest and install a Basic build over itself,
     // dropping every driver Basic does not ship. Nothing may reach the plugin.
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     await maybeCheckOnStartup(true);
     expect(mockCheck).not.toHaveBeenCalled();
+    info.mockRestore();
 
     const check = await checkForUpdates();
     expect(check).toEqual({
@@ -72,5 +74,14 @@ describe('updater on a SKU with no published channel', () => {
     // Not even a warning: there is nothing to report, the SKU simply has no channel.
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it('logs why it stays inert', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    await maybeCheckOnStartup(true);
+    expect(info).toHaveBeenCalledWith(
+      '[updater] startup check skipped: setting=true channel=manual variant=custom',
+    );
+    info.mockRestore();
   });
 });

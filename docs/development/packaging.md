@@ -9,6 +9,13 @@ Templates live in-repo; publishing the tap / winget-pkgs PR is a release ops ste
 | Homebrew Cask (Basic DMG) | [`packaging/homebrew/datazen.rb`](../../packaging/homebrew/datazen.rb) |
 | WinGet singleton (Basic NSIS) | [`packaging/winget/Flyxl.DataZen.yaml`](../../packaging/winget/Flyxl.DataZen.yaml) |
 
+Both name a **Basic** artifact, and the Windows installer is
+`DataZen-{Version}-windows-x64.exe` — there is **no** `-nsis` segment;
+`canonical_name()` in `release.yml` appends only the file extension (the `0.1.1`
+snapshot under `packaging/winget/manifests/` predates that and keeps its name).
+Run `pnpm test:release-variants` before publishing: it fails if a template names
+a variant artifact, keeps a retired name, or drifts from the release matrix.
+
 ## After each Basic release
 
 1. Download the published Basic macOS `.dmg` / Windows `.exe` assets from GitHub Releases.
