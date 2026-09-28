@@ -45,4 +45,4 @@ For Data-only Data Transfer into existing tables, preserve selected-table subset
 
 ## Commit
 
-- Pending commit.
+- Implementation commit: `798c3151` (`fix(data-transfer): order FK-dependent table writes`).
