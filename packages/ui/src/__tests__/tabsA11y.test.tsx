@@ -186,10 +186,18 @@ describe('Tabs — composition', () => {
     expect(tablist.contains(add)).toBe(false);
   });
 
-  it('leaves a bar-only strip layout entirely to the caller', () => {
-    // The segmented strips are `inline-flex`. A built-in `flex` default would
-    // collide with it, and the winner is decided by stylesheet order rather than
-    // class-attribute order — so bar-only mode injects nothing of its own.
+  it('adds no class of its own to a bar-only strip', () => {
+    // What this pins is the *mechanism*, not an outcome: the tablist's class
+    // attribute is exactly what the caller passed, with nothing merged in. The
+    // reason is the API boundary — bar-only strips are `inline-flex` segmented
+    // controls and fixed-height rows, so a shell that supplied layout would have
+    // every call site overriding it anyway. (It is not collision avoidance:
+    // `cn` is `twMerge(clsx(...))`, and twMerge is display-group aware, so a
+    // default `flex` would lose to a caller's `inline-flex` deterministically.)
+    //
+    // This is deliberately *not* the test that catches a real strip dropping its
+    // own `flex` — the three call sites assert their rendered class in their own
+    // suites, next to the components they belong to.
     render(
       <Tabs
         items={ITEMS}

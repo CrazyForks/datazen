@@ -44,7 +44,7 @@ export function SearchModeTabs({ mode, onChange }: SearchModeTabsProps) {
         const next = MODES.find((entry) => entry.value === id);
         if (next) onChange(next.value);
       }}
-      className="overflow-hidden rounded-md border border-edge"
+      className="flex overflow-hidden rounded-md border border-edge"
       getTabClassName={({ index, selected }) =>
         cn(
           'flex h-7 items-center px-2 text-xs transition-colors',

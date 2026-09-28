@@ -167,11 +167,18 @@ export function Tabs({
   // Bar-only: the tablist is the root, so a segmented control keeps the exact
   // box it had when it hand-rolled its own.
   //
-  // No layout class is injected here, unlike the panel-mode tablist below. A
-  // built-in `flex` would fight a caller asking for `inline-flex`, and which one
-  // wins is decided by the order Tailwind emits them in the stylesheet — not by
-  // the order they appear in this `class` attribute. Making the caller the sole
-  // owner of the strip's layout keeps that fight out of existence.
+  // No layout class is injected here, unlike the panel-mode tablist below: in
+  // bar-only mode the caller is the sole owner of the strip's layout, and gets
+  // the class attribute back verbatim.
+  //
+  // (A built-in `flex` would in fact have been harmless — `cn` is
+  // `twMerge(clsx(...))`, and twMerge is display-group aware, so a caller's
+  // `inline-flex` deterministically displaces a default `flex`. The reason for
+  // leaving it out anyway is the API boundary, not collision avoidance: a shell
+  // that quietly supplies layout is a shell whose layout every call site has to
+  // override to get the box it actually wants. The segmented strips here are
+  // the reason that matters — they are `inline-flex` or fixed-height rows, not
+  // the default bottom-bordered bar, and they say so themselves.)
   if (!hasPanel) {
     return (
       <div

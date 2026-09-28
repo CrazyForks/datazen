@@ -94,6 +94,16 @@ describe('JsonModeBar tab semantics (converged onto Tabs)', () => {
     fireEvent.click(screen.getByTestId('redis-json-mode-tree'));
     expect(onSelect).toHaveBeenCalledWith('tree');
   });
+
+  it('keeps the bar an inline segmented control', () => {
+    renderBar();
+    // `inline-flex` is load-bearing here: the bar sits beside the other editor
+    // toolbar controls and has to size to its segments instead of spanning the
+    // editor. Nothing else can supply it — bar-only `Tabs` injects no layout
+    // class by design, and `cn`/twMerge only ever drops conflicting classes, it
+    // never adds a missing token back.
+    expect(screen.getByTestId('redis-json-mode-bar')).toHaveClass('inline-flex');
+  });
 });
 
 describe('SearchModeTabs tab semantics (converged onto Tabs)', () => {
@@ -140,5 +150,17 @@ describe('SearchModeTabs tab semantics (converged onto Tabs)', () => {
     const onChange = renderStrip();
     fireEvent.click(screen.getByTestId('redis-search-mode-all'));
     expect(onChange).toHaveBeenCalledWith('all');
+  });
+
+  it('keeps the three segments in one flex row', () => {
+    renderStrip();
+    // This is the regression that shipped once already. The tablist is the flex
+    // *container*; each segment carries its own `flex h-7`. Drop `flex` here and
+    // the three block-level segments stack vertically, and every one of them
+    // grows the `border-l` that is only supposed to be the divider *between*
+    // segments — so the control stops reading as three side-by-side options.
+    // Asserted on the rendered tablist because the class lives in the component,
+    // not in anything a `Tabs`-level test passes in.
+    expect(screen.getByTestId('redis-search-mode-tabs')).toHaveClass('flex');
   });
 });

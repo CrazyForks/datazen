@@ -281,6 +281,18 @@ describe('ServerStatusView view tabs (converged onto Tabs)', () => {
     ).toEqual(['0', '-1', '-1']);
   });
 
+  it('keeps the strip a flex row above the view body', () => {
+    renderView();
+    // The tablist is the flex container the three tabs sit in. Bar-only `Tabs`
+    // injects no layout class by design, so this string is the only thing making
+    // the bar a row; drop `flex` and the three `relative` tabs stack vertically,
+    // putting `border-b` on each stacked tab instead of under the strip.
+    const tablist = screen.getByRole('tablist', { name: 'serverStatus.dashboardTitle' });
+    expect(tablist).toHaveClass('flex');
+    expect(tablist).toHaveClass('items-center');
+    expect(tablist).toHaveClass('border-b');
+  });
+
   it('switches view from the keyboard', () => {
     renderView();
     const dashboard = screen.getByTestId('server-view-tab-dashboard');
