@@ -1,5 +1,5 @@
-import { Loader2, XCircle } from 'lucide-react';
-import { Button, cn } from '@datazen/ui';
+import { XCircle } from 'lucide-react';
+import { Button, cn, Spinner } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import type { ValueSearchState } from './useValueSearch';
 
@@ -63,7 +63,7 @@ export function ValueSearchResults({ state, onSelectKey, onCancel }: ValueSearch
 
         {running && state.hits.length === 0 && !state.error && (
           <div className="flex items-center gap-2 p-4 text-sm text-fg-muted">
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Spinner size="lg" />
             {t('redis.search.scanning')}
           </div>
         )}

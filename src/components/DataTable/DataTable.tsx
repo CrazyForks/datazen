@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type KeyboardEvent } from 'react';
 import { tid } from '../../lib/tid';
-import { Download, Loader2, Trash2 } from 'lucide-react';
+import { Download, Trash2 } from 'lucide-react';
 import type { DatabaseType, FilterCondition, SortCondition } from '../../types';
 import type { CellEdit } from '../../stores/tableData/types';
 import { useI18n } from '../../hooks/useI18n';
@@ -24,6 +24,7 @@ import { TableHeader, type ColumnDef } from './TableHeader';
 import { VirtualBody } from './VirtualBody';
 import { DataExportDialog } from './DataExportDialog';
 import { cn } from '../../lib/cn';
+import { Spinner } from '../ui/Spinner';
 
 export interface DataTableProps {
   columns: ColumnDef[];
@@ -540,7 +541,7 @@ export function DataTable({
                 aria-live="polite"
                 className="flex min-h-28 items-center justify-center gap-2 text-xs text-fg-muted"
               >
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                <Spinner size="lg" />
                 {t('dataTable.loading')}
               </div>
             ) : rows.length === 0 ? (

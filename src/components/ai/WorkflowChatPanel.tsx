@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Copy,
   FileCode,
-  Loader2,
   Save,
   Sparkles,
   Settings,
@@ -32,6 +31,7 @@ import {
 import { splitContextItems } from '../../lib/contextItems';
 import type { AiChatMessage, ContextItem } from '../../types';
 import { QuestionBlock } from './AiChatPanel';
+import { Spinner } from '../ui/Spinner';
 
 interface WorkflowChatPanelProps {
   connections: { id: string; name: string; databaseType: string; database?: string }[];
@@ -269,7 +269,7 @@ export function WorkflowChatPanel({ connections, onSaved, onBack }: WorkflowChat
           !workflowChat.streamContent &&
           !workflowChat.streamReasoning && (
             <div className="flex items-center gap-2 py-2 text-xs text-fg-muted">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Spinner size="md" />
               {t('chat.thinking')}
             </div>
           )}
@@ -385,7 +385,7 @@ function WorkflowChatBubble({
 
         {!message.content && isStreaming && message.reasoning && (
           <div className="flex items-center gap-1 text-[10px] text-fg-muted mt-1">
-            <Loader2 className="h-3 w-3 animate-spin" />
+            <Spinner size="sm" />
           </div>
         )}
 
@@ -433,7 +433,7 @@ function WorkflowChatBubble({
                       disabled={saving}
                     >
                       {saving ? (
-                        <Loader2 className="inline h-2.5 w-2.5 animate-spin" />
+                        <Spinner size="xs" className="inline" />
                       ) : saveOk ? (
                         <Check className="inline h-2.5 w-2.5" />
                       ) : (

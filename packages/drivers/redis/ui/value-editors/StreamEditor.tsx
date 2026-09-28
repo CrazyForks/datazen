@@ -3,13 +3,12 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronRight,
-  Loader2,
   Plus,
   RefreshCw,
   Square,
   Trash2,
 } from 'lucide-react';
-import { Button, cn } from '@datazen/ui';
+import { Button, cn, Spinner } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import { redisCommandInvoke } from '../shared/redisInvoke';
@@ -397,7 +396,7 @@ export function StreamEditor({ dbSessionId, dbIndex, redisKey, gateWrite }: Stre
 
       {(loading || busy) && (
         <div className="flex items-center gap-2 text-fg-muted">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Spinner size="md" />
           {t('common.loading')}
         </div>
       )}

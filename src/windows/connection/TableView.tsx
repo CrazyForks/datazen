@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Columns3, Filter, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
+import { Columns3, Filter, RefreshCw, ShieldAlert } from 'lucide-react';
 import { DataTable } from '../../components/DataTable/DataTable';
 import type { ColumnDef } from '../../components/DataTable/TableHeader';
 import { NlFilterInput } from '../../components/ai/NlFilterInput';
@@ -22,6 +22,7 @@ import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
 import type { DatabaseType, FilterCondition, SortCondition } from '../../types';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface TableViewProps {
   /** Table/view panel this grid belongs to; its data slice is keyed by this id. */
@@ -343,7 +344,7 @@ export function TableView({
   if (loading && columns.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-        <Loader2 className="h-5 w-5 animate-spin" />
+        <Spinner size="xl" />
         {t('tableView.loadingData')}
       </div>
     );

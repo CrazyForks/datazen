@@ -13,6 +13,15 @@ export { Dialog, type DialogProps } from './Dialog';
 export { Tabs, type TabItem, type TabsProps } from './Tabs';
 export { Badge, type BadgeProps } from './Badge';
 export { Label, type LabelProps } from './Label';
+// The one loading indicator. Replaces ~100 hand-written `animate-spin` call
+// sites, and gives the ones that never spoke to a screen reader a way to.
+export {
+  Spinner,
+  type SpinnerProps,
+  type SpinnerSize,
+  type SpinnerTone,
+  type SpinnerVariant,
+} from './Spinner';
 export { Slider, type SliderProps } from './Slider';
 export {
   TemporalValueInput,

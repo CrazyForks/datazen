@@ -9,7 +9,6 @@ import {
   Files,
   Gauge,
   HardDrive,
-  Loader2,
   RefreshCw,
   Users,
   Zap,
@@ -38,6 +37,7 @@ import {
 } from '../../lib/serverStatusTrends';
 
 import type { TranslationKey } from '../../locales';
+import { Spinner } from '../../components/ui/Spinner';
 
 export interface ServerStatusCache {
   status: Record<string, string | number | boolean | null>;
@@ -652,7 +652,7 @@ export function ServerStatusView({
   if (loading && !status && !initialData?.status) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-sm text-fg-muted">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        <Spinner size="lg" className="mr-2" />
         {t('serverStatus.loading')}
       </div>
     );
@@ -720,11 +720,7 @@ export function ServerStatusView({
           disabled={buttonLoading}
           data-testid="server-dashboard-refresh"
         >
-          {buttonLoading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5" />
-          )}
+          {buttonLoading ? <Spinner size="md" /> : <RefreshCw className="h-3.5 w-3.5" />}
           {t('serverStatus.refresh')}
         </Button>
       </div>

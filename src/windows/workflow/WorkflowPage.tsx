@@ -14,7 +14,6 @@ import {
   Clock,
   FolderOpen,
   History,
-  Loader2,
   Pencil,
   Play,
   Plus,
@@ -76,6 +75,7 @@ import type {
   WorkflowListItem,
 } from '../../types';
 import type { ChartConfig } from '../../types/chart';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface WorkflowPageProps {
   embedded?: boolean;
@@ -881,7 +881,7 @@ export function WorkflowPage({
                           </span>
                         )}
                         {isWorkflowRunPanel(panel) && panel.isExecuting && (
-                          <Loader2 className="h-3 w-3 animate-spin text-accent" />
+                          <Spinner size="sm" tone="accent" />
                         )}
                       </button>
                       <button
@@ -947,11 +947,7 @@ export function WorkflowPage({
                 onClick={() => void handleExecute()}
                 disabled={isExecuting}
               >
-                {isExecuting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Play className="h-3.5 w-3.5" />
-                )}
+                {isExecuting ? <Spinner size="md" /> : <Play className="h-3.5 w-3.5" />}
                 {isExecuting ? t('workflows.executing') : t('workflows.execute')}
               </Button>
               {currentResult?.success && activePanel?.type === 'run' && (
@@ -1322,7 +1318,7 @@ function WorkflowSidebarList({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8 text-fg-muted text-xs">
-        <Loader2 className="h-4 w-4 animate-spin mr-1" />
+        <Spinner size="lg" className="mr-1" />
         {t('workflows.loading')}
       </div>
     );

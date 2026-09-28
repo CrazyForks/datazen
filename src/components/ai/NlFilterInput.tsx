@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Sparkles, X } from 'lucide-react';
+import { Sparkles, X } from 'lucide-react';
 import { useI18n } from '../../hooks/useI18n';
 import { useAiKeyboard } from '../../hooks/useAiKeyboard';
 import { useAiStore } from '../../stores/aiStore';
 import { useTableDataStore } from '../../stores/tableDataStore';
 import { cn } from '../../lib/cn';
+import { Spinner } from '../ui/Spinner';
 
 interface NlFilterInputProps {
   /** Table/view panel whose filter state this input drives. */
@@ -140,7 +141,7 @@ export function NlFilterInput({ panelId, dbSessionId, database, tableName }: NlF
         />
         {isParsingFilter ? (
           <span className="flex shrink-0 items-center gap-1 text-xs text-fg-muted">
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Spinner size="lg" />
             {t('smartFilter.parsing')}
           </span>
         ) : (

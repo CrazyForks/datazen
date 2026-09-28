@@ -3,7 +3,6 @@ import {
   BookOpen,
   FolderOpen,
   History,
-  Loader2,
   Pencil,
   Play,
   Plus,
@@ -28,6 +27,7 @@ import {
 import { WorkflowExecutionResultPanel } from '../../windows/workflow/WorkflowExecutionResultPanel';
 import { WorkflowHistoryTab } from '../../windows/workflow/WorkflowHistorySection';
 import type { HistoryListItem, WorkflowExecutionResult, WorkflowListItem } from '../../types';
+import { Spinner } from '../ui/Spinner';
 
 interface WorkflowPanelProps {
   dbSessionId?: string;
@@ -182,7 +182,7 @@ export function WorkflowPanel({ dbSessionId }: WorkflowPanelProps) {
   if (!localesReady || workflowsLoading) {
     return (
       <div className="flex items-center justify-center py-4 text-fg-muted text-xs">
-        <Loader2 className="h-4 w-4 animate-spin mr-1" />
+        <Spinner size="lg" className="mr-1" />
         {t('workflows.loading')}
       </div>
     );
@@ -389,11 +389,7 @@ export function WorkflowPanel({ dbSessionId }: WorkflowPanelProps) {
                 onClick={() => void handleExecute()}
                 disabled={isExecuting}
               >
-                {isExecuting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Play className="h-3.5 w-3.5" />
-                )}
+                {isExecuting ? <Spinner size="md" /> : <Play className="h-3.5 w-3.5" />}
                 {isExecuting ? t('workflows.running') : t('workflows.run')}
               </button>
             </div>

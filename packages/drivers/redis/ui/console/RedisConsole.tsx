@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { Loader2 } from 'lucide-react';
-import { useI18n } from '@datazen/ui';
+import { useI18n, Spinner } from '@datazen/ui';
 import {
   useBoundSettingsStore,
   resolveEditorFontFamily,
@@ -354,7 +353,7 @@ export function RedisConsole({
         <ConsoleTranscriptView entries={entries} />
         {running && (
           <div className="flex shrink-0 items-center gap-2 px-4 py-1 text-xs text-fg-muted">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Spinner size="md" />
             {t('query.executing')}
           </div>
         )}

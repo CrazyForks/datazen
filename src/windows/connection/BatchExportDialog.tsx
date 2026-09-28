@@ -12,6 +12,7 @@ import type {
 import { runBatchExportJob, type BatchExportOutputMode } from '../../lib/batchExportJob';
 import { onExportProgress } from '../../commands/file';
 import { supportsFullTableExport, type DataExportCapability } from '../../lib/exportCapability';
+import { Spinner } from '../../components/ui/Spinner';
 
 export interface BatchExportDialogProps {
   open: boolean;
@@ -255,7 +256,7 @@ export function BatchExportDialog({
         </div>
       ) : status === 'exporting' ? (
         <div className="flex flex-col items-center gap-3 py-6 text-center">
-          <span className="h-5 w-5 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          <Spinner variant="ring" size="xl" tone="accent" />
           <span className="text-sm text-fg">
             {progress && progress.total > 0
               ? `${t('batchExport.exporting')} ${progress.current}/${progress.total}${

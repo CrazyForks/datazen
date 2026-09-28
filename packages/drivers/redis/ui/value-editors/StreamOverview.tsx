@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
-import { Button, cn } from '@datazen/ui';
+import { RefreshCw } from 'lucide-react';
+import { Button, cn, Spinner } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import { redisCommandInvoke } from '../shared/redisInvoke';
 
@@ -91,7 +91,7 @@ export function StreamOverview({
 
         {loading && rows.length === 0 ? (
           <div className="flex items-center gap-2 text-xs text-fg-muted">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Spinner size="md" />
             {t('redis.monitorLoading')}
           </div>
         ) : rows.length === 0 ? (

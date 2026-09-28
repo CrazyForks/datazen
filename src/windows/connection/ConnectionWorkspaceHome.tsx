@@ -7,7 +7,6 @@ import {
   Database,
   Download,
   GitFork,
-  Loader2,
   Plus,
   TableProperties,
 } from 'lucide-react';
@@ -31,6 +30,7 @@ import { ConnectionCardList } from './home/ConnectionCardList';
 import { RecentQueriesList } from './home/RecentQueriesList';
 import { McpPromoBar } from './home/McpPromoBar';
 import { ShortcutFooter } from './home/ShortcutFooter';
+import { Spinner } from '../../components/ui/Spinner';
 
 /** How long the per-row "copied" marker stays before reverting. */
 const COPIED_FEEDBACK_MS = 2000;
@@ -246,7 +246,7 @@ export function ConnectionWorkspaceHome({
       >
         <div className="flex flex-col items-center gap-3">
           {connectingDbType && <DbTypeBadge databaseType={connectingDbType} size={48} />}
-          <Loader2 className="h-5 w-5 animate-spin text-fg-muted" />
+          <Spinner size="xl" tone="muted" label={t('conn.connecting')} />
           {connectingName && <p className="text-sm text-fg-muted">{connectingName}</p>}
         </div>
       </div>
