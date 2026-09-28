@@ -287,7 +287,12 @@ export function StringEditor({
       {saveError && (
         <ErrorBanner
           variant="boxed"
-          className="px-2 py-1.5 text-danger"
+          // Every colour is re-stated, not just the text one: `boxed` defaults
+          // to native `red-500` tints, a *different* red from the `danger`
+          // token the sibling `decompError` box below uses. `text-base` restores
+          // the inherited size — `boxed` would shrink this from 16px to 12px.
+          // See ErrorBanner's JSDoc.
+          className="border-danger/20 bg-danger/10 px-2 py-1.5 text-base text-danger"
           data-testid="redis-string-save-error"
           data-i18n-key="redis.detail.saveFailed"
         >

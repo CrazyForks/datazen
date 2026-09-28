@@ -20,6 +20,28 @@ export type ErrorBannerVariant = 'plain' | 'boxed' | 'strip';
  */
 export type ErrorBannerElement = 'div' | 'p' | 'span';
 
+/**
+ * WARNING — the variant tints below are the *native* Tailwind `red-500` /
+ * `red-400` shades, not the project's `danger` token. They were chosen to
+ * reproduce the error bars this component absorbed, and that is deliberate.
+ *
+ * The trap: these are baked into the variant, so a call site that was using
+ * the `danger` token does **not** get it back by passing its own colour.
+ * `className` only overrides what it names. Re-specifying the text colour
+ * alone leaves the *background and border on the `red-500` shades* — two
+ * visibly different reds for what the user reads as the same kind of failure
+ * (measured ΔE76 ≈ 9.6 on the border: clearly visible).
+ *
+ * So a `danger`-token call site must restate **background and border as well
+ * as text**. `StringEditor`'s save error is the worked example:
+ * `className="border-danger/20 bg-danger/10 px-2 py-1.5 text-base text-danger"`.
+ * `text-base` is there for the same reason — `boxed` carries `text-xs`, and
+ * that call site inherited 16px.
+ *
+ * Migrating the variants themselves onto the `danger` token is a repo-wide
+ * colour-system decision (200+ call sites) and is deliberately out of scope
+ * here; until it happens, this contract has to be honoured per call site.
+ */
 const variants: Record<ErrorBannerVariant, string> = {
   plain: 'text-xs text-red-400',
   boxed: 'rounded-md border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-400',

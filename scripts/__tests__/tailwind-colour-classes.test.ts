@@ -254,12 +254,25 @@ function resolve(token: string): boolean {
 
 const BACKTICK = String.fromCharCode(96);
 /**
- * Known blind spot, stated rather than papered over: the leading boundary is
- * line-start, whitespace, `"` or a backtick — deliberately *not* `.`. A utility
- * used as a CSS selector (`querySelectorAll('.text-foo')`) is therefore
- * invisible here. Allowing `.` was rejected: it admits every non-colour
- * typography utility (`text-center`, `text-wrap`, `text-ellipsis`, …) and
- * would swamp the signal. Selectors are checked by review instead.
+ * The leading boundary is line-start, whitespace, `"` or a backtick. Two
+ * character classes are therefore **invisible to this guard**, and both are
+ * deliberate — the costs of admitting them were measured, not guessed:
+ *
+ * 1. `.` — a utility used as a CSS selector, e.g.
+ *    `querySelectorAll('.text-foo')`. Admitting `.` pulls in every non-colour
+ *    typography utility (`text-center`, `text-wrap`, `text-ellipsis`, …) and
+ *    swamps the signal. This is how the dead `.text-destructive` in
+ *    `e2e/specs/zz-screenshots.ts` survived: it was found by reading, not here.
+ * 2. `'` — a single-quoted string, e.g. `'bg-ink-900'`. Measured: enabling it
+ *    yields 15 findings and **0 real bugs** — `via-saved` / `via-proxy` /
+ *    `via-ws` are MySQL connection-string keys and `from-a` is the English
+ *    preposition, because `via` and `from` are gradient utilities this codebase
+ *    also uses as ordinary words.
+ *
+ * So this guard covers class names in JSX/TSX `className` strings and double
+ * quotes, **not** CSS selectors or single-quoted strings. Those two forms are
+ * a review responsibility — do not read a green run here as proof that the
+ * repo is free of dead colour classes.
  */
 const COLOUR_PATTERN = new RegExp(
   `(?:^|[\\s"${BACKTICK}])((?:[a-z-]+:)?(?:${COLOUR_UTILITIES.join('|')})-([a-z][a-z0-9-]*))`,

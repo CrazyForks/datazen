@@ -119,14 +119,22 @@ describe('ErrorBanner', () => {
     // A native <button> is in the tab order without a tabindex override.
     expect(button.tagName).toBe('BUTTON');
     expect(button).not.toHaveAttribute('tabindex');
+    // The resolved tab-order property, not just the attribute: a `disabled`
+    // button or a negative tabindex would pass the check above.
+    expect(button.tabIndex).toBe(0);
+    // Must not submit an enclosing <form> by default.
+    expect(button).toHaveAttribute('type', 'button');
     // The glyph must not add a second, noisier name for screen readers.
     expect(button.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
 
     fireEvent.click(button);
     expect(onDismiss).toHaveBeenCalledTimes(1);
 
+    // jsdom does not synthesise a click from keyDown, and the component must
+    // not add a handler that would double-fire in a real browser. Asserting
+    // `toHaveBeenCalled()` here would be vacuous — the count is already 1.
     fireEvent.keyDown(button, { key: 'Enter' });
-    expect(onDismiss).toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
   it('renders no dismiss control unless the call site asks for one', () => {

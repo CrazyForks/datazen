@@ -86,10 +86,15 @@ describe('StringEditor save error', () => {
     fireEvent.click(await screen.findByTestId('redis-string-save'));
     const banner = await screen.findByTestId('redis-string-save-error');
 
-    // The variant supplies the tinted box; the call site retunes padding and
-    // colour without the component knowing about it.
-    expect(banner).toHaveClass('rounded-md', 'border', 'bg-red-500/10', 'text-xs');
-    expect(banner).toHaveClass('px-2', 'py-1.5', 'text-danger');
+    // The variant supplies the *shape*; every colour and the font size is
+    // restated by the call site, because `boxed` defaults to native `red-500`
+    // tints and `text-xs`, and this box must render identically to the
+    // `decompError` box a few lines below it.
+    expect(banner).toHaveClass('rounded-md', 'border', 'bg-danger/10', 'border-danger/20');
+    expect(banner).toHaveClass('px-2', 'py-1.5', 'text-danger', 'text-base');
+    // No `red-500` tint may survive — that is the regression this pins.
+    expect(banner.className).not.toMatch(/red-500/);
+    expect(banner.className).not.toMatch(/text-xs/);
     // `px-2` is ordered after the variant's `p-2`, so it wins on the x axis.
     expect(banner.className.indexOf('px-2')).toBeGreaterThan(banner.className.indexOf('p-2'));
   });
