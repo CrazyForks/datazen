@@ -2,7 +2,19 @@ import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 're
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from './cn';
+import { useI18n } from './i18n';
 import { tid } from './tid';
+
+/** Registry key the header close button falls back to. */
+const CLOSE_LABEL_KEY = 'common.close';
+
+/**
+ * Last-resort accessible name for the case where *nothing* registered
+ * `common.close` — `t()` degrades to the raw key (see `i18n.ts`), and a
+ * dotted i18n key is never a usable accessible name. Kept byte-identical to
+ * the pre-i18n literal so the unregistered-registry rendering is unchanged.
+ */
+const UNREGISTERED_CLOSE_LABEL = 'Close';
 
 export interface DialogProps {
   open: boolean;
@@ -31,7 +43,17 @@ export function Dialog({
 }: DialogProps) {
   // `||` rather than a `= 'Close'` default parameter, which does not trigger on
   // an empty string: an empty accessible name is never what a caller wants.
-  const closeLabel = closeLabelProp || 'Close';
+  //
+  // With no `closeLabel` prop the label comes from the ONE shared registry
+  // (`t('common.close')`) instead of a baked-in literal, so every caller that
+  // renders a bare `<Dialog>` — the redis driver ships eight — gets the active
+  // language for free. `useI18n()` (not the bare `t`) so an already-open dialog
+  // re-renders its accessible name when the user switches language.
+  const { t } = useI18n();
+  const localizedCloseLabel = t(CLOSE_LABEL_KEY);
+  const closeLabel =
+    closeLabelProp ||
+    (localizedCloseLabel === CLOSE_LABEL_KEY ? UNREGISTERED_CLOSE_LABEL : localizedCloseLabel);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
