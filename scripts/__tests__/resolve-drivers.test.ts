@@ -1,6 +1,6 @@
 /** @vitest-environment node */
 import { describe, expect, it } from 'vitest';
-import { resolveDrivers, wantsCodegenOnly } from '../resolve-drivers.mjs';
+import { parseVariant, resolveDrivers, wantsCodegenOnly } from '../resolve-drivers.mjs';
 
 const registry = {
   postgres: { source: 'path' },
@@ -70,6 +70,33 @@ describe('wantsCodegenOnly', () => {
     expect(wantsCodegenOnly(['--drivers=basic'])).toBe(false);
     expect(wantsCodegenOnly(['--codegen-only'])).toBe(true);
     expect(wantsCodegenOnly(['--codegen-only', '--drivers=basic'])).toBe(true);
+  });
+});
+
+describe('parseVariant', () => {
+  it('reads --variant=<sku>', () => {
+    expect(parseVariant(['--variant=all'], {})).toBe('all');
+    expect(parseVariant(['--drivers=basic', '--variant=akulaku'], {})).toBe('akulaku');
+  });
+
+  it('falls back to DATAZEN_VARIANT', () => {
+    expect(parseVariant([], { DATAZEN_VARIANT: 'all' })).toBe('all');
+  });
+
+  it('lets the flag win over the environment', () => {
+    expect(parseVariant(['--variant=basic'], { DATAZEN_VARIANT: 'all' })).toBe('basic');
+  });
+
+  it('defaults to custom so a plain local build never self-updates', () => {
+    // `custom` has no published channel: a build that names no SKU must not be
+    // offered the manifest of whichever SKU happens to be published.
+    expect(parseVariant([], {})).toBe('custom');
+    expect(parseVariant([], { DATAZEN_VARIANT: '' })).toBe('custom');
+  });
+
+  it('tolerates the matrix -all spelling', () => {
+    expect(parseVariant(['--variant=-all'], {})).toBe('all');
+    expect(parseVariant([], { DATAZEN_VARIANT: '-akulaku' })).toBe('akulaku');
   });
 });
 

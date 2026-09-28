@@ -12,9 +12,20 @@ vi.mock('@tauri-apps/plugin-process', () => ({
   relaunch: (...args: unknown[]) => mockRelaunch(...args),
 }));
 
+// The SKU is a build-time constant from gitignored codegen. These suites stand in
+// for "this artifact was built as the Basic SKU, which publishes a channel" — the
+// gating of every other SKU is covered in updaterVariant.test.ts.
+vi.mock('../../extensions/generated', () => ({
+  DATAZEN_VARIANT: 'basic',
+  DATAZEN_UPDATER_CHANNEL: true,
+}));
+
 import {
   checkForUpdates,
+  currentVariant,
   downloadAndInstallUpdate,
+  getUpdateChannel,
+  hasUpdaterChannel,
   isUpdaterSupported,
   maybeCheckOnStartup,
 } from '../updater';
@@ -22,6 +33,10 @@ import {
 describe('updater without Tauri', () => {
   it('isUpdaterSupported returns false', () => {
     expect(isUpdaterSupported()).toBe(false);
+  });
+
+  it('reports no update channel for a non-desktop build', () => {
+    expect(getUpdateChannel()).toBe('none');
   });
 
   it('checkForUpdates returns error', async () => {
@@ -56,6 +71,12 @@ describe('updater with Tauri', () => {
     expect(isUpdaterSupported()).toBe(true);
   });
 
+  it('exposes the build SKU and its channel', () => {
+    expect(currentVariant()).toBe('basic');
+    expect(hasUpdaterChannel()).toBe(true);
+    expect(getUpdateChannel()).toBe('auto');
+  });
+
   it('checkForUpdates returns upToDate when no update', async () => {
     mockCheck.mockResolvedValue(null);
     expect(await checkForUpdates()).toEqual({ status: 'upToDate' });
@@ -77,18 +98,27 @@ describe('updater with Tauri', () => {
       version: '2.0.0',
       downloadAndInstall: mockDownloadAndInstall,
     });
-    mockDownloadAndInstall.mockImplementation(async (cb: (e: { event: string; data: Record<string, number> }) => void) => {
-      cb({ event: 'Started', data: { contentLength: 100 } });
-      cb({ event: 'Progress', data: { chunkLength: 50 } });
-      cb({ event: 'Progress', data: { chunkLength: 50 } });
-      cb({ event: 'Finished', data: {} });
-    });
+    mockDownloadAndInstall.mockImplementation(
+      async (cb: (e: { event: string; data: Record<string, number> }) => void) => {
+        cb({ event: 'Started', data: { contentLength: 100 } });
+        cb({ event: 'Progress', data: { chunkLength: 50 } });
+        cb({ event: 'Progress', data: { chunkLength: 50 } });
+        cb({ event: 'Finished', data: {} });
+      },
+    );
     mockRelaunch.mockResolvedValue(undefined);
 
     const progress: string[] = [];
     const result = await downloadAndInstallUpdate((p) => progress.push(p.phase));
 
-    expect(progress).toEqual(['checking', 'downloading', 'downloading', 'downloading', 'installing', 'done']);
+    expect(progress).toEqual([
+      'checking',
+      'downloading',
+      'downloading',
+      'downloading',
+      'installing',
+      'done',
+    ]);
     expect(result).toEqual({ status: 'installed', version: '2.0.0' });
     expect(mockRelaunch).toHaveBeenCalled();
   });
