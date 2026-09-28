@@ -9,9 +9,6 @@ use super::tests::sample_query;
 use super::*;
 use chrono::Utc;
 
-/// The `Default` impl sets a real page size. A derived `Default` yields
-/// `limit: 0`, which reads as "no history" rather than "no rows requested".
-#[test]
 /// The truncation the global history dialog used to hide, pinned as numbers.
 ///
 /// 30 rows exist; the old UI asked for a 200-row window and then filtered in
