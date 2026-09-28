@@ -5,6 +5,7 @@ import { useAiKeyboard } from '../../hooks/useAiKeyboard';
 import { useAiStore } from '../../stores/aiStore';
 import { useTableDataStore } from '../../stores/tableDataStore';
 import { cn } from '../../lib/cn';
+import { ErrorBanner } from '../ui/ErrorBanner';
 import { Spinner } from '../ui/Spinner';
 
 interface NlFilterInputProps {
@@ -169,12 +170,14 @@ export function NlFilterInput({ panelId, dbSessionId, database, tableName }: NlF
         </button>
       </div>
 
-      {nlFilterError && (
-        <div className="pl-9 text-xs text-danger" role="alert">
-          {nlFilterError}
-        </div>
-      )}
+      {/* `text-danger` was dropped: it is now identical to the `plain`
+          variant's own colour, so restating it could only re-introduce the
+          silent divergence the variant defaults exist to prevent. */}
+      {nlFilterError && <ErrorBanner className="pl-9">{nlFilterError}</ErrorBanner>}
 
+      {/* Deliberately not an ErrorBanner: this is a validation *warning* (the
+          input parsed but the draft is unusable), and it is announced as one.
+          Forcing it through the error component would mislabel it. */}
       {validationError && (
         <div className="pl-9 text-xs text-warning" role="alert">
           {validationError}

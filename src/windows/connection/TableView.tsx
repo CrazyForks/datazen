@@ -11,6 +11,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { cn } from '../../lib/cn';
 import { CopyableError } from '../../components/ui/CopyableError';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
 import { tableChangeContextKey } from '../../lib/tableChanges';
 import type { RowChangePlan, TableChangeContext } from '../../lib/tableChanges';
 import {
@@ -446,12 +447,9 @@ export function TableView({
         </div>
       </div>
       {quickFilterError && (
-        <div
-          className="border-b border-red-500/30 bg-red-500/10 px-3 py-1 text-xs text-red-400"
-          role="alert"
-        >
+        <ErrorBanner variant="strip" className="border-danger/30 py-1">
           {quickFilterError}
-        </div>
+        </ErrorBanner>
       )}
       {readOnlyTipVisible && (
         <div

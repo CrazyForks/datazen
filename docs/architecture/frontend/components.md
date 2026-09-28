@@ -307,12 +307,17 @@ colors: {
   surface: { DEFAULT: 'var(--c-surface)', alt: 'var(--c-surface-alt)', /* … */ },
   fg: { DEFAULT: 'var(--c-fg)', secondary: 'var(--c-fg-secondary)', muted: 'var(--c-fg-muted)' },
   accent: { DEFAULT: 'var(--c-accent)' },
+  danger: { DEFAULT: 'var(--c-danger)' },
   dt: {
     null: 'var(--dt-null)', bool: 'var(--dt-bool)', number: 'var(--dt-number)',
     datetime: 'var(--dt-datetime)', json: 'var(--dt-json)', text: 'var(--dt-text)',
   },
 },
 ```
+
+**错误色必须走 `danger` token**：字面量 Tailwind `red-*`（`red-400` / `red-500/20` 等）不读任何 `--c-*` 变量，因此**对主题完全不敏感**——换主题、换外观包时它仍是同一个固定色，等于绕过主题机制。`ErrorBanner`（`packages/ui/`）的 `plain` / `boxed` / `strip` 三个 variant、其 dismiss 按钮，以及全部 14 个调用点均已改用 `text-danger` / `bg-danger/10` / `border-danger/20`。
+
+注意这是**可见改动，不是保色重构**：原先的 `red-400` / `red-500` / `red-300` 与 dismiss 按钮的 `text-red-200` 都是固定色，迁到 token 后实际渲染色会随之变化。`scripts/__tests__/error-banner-call-site-parity.test.ts` 把 14 个调用点的布局类与**精确的**颜色类集合一并钉住。仓库内仍有约 117 处非 `ErrorBanner` 的字面量 red 内联错误条待迁移。
 
 **DataTable / 结构视图类型色**：`src/lib/dataTypeColors.ts` 将 SQL 类型映射到 `text-dt-*`；`CellRenderer`、`StructureView`、`TableHeader`、`DetailPanel`、`ExportDialog`、`IndexesView` 共用。
 
@@ -1178,12 +1183,12 @@ void write.catch(() => {
 
 收敛前的实际形态（逐站点核对基线得到，不是抽样）：
 
-| 类别 | 站点 |
-| --- | --- |
-| **卸载时定时器泄漏**（句柄直接丢弃） | `AiCodeBlock`、`WorkflowChatPanel`、`SqlPreview`、`GlobalQueryHistoryDialog`、`McpSettingsSection`、`McpPromoBar`、`RecentQueriesList`、`ConnectionWorkspaceHome`、`ExecutionSummaryCard`、`QueryErrorPanel`、`KeyHeaderRow`（11 处） |
-| **卸载时定时器泄漏**（句柄存进 ref，但只在再次点击时清，从不随卸载清） | `Nl2SqlPanel`（第 12 处） |
-| **本来就没有泄漏**（ref + 卸载清理俱全） | `ProgressLog` |
-| **悲观写入**（`await writeText()` 之后才置位） | `SqlPreview`、`McpSettingsSection`、`ProgressLog`、`KeyHeaderRow`（4 处） |
+| 类别                                                                   | 站点                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **卸载时定时器泄漏**（句柄直接丢弃）                                   | `AiCodeBlock`、`WorkflowChatPanel`、`SqlPreview`、`GlobalQueryHistoryDialog`、`McpSettingsSection`、`McpPromoBar`、`RecentQueriesList`、`ConnectionWorkspaceHome`、`ExecutionSummaryCard`、`QueryErrorPanel`、`KeyHeaderRow`（11 处） |
+| **卸载时定时器泄漏**（句柄存进 ref，但只在再次点击时清，从不随卸载清） | `Nl2SqlPanel`（第 12 处）                                                                                                                                                                                                             |
+| **本来就没有泄漏**（ref + 卸载清理俱全）                               | `ProgressLog`                                                                                                                                                                                                                         |
+| **悲观写入**（`await writeText()` 之后才置位）                         | `SqlPreview`、`McpSettingsSection`、`ProgressLog`、`KeyHeaderRow`（4 处）                                                                                                                                                             |
 
 即 13 个站点里 **12 个在卸载时泄漏定时器**，只有 `ProgressLog` 本来就是安全的。
 

@@ -41,7 +41,7 @@ import { readFileSync, readdirSync } from 'fs';
 import { resolve, dirname, extname, relative, posix } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { scanCode } from './lib/scanSourceCode.mjs';
-import { SCAN_EXTENSIONS, SKIP_DIR_NAMES } from './lib/scanTargets.mjs';
+import { SCAN_EXTENSIONS, SKIP_DIR_NAMES, readScannedIfPresent } from './lib/scanTargets.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -84,7 +84,18 @@ export const LAYER_RULES = [
 
 const SOURCE_EXTENSIONS = SCAN_EXTENSIONS;
 
-/** Every source file under `dir`, recursively. */
+/**
+ * Every source file under `dir`, recursively — read as it is found.
+ *
+ * The read deliberately happens here rather than in the caller. Collecting the
+ * whole tree first and reading it afterwards leaves a window in which a file
+ * another process creates and deletes (a test's mutation probe, a branch
+ * switch, a build) makes this guard abort with ENOENT — observed on roughly
+ * five runs in six, which is indistinguishable from a real violation and so
+ * makes the gate unusable for signing off. Not wrapped in try/catch: a genuine
+ * read failure should surface here, where the cause is obvious, rather than be
+ * swallowed into a green report.
+ */
 function collectSourceFiles(dir) {
   const out = [];
   const walk = (current) => {
@@ -98,7 +109,10 @@ function collectSourceFiles(dir) {
       if (entry.isDirectory()) {
         walk(full);
       } else if (SOURCE_EXTENSIONS.has(extname(entry.name))) {
-        out.push(full);
+        const content = readScannedIfPresent(full);
+        // Deleted between the directory read and this one: not in the tree, so
+        // not something this guard can have an opinion about.
+        if (content !== null) out.push({ path: full, content });
       }
     }
   };
@@ -130,8 +144,7 @@ export function checkModuleLayers(opts = {}) {
   const violations = [];
 
   for (const rule of LAYER_RULES) {
-    for (const file of collectSourceFiles(rule.from)) {
-      const source = readFileSync(file, 'utf8');
+    for (const { path: file, content: source } of collectSourceFiles(rule.from)) {
       const { literals } = scanCode(source);
       const lines = source.split('\n');
       for (const { value, line } of literals) {

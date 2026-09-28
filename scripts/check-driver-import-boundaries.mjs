@@ -78,7 +78,7 @@ import { readdirSync, existsSync, readFileSync } from 'fs';
 import { dirname, join, posix, relative, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { scanCode } from './lib/scanSourceCode.mjs';
-import { SCAN_EXTENSIONS, SKIP_DIR_NAMES } from './lib/scanTargets.mjs';
+import { SCAN_EXTENSIONS, SKIP_DIR_NAMES, readScannedIfPresent } from './lib/scanTargets.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -344,13 +344,26 @@ export function inspectSource(rel, source) {
   return findings;
 }
 
-/** Recursively collect scannable files below `dir` (missing dir ⇒ no files). */
+/**
+ * Recursively collect scannable files below `dir` (missing dir ⇒ no files),
+ * reading each one as it is found.
+ *
+ * Reading here rather than after the walk closes the enumerate-then-read
+ * window: another process creating and deleting a source file mid-walk used to
+ * abort the whole guard with ENOENT — seen on five runs in six, so a red gate
+ * could not be told apart from a genuine boundary violation. Not wrapped in
+ * try/catch, so a real I/O failure still surfaces at the point of the read.
+ */
 function walk(dir, root, out) {
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return out; // optional dir (e.g. a clone without drivers resolved)
+  } catch (e) {
+    // A missing optional dir is legitimate (e.g. a clone without drivers
+    // resolved). Anything else — permissions, I/O — is a real fault and must
+    // not quietly shrink the scan into a false "clean".
+    if (e.code === 'ENOENT') return out;
+    throw e;
   }
   for (const entry of entries) {
     if (SKIP_DIR_NAMES.has(entry.name)) continue;
@@ -364,18 +377,27 @@ function walk(dir, root, out) {
     const ext = rel.slice(rel.lastIndexOf('.'));
     if (!SCAN_EXTENSIONS.has(ext)) continue;
     if (SKIPPED_CODEGEN_FILES.has(rel)) continue;
-    out.push(rel);
+    const content = readScannedIfPresent(full);
+    // Deleted between the directory read and this one: not in the tree, so
+    // not something this guard can have an opinion about.
+    if (content !== null) out.push({ rel, content });
   }
   return out;
 }
 
-/** Real (git-tracked-source) file reader used when no virtual tree is given. */
+/**
+ * Real (git-tracked-source) file reader used when no virtual tree is given.
+ *
+ * `listSources` returns content alongside each path so the caller never
+ * re-reads by path; `read` exists only for paths named by config (the
+ * allowlist), not for the scan itself.
+ */
 function createFsAdapter(root) {
   return {
-    listFiles() {
+    listSources() {
       const out = [];
       for (const dir of new Set([HOST_SRC_DIR, 'packages'])) walk(resolve(root, dir), root, out);
-      return out.sort();
+      return out.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
     },
     has(rel) {
       return existsSync(resolve(root, rel));
@@ -446,13 +468,16 @@ export function checkDriverImportBoundaries(opts = {}) {
     opts.files === undefined
       ? createFsAdapter(root)
       : {
-          listFiles: () => Object.keys(opts.files).sort(),
+          listSources: () =>
+            Object.keys(opts.files)
+              .sort()
+              .map((rel) => ({ rel, content: opts.files[rel] })),
           has: (rel) => Object.prototype.hasOwnProperty.call(opts.files, rel),
           read: (rel) => opts.files[rel],
         };
 
-  const files = adapter.listFiles();
-  if (files.length === 0) {
+  const sources = adapter.listSources();
+  if (sources.length === 0) {
     error(
       `[check-driver-import-boundaries] no source files scanned below ${HOST_SRC_DIR}/ or packages/ — refusing to report success (root=${root})`,
     );
@@ -464,8 +489,8 @@ export function checkDriverImportBoundaries(opts = {}) {
   const usedEntries = new Set();
   let allowed = 0;
 
-  for (const rel of files) {
-    for (const finding of inspectSource(rel, adapter.read(rel))) {
+  for (const { rel, content } of sources) {
+    for (const finding of inspectSource(rel, content)) {
       const exempt = allowlist.findIndex(
         (entry, idx) =>
           entry.rule === finding.rule.id &&
@@ -518,7 +543,7 @@ export function checkDriverImportBoundaries(opts = {}) {
     error(`${tag} expired exemption: ${entry.rule} ${entry.file} → '${entry.specifier}' (${why})`);
   }
 
-  const scanned = `${files.length} file(s) scanned`;
+  const scanned = `${sources.length} file(s) scanned`;
   const advisoryNote = advisory.length > 0 ? ` · ${advisory.length} advisory finding(s)` : '';
   if (blocked.length > 0 || expired.length > 0) {
     error(
