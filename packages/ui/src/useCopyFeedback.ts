@@ -8,9 +8,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  *
  *  - **Optimistic, with a controlled rollback.** The confirmation flips
  *    synchronously on click so the click reads as instant, and is rolled back
- *    if the write rejects. Telling the user "Copied" for a write that never
- *    landed is a lie, and the unguarded `void writeText()` this replaced also
- *    leaked an unhandled rejection. The exposure is a single event-loop turn.
+ *    if the write fails for *any* reason. Telling the user "Copied" for a
+ *    write that never landed is a lie, and the unguarded `void writeText()`
+ *    this replaced also leaked an unhandled rejection. The exposure is a
+ *    single event-loop turn.
  *  - **Each click owns a full window.** A click clears the previous timer
  *    before arming its own, so a second click gets the full `feedbackMs`
  *    instead of inheriting whatever was left of the first one's window.
@@ -25,6 +26,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  *    rejection handler, because a promise cannot be cancelled. React discards
  *    that `setState` harmlessly and the closure is collectable once the
  *    promise settles, so it is not a leak — but it is not prevented either.
+ *  - **Known limit: no clipboard fallback chain.** This path is
+ *    `navigator.clipboard.writeText` and nothing else — no Tauri
+ *    `write_clipboard` invoke, no `document.execCommand('copy')` downgrade.
+ *    A browser without the async Clipboard API therefore gets a rolled-back
+ *    button rather than a copy. The fallback exists in
+ *    `src/lib/fetchRelationDdl.ts` and cannot move here: it depends on
+ *    `@tauri-apps/api`, which `packages/ui` is not allowed to import. Sites
+ *    that need the downgrade must keep using that helper.
  */
 export function useCopyFeedback(feedbackMs: number): {
   copied: boolean;
@@ -59,7 +68,29 @@ export function useCopyFeedback(feedbackMs: number): {
         setCopied(false);
       }, feedbackMs);
 
-      void navigator.clipboard.writeText(text).catch(() => {
+      // Reading `navigator.clipboard` and calling `writeText` can both throw
+      // synchronously -- a missing Clipboard API, a WebKit policy that raises
+      // `NotAllowedError`, a `writeText` that is not callable. Written as
+      // `navigator.clipboard.writeText(text).catch(...)` that throw escapes
+      // *before* `.catch` can be attached: the rollback below would never run
+      // and the button would claim "Copied" for the whole window without having
+      // copied anything. Swallowing it here and handing the rollback a rejected
+      // promise instead makes the rollback cover every failure mode, and
+      // guarantees `copy()` never throws into the caller's event handler.
+      //
+      // The call itself stays synchronous on purpose. Deferring the property
+      // read by a turn (`Promise.resolve().then(...)`) would work too, but it
+      // moves `writeText` out of the click turn, which callers and their tests
+      // legitimately observe -- the write is not the thing that needed fixing.
+      const write = ((): Promise<void> => {
+        try {
+          return navigator.clipboard.writeText(text);
+        } catch {
+          return Promise.reject(new Error('clipboard write unavailable'));
+        }
+      })();
+
+      void write.catch(() => {
         // A newer click already owns the state: its outcome, not this one,
         // decides what the button shows. Bailing out here also leaves the
         // newer click's feedback timer running.

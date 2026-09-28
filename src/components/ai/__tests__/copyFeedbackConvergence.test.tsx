@@ -7,8 +7,9 @@
  * produced, and -- for `AiCodeBlock` specifically -- the regression test for the
  * timer that used to outlive the component.
  *
- * Assertions are runtime observations only (DOM, clipboard call arguments,
- * live-timer count). Nothing here inspects the source.
+ * Assertions are runtime observations only (DOM, clipboard call arguments, and
+ * which timer handles reached `clearTimeout`). Nothing here inspects the
+ * source.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -132,9 +133,15 @@ describe('AiCodeBlock copy feedback', () => {
   /**
    * The regression test for the leaked timer. Before convergence this file
    * armed a bare `setTimeout(..., 1500)` whose handle was never stored, so the
-   * callback stayed in the timer queue after the component disappeared. The
-   * live-timer count is the only honest witness: React 18 no longer warns
-   * about a setState on an unmounted fiber, so a leak is otherwise invisible.
+   * callback stayed in the timer queue after the component disappeared. React 18
+   * no longer warns about a setState on an unmounted fiber, so a leak is
+   * otherwise invisible.
+   *
+   * The witness is the *handle*, not the timer count. Counting live timers
+   * across the unmount reads too low even for correct code — mounting queues
+   * timers of its own and the unmount legitimately clears those too — so a count
+   * difference is evidence about the wrong thing. Naming the handle the click
+   * armed and asserting that exact handle reaches `clearTimeout` is unambiguous.
    */
   it('clears the feedback timer when unmounted inside the window', () => {
     installResolvedClipboard();
