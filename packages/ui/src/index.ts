@@ -10,7 +10,7 @@ export {
   type SelectLabels,
 } from './Select';
 export { Dialog, type DialogProps } from './Dialog';
-export { Tabs, type TabItem, type TabsProps } from './Tabs';
+export { Tabs, type TabItem, type TabRenderContext, type TabsProps } from './Tabs';
 export { Badge, type BadgeProps } from './Badge';
 export { Label, type LabelProps } from './Label';
 export { Slider, type SliderProps } from './Slider';
