@@ -502,6 +502,21 @@ describe('tableDataStore (panel-scoped)', () => {
     expect(loaded().selectedRows).toEqual(new Set([0, 1]));
   });
 
+  it('selectRow toggles the sole selected row off on a second plain click', async () => {
+    await loadTable();
+    useTableDataStore.getState().selectRow(PANEL, 0);
+    expect(loaded().selectedRows).toEqual(new Set([0]));
+
+    useTableDataStore.getState().selectRow(PANEL, 0);
+    expect(loaded().selectedRows).toEqual(new Set());
+    expect(loaded().lastSelectedIndex).toBeNull();
+
+    // A plain click on another row still replaces (rather than clears) it.
+    useTableDataStore.getState().selectRow(PANEL, 0);
+    useTableDataStore.getState().selectRow(PANEL, 1);
+    expect(loaded().selectedRows).toEqual(new Set([1]));
+  });
+
   it('toggleSelectAll selects and deselects all rows', async () => {
     await loadTable();
     useTableDataStore.getState().toggleSelectAll(PANEL);
