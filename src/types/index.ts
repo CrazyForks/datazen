@@ -227,6 +227,21 @@ export interface QueryHistoryEntry {
   errorMessage?: string;
 }
 
+/** Backend sort orders for the paged history read. */
+export type HistorySort = 'recent' | 'oldest' | 'slowest';
+
+/**
+ * One page of query history plus the number of rows the filter matched *before*
+ * the page was cut.
+ *
+ * `total` is what lets the UI admit it is showing a slice: without it, a
+ * `limit`-ed page is indistinguishable from the whole table.
+ */
+export interface QueryHistoryPage {
+  entries: QueryHistoryEntry[];
+  total: number;
+}
+
 /**
  * A saved statement. Since the §2.6 file-first switch this is one `.sql` file
  * under the favorites root, named by `id`, with these fields in `--`

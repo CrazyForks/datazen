@@ -7,7 +7,7 @@ use super::driver_command::{
 use super::error::{CmdExt, CommandError};
 use super::AppState;
 use crate::db::{ExplainResult, MultiQueryResult};
-use crate::store::QueryHistoryEntry;
+use crate::store::{HistoryOrder, QueryHistoryEntry, QueryHistoryFilter, QueryHistoryPage};
 use datazen_driver_api::{QueryExecutionId, QueryStreamCallback, QueryStreamEvent};
 use tauri::ipc::Channel;
 use tauri::State;
@@ -208,6 +208,54 @@ pub(crate) async fn clear_query_history_impl(state: &AppState) -> Result<(), Com
         .cmd_err("clear_query_history")
 }
 
+/// Paged history read. `total` is the full match count, so a UI can state
+/// "showing N of M" instead of implying the page is everything.
+pub(crate) async fn get_query_history_page_impl(
+    state: &AppState,
+    limit: usize,
+    connection_id: Option<String>,
+    database: Option<String>,
+    schema: Option<String>,
+    search: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    order: Option<String>,
+) -> Result<QueryHistoryPage, CommandError> {
+    let order = match order.as_deref() {
+        None | Some("") => HistoryOrder::Recent,
+        Some(other) => HistoryOrder::parse(other)
+            .ok_or_else(|| CommandError::Validation(format!("unknown order: {other}")))?,
+    };
+    let filter = QueryHistoryFilter {
+        limit,
+        connection_id: connection_id.as_deref(),
+        database: database.as_deref(),
+        schema: schema.as_deref(),
+        search: search.as_deref(),
+        since: since.as_deref(),
+        until: until.as_deref(),
+        order,
+    };
+    state
+        .store
+        .get_query_history_page(&filter)
+        .await
+        .cmd_err("get_query_history_page")
+}
+
+/// Remove exactly one history row. Returns how many rows went away so a caller
+/// can reject a no-op instead of showing a success it did not earn.
+pub(crate) async fn delete_query_history_impl(
+    state: &AppState,
+    id: String,
+) -> Result<u64, CommandError> {
+    state
+        .store
+        .delete_query_history(&id)
+        .await
+        .cmd_err("delete_query_history")
+}
+
 #[tauri::command]
 pub async fn execute_query(
     state: State<'_, AppState>,
@@ -278,6 +326,78 @@ pub async fn get_query_history(
 #[tauri::command]
 pub async fn clear_query_history(state: State<'_, AppState>) -> Result<(), CommandError> {
     clear_query_history_impl(&state).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn get_query_history_page(
+    state: State<'_, AppState>,
+    limit: usize,
+    connection_id: Option<String>,
+    database: Option<String>,
+    schema: Option<String>,
+    search: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    order: Option<String>,
+) -> Result<QueryHistoryPage, CommandError> {
+    get_query_history_page_impl(
+        &state,
+        limit,
+        connection_id,
+        database,
+        schema,
+        search,
+        since,
+        until,
+        order,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_query_history(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<u64, CommandError> {
+    delete_query_history_impl(&state, id).await
+}
+
+/// Write `content` to a user-chosen path. Resolves `false` when the save
+/// dialog is dismissed, so the caller can stay silent instead of claiming a
+/// file it never wrote.
+#[tauri::command]
+pub async fn save_sql_file(
+    app: tauri::AppHandle,
+    default_file_name: String,
+    content: String,
+) -> Result<bool, CommandError> {
+    // The dialog filters to `.sql`; the extension is appended when the user
+    // types a bare stem, so a Windows user who types "queries" still gets a
+    // file the editor and any `.sql` tooling will open.
+    let path = super::dialog::save_file(
+        &app,
+        ("SQL".into(), vec!["sql".to_string()]),
+        default_file_name,
+    )
+    .await?;
+
+    let Some(path) = path else {
+        return Ok(false);
+    };
+    let path = if path.extension().is_some() {
+        path
+    } else {
+        path.with_extension("sql")
+    };
+
+    std::fs::write(&path, content).map_err(|e| {
+        CommandError::Io(std::io::Error::new(
+            e.kind(),
+            format!("write {}: {e}", path.display()),
+        ))
+    })?;
+    Ok(true)
 }
 
 pub(crate) async fn begin_session_transaction_impl(
