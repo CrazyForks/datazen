@@ -113,6 +113,7 @@ function sshValue(overrides: Partial<SshTunnelFieldsValue> = {}): SshTunnelField
     sshJumpPassphrase: '',
     setSshJumpPassphrase: vi.fn(),
     tabFill: noopTabFill,
+    pickPath: vi.fn(async () => null),
     ...overrides,
   };
 }

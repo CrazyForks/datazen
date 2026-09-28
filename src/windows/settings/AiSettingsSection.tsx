@@ -12,6 +12,7 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { ModelProfileListItem } from './ai/ModelProfileListItem';
 import { ModelProfileDialog } from './ai/ModelProfileDialog';
 import { tid } from '../../lib/tid';
+import { pickPath } from '../../lib/pathPicker';
 
 function ContextDirSetting() {
   const { t } = useI18n();
@@ -45,6 +46,7 @@ function ContextDirSetting() {
       <PathInput
         value={localDir}
         onChange={setLocalDir}
+        onBrowse={pickPath}
         placeholder={defaultDir || t('context.dirSettingDesc')}
         dialogOptions={{ directory: true }}
         className="flex-1"

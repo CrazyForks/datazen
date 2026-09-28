@@ -19,7 +19,12 @@ export {
   type TemporalValueInputProps,
   type TemporalPickerKind,
 } from './TemporalValueInput';
-export { PathInput, type PathInputProps } from './PathInput';
+export {
+  PathInput,
+  type PathInputProps,
+  type PathPicker,
+  type PathPickerDialogOptions,
+} from './PathInput';
 export { ToolbarShell, type ToolbarShellProps } from './ToolbarShell';
 export { ToolbarButton, type ToolbarButtonProps } from './ToolbarButton';
 export { ConfirmDialog, type ConfirmDialogProps } from './ConfirmDialog';

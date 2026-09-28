@@ -978,11 +978,22 @@ S 形绕行。同一套形态实测：**反向边 7/10 → 0/10，跨越 18 → 
 `packages/ui/src/PathInput.tsx`（`@datazen/ui` 导出）— 统一的路径输入/选择控件：
 
 - 左侧：文本输入框（可手动输入路径）
-- 右侧：「浏览」按钮（调用 Tauri Dialog API 选择文件或目录）
-- 支持 `mode` 属性：`file` / `directory` / `save`
-- 已在所有需要路径输入的位置替换（SQLite 数据库路径、备份路径、上下文目录等）
+- 右侧：「浏览」按钮，由 `onBrowse` 注入的原生选择器完成选择（见 §9.1）
+- `dialogOptions` 透传给选择器：`{ directory, filters, title, defaultPath, multiple }`
+- 消费方：设置（AI 上下文目录、日志目录、MCP Server 命令）、连接表单（SQLite
+  数据库文件、SSH 私钥、跳板机私钥）、Redis 驱动 TLS 证书
 
-### 9.1 设计系统纯净性由脚本强制
+### 9.1 原生选择器由宿主注入
+
+`PathInput` 是纯视图：它自己不认识 Tauri，只在点击「浏览」时调用
+`onBrowse: PathPicker`，实现由宿主提供（`src/lib/pathPicker.ts`，全应用唯一一处
+`open()` 调用）。`onBrowse` 是**必填**属性 —— 一个点了没反应的浏览按钮比编译错误
+更难排查，因此任何漏改的调用点都会直接 `tsc` 报错。
+
+连接表单里的路径字段通过 `ConnectionFormState.pickPath` 传递，驱动（如 Redis 的
+TLS 证书）因此也能拿到宿主选择器，而驱动包自身依旧不引入宿主运行时。
+
+### 9.2 设计系统纯净性由脚本强制
 
 `@datazen/ui` 被宿主、每个驱动和每个扩展打包，其中若干运行在没有 Tauri
 webview 的环境里。因此设计系统必须是依赖图里的**叶子**：只允许 React 与包内
