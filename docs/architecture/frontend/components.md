@@ -6,14 +6,14 @@
 
 ### 5.1 核心策略
 
-| 策略 | 适用场景 | 方案 |
-|------|----------|------|
-| **服务端分页** | 表数据浏览 | LIMIT/OFFSET，每页 50 行 |
-| **虚拟滚动** | 查询结果 & 宽表 | @tanstack/react-virtual |
-| **延迟渲染** | 长文本单元格 | 截断 + Tooltip |
-| **列宽缓存** | 表格列宽计算 | 首次测量后缓存，不每帧计算 |
-| **分批 IPC** | 大结果集传输 | 流式传输 / 分块加载 |
-| **Web Worker** | JSON 解析 | 大于 1MB 的结果集在 Worker 中解析 |
+| 策略           | 适用场景        | 方案                              |
+| -------------- | --------------- | --------------------------------- |
+| **服务端分页** | 表数据浏览      | LIMIT/OFFSET，每页 50 行          |
+| **虚拟滚动**   | 查询结果 & 宽表 | @tanstack/react-virtual           |
+| **延迟渲染**   | 长文本单元格    | 截断 + Tooltip                    |
+| **列宽缓存**   | 表格列宽计算    | 首次测量后缓存，不每帧计算        |
+| **分批 IPC**   | 大结果集传输    | 流式传输 / 分块加载               |
+| **Web Worker** | JSON 解析       | 大于 1MB 的结果集在 Worker 中解析 |
 
 ### 5.2 虚拟滚动表格
 
@@ -25,12 +25,17 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface UseVirtualTableOptions {
   rows: unknown[][];
-  rowHeight: number;          // 40px（与设计稿一致）
-  overscan: number;           // 预渲染行数，默认 10
+  rowHeight: number; // 40px（与设计稿一致）
+  overscan: number; // 预渲染行数，默认 10
   containerRef: RefObject<HTMLDivElement>;
 }
 
-export function useVirtualTable({ rows, rowHeight, overscan, containerRef }: UseVirtualTableOptions) {
+export function useVirtualTable({
+  rows,
+  rowHeight,
+  overscan,
+  containerRef,
+}: UseVirtualTableOptions) {
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => containerRef.current,
@@ -101,13 +106,13 @@ const CellRenderer = memo(function CellRenderer({ value, type, isEditing }: Prop
 
 ### 5.4 性能关键指标
 
-| 指标 | 目标 | 实现手段 |
-|------|------|----------|
-| 首屏渲染 | < 200ms | 只渲染可见区域（虚拟滚动） |
-| 滚动帧率 | 60fps | overscan + CSS transform 定位 |
-| 内存占用 | 当前页数据 + 虚拟窗口 | 不缓存历史页数据 |
-| 切换页响应 | < 100ms | 加载中骨架屏，数据到达后一次性渲染 |
-| 10 万行结果滚动 | 流畅无卡顿 | 虚拟列表 + memo |
+| 指标            | 目标                  | 实现手段                           |
+| --------------- | --------------------- | ---------------------------------- |
+| 首屏渲染        | < 200ms               | 只渲染可见区域（虚拟滚动）         |
+| 滚动帧率        | 60fps                 | overscan + CSS transform 定位      |
+| 内存占用        | 当前页数据 + 虚拟窗口 | 不缓存历史页数据                   |
+| 切换页响应      | < 100ms               | 加载中骨架屏，数据到达后一次性渲染 |
+| 10 万行结果滚动 | 流畅无卡顿            | 虚拟列表 + memo                    |
 
 ## 2. 布局与响应式方案
 
@@ -151,6 +156,7 @@ const CellRenderer = memo(function CellRenderer({ value, type, isEditing }: Prop
 │ 状态栏                                           │
 └──────────────────────────────────────────────────┘
 ```
+
 </details>
 
 #### 主工作区连接视图 (main → ConnectionPage)
@@ -175,10 +181,16 @@ interface UseResizableOptions {
   initialSize: number;
   minSize: number;
   maxSize: number;
-  storageKey?: string;       // 持久化到 localStorage
+  storageKey?: string; // 持久化到 localStorage
 }
 
-export function useResizable({ direction, initialSize, minSize, maxSize, storageKey }: UseResizableOptions) {
+export function useResizable({
+  direction,
+  initialSize,
+  minSize,
+  maxSize,
+  storageKey,
+}: UseResizableOptions) {
   const [size, setSize] = useState(() => {
     if (storageKey) {
       const saved = localStorage.getItem(`resize:${storageKey}`);
@@ -235,16 +247,16 @@ export function useResizable({ direction, initialSize, minSize, maxSize, storage
 
 ### 6.4 窗口缩放保护
 
-| 保护策略 | 实现 |
-|----------|------|
-| 侧边栏最小宽度 | `min-width: 180px`，拖拽时 clamp |
-| 侧边栏最大宽度 | `max-width: 50%`（基于窗口宽度动态计算） |
-| 编辑器最小高度 | `min-height: 120px` |
-| 结果区最小高度 | `min-height: 120px` |
+| 保护策略       | 实现                                                           |
+| -------------- | -------------------------------------------------------------- |
+| 侧边栏最小宽度 | `min-width: 180px`，拖拽时 clamp                               |
+| 侧边栏最大宽度 | `max-width: 50%`（基于窗口宽度动态计算）                       |
+| 编辑器最小高度 | `min-height: 120px`                                            |
+| 结果区最小高度 | `min-height: 120px`                                            |
 | 卡片网格自适应 | `grid-template-columns: repeat(auto-fill, minmax(280px, 1fr))` |
-| 表格水平滚动 | 列多时 `overflow-x: auto`，表头固定 |
-| 工具栏折叠 | 窗口过窄时工具栏按钮收入 `...` 下拉菜单 |
-| 文字不溢出 | 所有文本使用 `truncate` + `title` tooltip |
+| 表格水平滚动   | 列多时 `overflow-x: auto`，表头固定                            |
+| 工具栏折叠     | 窗口过窄时工具栏按钮收入 `...` 下拉菜单                        |
+| 文字不溢出     | 所有文本使用 `truncate` + `title` tooltip                      |
 
 ### 6.5 连接卡片网格自适应
 
@@ -312,7 +324,7 @@ colors: {
 // settingsStore.ts — applyTheme(mode × packId)
 async function applyTheme(mode: ThemeMode, packId: string | null) {
   document.documentElement.classList.toggle('dark', resolveIsDark(mode));
-  await applyThemePack(packId);           // 注入 pack CSS / 图标 / 字体
+  await applyThemePack(packId); // 注入 pack CSS / 图标 / 字体
   syncWebviewBackgroundFromTokens();
 }
 
@@ -320,7 +332,7 @@ async function applyTheme(mode: ThemeMode, packId: string | null) {
 export async function applyThemeLocally(mode: ThemeMode) {
   const packId = useSettingsStore.getState().settings.theme.packId;
   await applyTheme(mode, packId);
-  watchSystemTheme(mode);                 // system 模式监听 prefers-color-scheme
+  watchSystemTheme(mode); // system 模式监听 prefers-color-scheme
 }
 
 // updateSettings({ theme: { mode, packId } }) → 持久化 + applyTheme + 跨窗口广播
@@ -337,13 +349,13 @@ settings.theme.packId  →  read_wapp_file (IPC)
                       →  optional editor.json / charts.json overlays
 ```
 
-| 模块 | 路径 | 职责 |
-|------|------|------|
-| 应用逻辑 | `src/lib/themePackApply.ts` | 注入/移除 pack CSS、字体、通知跨窗口刷新；把解析后的 `--c-surface` 经 IPC 写入 `{appData}/surface-bg.json` |
-| 首屏背景 | `surface-boot` extension `initialization_script` | parse 前注入上次 hex + `html.dark`；主窗口与子窗口同一路径 |
-| 图标解析 | `src/lib/iconResolver.ts` | pack → Lucide/驱动 → 占位 |
-| 组件 | `ThemedIcon`, `DbTypeBadge` | 消费 IconResolver |
-| 设置 UI | `windows/settings/AppearanceSection.tsx` | 选择已安装扩展主题 |
+| 模块     | 路径                                             | 职责                                                                                                       |
+| -------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| 应用逻辑 | `src/lib/themePackApply.ts`                      | 注入/移除 pack CSS、字体、通知跨窗口刷新；把解析后的 `--c-surface` 经 IPC 写入 `{appData}/surface-bg.json` |
+| 首屏背景 | `surface-boot` extension `initialization_script` | parse 前注入上次 hex + `html.dark`；主窗口与子窗口同一路径                                                 |
+| 图标解析 | `src/lib/iconResolver.ts`                        | pack → Lucide/驱动 → 占位                                                                                  |
+| 组件     | `ThemedIcon`, `DbTypeBadge`                      | 消费 IconResolver                                                                                          |
+| 设置 UI  | `windows/settings/AppearanceSection.tsx`         | 选择已安装扩展主题                                                                                         |
 
 **图标解析顺序**
 
@@ -359,14 +371,14 @@ settings.theme.packId  →  read_wapp_file (IPC)
 
 **DataTable 单元格类型色**
 
-| CSS 变量 | Tailwind | 用途 |
-|----------|----------|------|
-| `--dt-null` | `text-dt-null` | NULL |
-| `--dt-bool` | `text-dt-bool` | 布尔 |
-| `--dt-number` | `text-dt-number` | 数值 |
+| CSS 变量        | Tailwind           | 用途      |
+| --------------- | ------------------ | --------- |
+| `--dt-null`     | `text-dt-null`     | NULL      |
+| `--dt-bool`     | `text-dt-bool`     | 布尔      |
+| `--dt-number`   | `text-dt-number`   | 数值      |
 | `--dt-datetime` | `text-dt-datetime` | 日期/时间 |
-| `--dt-json` | `text-dt-json` | JSON |
-| `--dt-text` | `text-dt-text` | 普通文本 |
+| `--dt-json`     | `text-dt-json`     | JSON      |
+| `--dt-text`     | `text-dt-text`     | 普通文本  |
 
 Host 在 `src/styles/themes.css` 提供 light/dark 默认；主题包可在 `tokens.css` 覆盖。实现：`CellRenderer.tsx`。
 
@@ -386,7 +398,7 @@ Tauri 使用 serde 反序列化前端传入的参数。
 示例（摘自 `commands/connection.ts`；术语：`connectionId` = 持久化配置连接 id，`dbSessionId` = 运行时会话 id）：
 
 ```typescript
-invoke<string>('connect', { connectionId });            // 返回运行时 dbSessionId
+invoke<string>('connect', { connectionId }); // 返回运行时 dbSessionId
 invoke<boolean>('ping_connection', { dbSessionId });
 ```
 
@@ -399,30 +411,23 @@ invoke<boolean>('ping_connection', { dbSessionId });
 import { invoke } from '@tauri-apps/api/core';
 
 export const connectionCommands = {
-  getConnections: () =>
-    invoke<ConnectionConfig[]>('get_connections'),
+  getConnections: () => invoke<ConnectionConfig[]>('get_connections'),
 
-  saveConnection: (config: ConnectionConfig) =>
-    invoke<void>('save_connection', { config }),
+  saveConnection: (config: ConnectionConfig) => invoke<void>('save_connection', { config }),
 
-  deleteConnection: (id: string) =>
-    invoke<void>('delete_connection', { id }),
+  deleteConnection: (id: string) => invoke<void>('delete_connection', { id }),
 
-  testConnection: (config: ConnectionConfig) =>
-    invoke<ServerInfo>('test_connection', { config }),
+  testConnection: (config: ConnectionConfig) => invoke<ServerInfo>('test_connection', { config }),
 
   // 入参为持久化配置连接 id（connectionId），返回运行时会话 id（dbSessionId）
-  connect: (connectionId: string) =>
-    invoke<string>('connect', { connectionId }),
+  connect: (connectionId: string) => invoke<string>('connect', { connectionId }),
 
-  pingConnection: (dbSessionId: string) =>
-    invoke<boolean>('ping_connection', { dbSessionId }),
+  pingConnection: (dbSessionId: string) => invoke<boolean>('ping_connection', { dbSessionId }),
 
   releaseConnection: (dbSessionId: string) =>
     invoke<boolean>('release_connection', { dbSessionId }),
 
-  disconnect: (dbSessionId: string) =>
-    invoke<void>('disconnect', { dbSessionId }),
+  disconnect: (dbSessionId: string) => invoke<void>('disconnect', { dbSessionId }),
 };
 ```
 
@@ -431,8 +436,7 @@ export const connectionCommands = {
 import { invoke } from '@tauri-apps/api/core';
 
 export const databaseCommands = {
-  getDatabases: (dbSessionId: string) =>
-    invoke<string[]>('get_databases', { dbSessionId }),
+  getDatabases: (dbSessionId: string) => invoke<string[]>('get_databases', { dbSessionId }),
 
   getTables: (dbSessionId: string, database: string) =>
     invoke<TableInfo[]>('get_tables', { dbSessionId, database }),
@@ -449,24 +453,23 @@ import { invoke } from '@tauri-apps/api/core';
 // SQL 查询统一经 Driver Command IPC 执行（dbSessionId 标识目标会话）
 export const queryCommands = {
   executeQuery: async (dbSessionId: string, sql: string) => {
-    const result = await invoke<{ data: MultiQueryResult }>(
-      'execute_driver_command',
-      { dbSessionId, command: 'query', input: { sql } },
-    );
+    const result = await invoke<{ data: MultiQueryResult }>('execute_driver_command', {
+      dbSessionId,
+      command: 'query',
+      input: { sql },
+    });
     return result.data;
   },
 
   getExplain: (dbSessionId: string, sql: string) =>
     invoke<ExplainResult>('get_explain', { dbSessionId, sql }),
 
-  cancelQuery: (dbSessionId: string) =>
-    invoke<void>('cancel_query', { dbSessionId }),
+  cancelQuery: (dbSessionId: string) => invoke<void>('cancel_query', { dbSessionId }),
 
   getQueryHistory: (limit: number, connectionId?: string) =>
     invoke<QueryHistoryEntry[]>('get_query_history', { limit, connectionId }),
 
-  clearQueryHistory: () =>
-    invoke<void>('clear_query_history'),
+  clearQueryHistory: () => invoke<void>('clear_query_history'),
 };
 ```
 
@@ -475,11 +478,9 @@ export const queryCommands = {
 import { invoke } from '@tauri-apps/api/core';
 
 export const settingsCommands = {
-  getSettings: () =>
-    invoke<AppSettings>('get_settings'),
+  getSettings: () => invoke<AppSettings>('get_settings'),
 
-  saveSettings: (settings: AppSettings) =>
-    invoke<void>('save_settings', { settings }),
+  saveSettings: (settings: AppSettings) => invoke<void>('save_settings', { settings }),
 };
 ```
 
@@ -488,7 +489,10 @@ export const settingsCommands = {
 ```typescript
 // lib/tauri.ts
 export class TauriError extends Error {
-  constructor(public code: string, message: string) {
+  constructor(
+    public code: string,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -528,12 +532,14 @@ Copy Selected Rows / Export。
 Safe Mode 开启时 Schema 树隐藏 Truncate / Drop（后端 `sql_guard` 拦截无 WHERE 的 UPDATE/DELETE，以及 TRUNCATE/DROP）；索引页删除按钮同样隐藏。
 
 **数据导出功能**：
+
 - 工具栏「导出」按钮导出全部数据
 - 右键菜单导出选中行（或当前页）
 - 支持 5 种格式：CSV、TSV、JSON、SQL INSERT、SQL UPDATE
 - 通过 Tauri 原生对话框选择保存路径
 
 **导出**（Connection Window，非单表 DataTable 导出；原「批量导出」）：
+
 - 顶栏「导出」按钮（权限按钮之后，`data-testid=conn-toolbar-export`）→ `BatchExportDialog`；Schema 树 database / blank / table / view 右键「导出…」（`schemaTreeContextMenu` → `onBatchExport`）
 - 范围：全部表或所选表；模式：仅结构 / 仅数据 / 数据+结构
 - 逻辑：`src/lib/batchExport.ts`（组装）+ `batchExportJob.ts`（执行/ZIP）+ `loadBatchExportTable.ts`（DDL + 分页全量）
@@ -581,17 +587,17 @@ interface DataTableProps {
 
 各场景通过独立 builder 组装 `NativeMenuItemDef[]`，再调用 `showNativeContextMenu` / `showWebContextMenu`：
 
-| Builder | 路径 | 调用方 |
-|---------|------|--------|
-| SQL 编辑器 | `src/lib/sqlEditorContextMenu.ts` | `QueryPanel` |
-| Schema 树 | `src/lib/schemaTreeContextMenu.ts` | `ContentView` |
-| DataTable | `src/lib/dataTableContextMenu.ts` | `DataTable` |
-| 连接 Tab | `src/lib/connectionTabContextMenu.ts` | `ContentView` |
-| 收藏 / 历史侧栏 | `src/lib/querySidebarContextMenu.ts` | `QueryPanel` |
-| Workflow 列表 / 历史 | `src/lib/workflowListContextMenu.ts` | `WorkflowPage` |
-| ER 节点 | `src/lib/erNodeContextMenu.ts` | `ErDiagramView` |
-| Redis Key | `packages/drivers/redis/ui/key-browser/redisKeyContextMenu.ts` | `RedisWorkbench` |
-| 主窗口连接/分组 | `src/lib/mainWindowContextMenu.ts` | `ConnectionPage` |
+| Builder              | 路径                                                           | 调用方           |
+| -------------------- | -------------------------------------------------------------- | ---------------- |
+| SQL 编辑器           | `src/lib/sqlEditorContextMenu.ts`                              | `QueryPanel`     |
+| Schema 树            | `src/lib/schemaTreeContextMenu.ts`                             | `ContentView`    |
+| DataTable            | `src/lib/dataTableContextMenu.ts`                              | `DataTable`      |
+| 连接 Tab             | `src/lib/connectionTabContextMenu.ts`                          | `ContentView`    |
+| 收藏 / 历史侧栏      | `src/lib/querySidebarContextMenu.ts`                           | `QueryPanel`     |
+| Workflow 列表 / 历史 | `src/lib/workflowListContextMenu.ts`                           | `WorkflowPage`   |
+| ER 节点              | `src/lib/erNodeContextMenu.ts`                                 | `ErDiagramView`  |
+| Redis Key            | `packages/drivers/redis/ui/key-browser/redisKeyContextMenu.ts` | `RedisWorkbench` |
+| 主窗口连接/分组      | `src/lib/mainWindowContextMenu.ts`                             | `ConnectionPage` |
 
 Connection Window 菜单项对齐 TablePlus：Schema（Open Structure / New Query / Copy DDL / Truncate / Drop / New Table / Import）、SQL 编辑器（Run / Run Selection / Format / Comment）、Tab（Close to the Right/Left）、DDL 视图右键 Copy。
 
@@ -730,15 +736,15 @@ StatementResult
 
 ### 6.4 核心模块（src/lib/chart/）
 
-| 模块 | 职责 |
-|------|------|
-| `fieldInference.ts` | 基于列名和采样值推断字段类型 |
-| `recommend.ts` | 基于字段组合的规则引擎，推荐图表类型和轴配置 |
-| `transform.ts` | 直接映射 / 聚合模式数据转换，支持分组和排序 |
-| `colors.ts` | 5 套内置配色方案（default/warm/cool/neon/pastel） |
-| `format.ts` | 千分位数值格式化、百分比格式化、轴刻度格式化 |
-| `nlConfig.ts` | 自然语言解析图表配置指令（"换成饼图"、"按销量排序"） |
-| `export.ts` | PNG（html-to-image）/ SVG 导出 |
+| 模块                | 职责                                                 |
+| ------------------- | ---------------------------------------------------- |
+| `fieldInference.ts` | 基于列名和采样值推断字段类型                         |
+| `recommend.ts`      | 基于字段组合的规则引擎，推荐图表类型和轴配置         |
+| `transform.ts`      | 直接映射 / 聚合模式数据转换，支持分组和排序          |
+| `colors.ts`         | 5 套内置配色方案（default/warm/cool/neon/pastel）    |
+| `format.ts`         | 千分位数值格式化、百分比格式化、轴刻度格式化         |
+| `nlConfig.ts`       | 自然语言解析图表配置指令（"换成饼图"、"按销量排序"） |
+| `export.ts`         | PNG（html-to-image）/ SVG 导出                       |
 
 ### 6.5 功能特性
 
@@ -798,57 +804,57 @@ export function openConnectionWindow(opts, connectionName, database?, databaseTy
 
 ### 11.1 布局尺寸对照
 
-| 区域 | 设计稿像素 | Tailwind 实现 |
-|------|-----------|--------------|
-| 标题栏高度 | 40px | `h-10` |
-| 工具栏高度 | 48-56px | `h-12` / `h-14` |
-| 状态栏高度 | 40px | `h-10` |
-| 左侧边栏宽度 | 220–280px（主工作区导航树） | 可拖拽 |
-| Tab 栏高度 | 40px | `h-10` |
-| 表格行高 | 40-48px | `h-10` / `h-12` |
-| 卡片圆角 | 12px | `rounded-xl` |
-| 输入框高度 | 36px | `h-9` |
-| 输入框圆角 | 6px | `rounded-md` |
-| 按钮高度 | 32px | `h-8` |
-| 按钮圆角 | 6px | `rounded-md` |
+| 区域         | 设计稿像素                  | Tailwind 实现   |
+| ------------ | --------------------------- | --------------- |
+| 标题栏高度   | 40px                        | `h-10`          |
+| 工具栏高度   | 48-56px                     | `h-12` / `h-14` |
+| 状态栏高度   | 40px                        | `h-10`          |
+| 左侧边栏宽度 | 220–280px（主工作区导航树） | 可拖拽          |
+| Tab 栏高度   | 40px                        | `h-10`          |
+| 表格行高     | 40-48px                     | `h-10` / `h-12` |
+| 卡片圆角     | 12px                        | `rounded-xl`    |
+| 输入框高度   | 36px                        | `h-9`           |
+| 输入框圆角   | 6px                         | `rounded-md`    |
+| 按钮高度     | 32px                        | `h-8`           |
+| 按钮圆角     | 6px                         | `rounded-md`    |
 
 ### 11.2 色彩对照（暗色主题）
 
-| 设计稿色值 | 用途 | Tailwind |
-|-----------|------|----------|
-| `#0f172a` | 主背景 | `bg-slate-900` |
-| `#1e293b` | 次背景 (侧边栏/表头/工具栏) | `bg-slate-800` |
-| `#334155` | 边框/分割线 | `border-slate-700` |
-| `#f1f5f9` | 主文字 | `text-slate-100` |
-| `#94a3b8` | 次文字 | `text-slate-400` |
-| `#64748b` | 占位/禁用文字 | `text-slate-500` |
-| `#3b82f6` | 主色调/链接/选中 | `text-blue-500` / `bg-blue-500` |
-| `#22c55e` | 成功/active 状态 | `text-green-500` |
-| `#f59e0b` | 警告/pending 状态 | `text-amber-500` |
-| `#ef4444` | 错误/inactive/删除 | `text-red-500` |
-| `#c084fc` | SQL 关键字 | `text-purple-400` |
-| `#fbbf24` | SQL 数字 | `text-amber-300` |
-| `#8b5cf6` | 时间类型 | `text-violet-500` |
+| 设计稿色值 | 用途                        | Tailwind                        |
+| ---------- | --------------------------- | ------------------------------- |
+| `#0f172a`  | 主背景                      | `bg-slate-900`                  |
+| `#1e293b`  | 次背景 (侧边栏/表头/工具栏) | `bg-slate-800`                  |
+| `#334155`  | 边框/分割线                 | `border-slate-700`              |
+| `#f1f5f9`  | 主文字                      | `text-slate-100`                |
+| `#94a3b8`  | 次文字                      | `text-slate-400`                |
+| `#64748b`  | 占位/禁用文字               | `text-slate-500`                |
+| `#3b82f6`  | 主色调/链接/选中            | `text-blue-500` / `bg-blue-500` |
+| `#22c55e`  | 成功/active 状态            | `text-green-500`                |
+| `#f59e0b`  | 警告/pending 状态           | `text-amber-500`                |
+| `#ef4444`  | 错误/inactive/删除          | `text-red-500`                  |
+| `#c084fc`  | SQL 关键字                  | `text-purple-400`               |
+| `#fbbf24`  | SQL 数字                    | `text-amber-300`                |
+| `#8b5cf6`  | 时间类型                    | `text-violet-500`               |
 
 ### 11.3 字体对照
 
-| 场景 | 设计稿 | CSS |
-|------|--------|-----|
-| UI 文字 | Inter 13-15px | `font-sans text-sm` |
-| 代码/数据 | JetBrains Mono 12-13px | `font-mono text-xs` / `font-mono text-sm` |
-| 表头 | Inter 12px 600 | `text-xs font-medium text-slate-400` |
-| 标签文字 | Inter 11px 600 spacing | `text-[11px] font-semibold tracking-wider uppercase text-slate-400` |
+| 场景      | 设计稿                 | CSS                                                                 |
+| --------- | ---------------------- | ------------------------------------------------------------------- |
+| UI 文字   | Inter 13-15px          | `font-sans text-sm`                                                 |
+| 代码/数据 | JetBrains Mono 12-13px | `font-mono text-xs` / `font-mono text-sm`                           |
+| 表头      | Inter 12px 600         | `text-xs font-medium text-slate-400`                                |
+| 标签文字  | Inter 11px 600 spacing | `text-[11px] font-semibold tracking-wider uppercase text-slate-400` |
 
 ## 9. 测试策略
 
-| 层级 | 工具 | 覆盖范围 |
-|------|------|----------|
-| 组件单测 | Vitest + React Testing Library | DataTable, CellRenderer, FilterBar（Host `src/`） |
-| 驱动 UI 单测 | Vitest | `packages/drivers/<id>/ui/__tests__/`（`pnpm test:unit:drivers`，不进 Host `pnpm test:unit`） |
-| Store 单测 | Vitest | 每个 Store 的 action/state 变化 |
-| 集成测试 | WebdriverIO | 窗口创建/关闭, 连接流程, 查询执行；驱动深度 E2E 在 `packages/drivers/<id>/e2e/` |
-| 性能测试 | WebdriverIO + Chrome DevTools | 10 万行滚动帧率, 内存占用 |
-| 快照测试 | Storybook | 关键 UI 组件视觉回归 |
+| 层级         | 工具                           | 覆盖范围                                                                                      |
+| ------------ | ------------------------------ | --------------------------------------------------------------------------------------------- |
+| 组件单测     | Vitest + React Testing Library | DataTable, CellRenderer, FilterBar（Host `src/`）                                             |
+| 驱动 UI 单测 | Vitest                         | `packages/drivers/<id>/ui/__tests__/`（`pnpm test:unit:drivers`，不进 Host `pnpm test:unit`） |
+| Store 单测   | Vitest                         | 每个 Store 的 action/state 变化                                                               |
+| 集成测试     | WebdriverIO                    | 窗口创建/关闭, 连接流程, 查询执行；驱动深度 E2E 在 `packages/drivers/<id>/e2e/`               |
+| 性能测试     | WebdriverIO + Chrome DevTools  | 10 万行滚动帧率, 内存占用                                                                     |
+| 快照测试     | Storybook                      | 关键 UI 组件视觉回归                                                                          |
 
 ## 8. ER 图（Entity-Relationship Diagram）
 
@@ -873,13 +879,13 @@ ContentView
 
 ### 8.2 核心模块
 
-| 文件 | 职责 |
-|------|------|
-| `ErDiagramView.tsx` | 主视图组件，获取 ER 数据、渲染画布、导出/搜索控制 |
-| `er/TableNode.tsx` | React Flow 自定义节点，渲染表名 + 列 + PK/FK 标记，支持折叠 |
-| `er/buildErGraph.ts` | `TableSchema[]` → React Flow nodes/edges 转换（含焦点过滤、预测关系） |
-| `er/nodeMetrics.ts` | 节点尺寸**唯一来源**：宽度、表头、列行、折叠页脚、滚动上限 |
-| `er/layoutErGraph.ts` | 基于 dagre 的**分层（拓扑）布局** |
+| 文件                  | 职责                                                                  |
+| --------------------- | --------------------------------------------------------------------- |
+| `ErDiagramView.tsx`   | 主视图组件，获取 ER 数据、渲染画布、导出/搜索控制                     |
+| `er/TableNode.tsx`    | React Flow 自定义节点，渲染表名 + 列 + PK/FK 标记，支持折叠           |
+| `er/buildErGraph.ts`  | `TableSchema[]` → React Flow nodes/edges 转换（含焦点过滤、预测关系） |
+| `er/nodeMetrics.ts`   | 节点尺寸**唯一来源**：宽度、表头、列行、折叠页脚、滚动上限            |
+| `er/layoutErGraph.ts` | 基于 dagre 的**分层（拓扑）布局**                                     |
 
 ### 8.3 数据流
 
@@ -970,19 +976,37 @@ S 形绕行。同一套形态实测：**反向边 7/10 → 0/10，跨越 18 → 
 ## 9. PathInput 控件
 
 `packages/ui/src/PathInput.tsx`（`@datazen/ui` 导出）— 统一的路径输入/选择控件：
+
 - 左侧：文本输入框（可手动输入路径）
 - 右侧：「浏览」按钮（调用 Tauri Dialog API 选择文件或目录）
 - 支持 `mode` 属性：`file` / `directory` / `save`
 - 已在所有需要路径输入的位置替换（SQLite 数据库路径、备份路径、上下文目录等）
 
+### 9.1 设计系统纯净性由脚本强制
+
+`@datazen/ui` 被宿主、每个驱动和每个扩展打包，其中若干运行在没有 Tauri
+webview 的环境里。因此设计系统必须是依赖图里的**叶子**：只允许 React 与包内
+自身，不允许出现宿主运行时、宿主 Store 或兄弟 DataZen 包。该约束由两个脚本
+同时执行，任何一个变弱另一个就会兜住：
+
+| 脚本                                         | 规则                                | 覆盖                            |
+| -------------------------------------------- | ----------------------------------- | ------------------------------- |
+| `scripts/check-module-layers.mjs`            | `LAYER_RULES` 的 `packages/ui` 条目 | 相对路径解析后的子树 + 裸包前缀 |
+| `scripts/check-driver-import-boundaries.mjs` | `RULES.R4`（blocking）              | 同上，规则表见脚本头部          |
+
+两处共用 `scripts/lib/scanSourceCode.mjs` 的分词器，扫描文件内的**全部字符串
+字面量**，因此普通 `import` / `export … from`、动态 `import()`、`require()`、
+`vi.mock()` 都会被检出，注释与字符串正文不会被误判。新增一类破坏方式时只改
+规则表，不需要改检测逻辑。
+
 ## 10. 开发阶段规划
 
-| 阶段 | 内容 | 输出 |
-|------|------|------|
-| **Phase 1: 脚手架** | Vite + React + Tailwind + shadcn/ui 项目初始化；目录结构搭建；主题系统；Tauri 窗口路由 | 可运行的空壳多窗口应用 |
-| **Phase 2: 主窗口** | 连接管理 Store；连接卡片/分组；新建连接对话框；连接测试 | 主窗口功能完整 |
-| **Phase 3: 连接窗口** | Schema 树；表结构标签页；数据标签页（DataTable 核心）；虚拟滚动；分页 | 可浏览表结构和数据 |
-| **Phase 4: 数据编辑** | 行内编辑；新增/删除行；筛选/排序；数据导出 | 完整数据编辑功能 |
-| **Phase 5: 查询窗口** | CodeMirror 编辑器集成；查询执行/取消；结果展示；查询历史/收藏；执行计划 | 查询功能完整 |
-| **Phase 6: 打磨** | 主题切换；快捷键；错误处理；性能优化；窗口间通信 | 生产就绪 |
-| **Phase 7: 图表可视化** | Recharts 集成；5种图表类型；智能推荐；轴配置；NL调整；导出PNG/SVG | 查询结果可视化 |
+| 阶段                    | 内容                                                                                   | 输出                   |
+| ----------------------- | -------------------------------------------------------------------------------------- | ---------------------- |
+| **Phase 1: 脚手架**     | Vite + React + Tailwind + shadcn/ui 项目初始化；目录结构搭建；主题系统；Tauri 窗口路由 | 可运行的空壳多窗口应用 |
+| **Phase 2: 主窗口**     | 连接管理 Store；连接卡片/分组；新建连接对话框；连接测试                                | 主窗口功能完整         |
+| **Phase 3: 连接窗口**   | Schema 树；表结构标签页；数据标签页（DataTable 核心）；虚拟滚动；分页                  | 可浏览表结构和数据     |
+| **Phase 4: 数据编辑**   | 行内编辑；新增/删除行；筛选/排序；数据导出                                             | 完整数据编辑功能       |
+| **Phase 5: 查询窗口**   | CodeMirror 编辑器集成；查询执行/取消；结果展示；查询历史/收藏；执行计划                | 查询功能完整           |
+| **Phase 6: 打磨**       | 主题切换；快捷键；错误处理；性能优化；窗口间通信                                       | 生产就绪               |
+| **Phase 7: 图表可视化** | Recharts 集成；5种图表类型；智能推荐；轴配置；NL调整；导出PNG/SVG                      | 查询结果可视化         |
