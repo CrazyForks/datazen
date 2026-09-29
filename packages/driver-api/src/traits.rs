@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::query_stream::{emit_multi_query_as_stream, QueryStreamCallback};
+use crate::query_stream::{QueryStreamCallback, emit_multi_query_as_stream};
 use crate::schema_migration::{MigrationCapabilities, MigrationRenderer, TypeNormalizer};
 use crate::sql_target::SqlTarget;
 use crate::types::*;
 use crate::{
-    execute_command_definition, query_command_definition, schema_catalog_command_definitions,
-    try_execute_schema_catalog_command, CommandResult, DriverCommandDefinition,
+    CommandResult, DriverCommandDefinition, execute_command_definition, query_command_definition,
+    schema_catalog_command_definitions, try_execute_schema_catalog_command,
 };
 
 /// Lowercase hexadecimal encoding used by the default SQL literal formatter.
@@ -295,7 +295,7 @@ pub trait DatabaseDriver: Send + Sync {
     }
 
     async fn query(&self, handle: &ConnectionHandle, sql: &str)
-        -> Result<QueryResult, DriverError>;
+    -> Result<QueryResult, DriverError>;
 
     async fn query_multi(
         &self,
@@ -578,6 +578,67 @@ pub trait DatabaseDriver: Send + Sync {
         Err(DriverError::TransactionError(
             "Not supported for this driver type".into(),
         ))
+    }
+
+    /// Synchronize generated identity/serial sequences after a Data Transfer
+    /// table batch has inserted explicit values. The call runs inside the
+    /// table's active data transaction, after every batch succeeded and before
+    /// commit. Drivers whose generated-value state advances automatically may
+    /// keep the default no-op implementation.
+    async fn advance_transfer_identity_sequences(
+        &self,
+        _handle: &ConnectionHandle,
+        _schema: Option<&str>,
+        _table: &str,
+        _columns: &[String],
+    ) -> Result<(), DriverError> {
+        Ok(())
+    }
+
+    /// Return the clause required by this dialect to accept explicit values
+    /// for generated identity columns during Data Transfer. This is a
+    /// transfer-only DML extension; the default keeps existing drivers and
+    /// other migration paths unchanged.
+    fn transfer_explicit_identity_insert_clause(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Maximum row count for one Data Transfer SQL-file INSERT statement.
+    /// Drivers may raise this above one when their SQL-file renderer can
+    /// safely process multi-row VALUES statements in a single parse/execute.
+    fn transfer_sql_file_insert_batch_size(&self) -> usize {
+        1
+    }
+
+    /// Render a Data Transfer SQL-file INSERT when the target schema cannot
+    /// be inspected while exporting. The template may contain multiple
+    /// VALUES rows. `identity_override_marker` is a unique placeholder
+    /// immediately before `VALUES`; the default removes it.
+    fn render_transfer_sql_file_insert(
+        &self,
+        insert_template: &str,
+        identity_override_marker: &str,
+    ) -> Result<String, DriverError> {
+        if identity_override_marker.is_empty()
+            || insert_template.matches(identity_override_marker).count() != 1
+        {
+            return Err(DriverError::Unsupported(
+                "Data Transfer SQL-file INSERT has an invalid identity override marker".into(),
+            ));
+        }
+        Ok(insert_template.replacen(&format!("{identity_override_marker} "), "", 1))
+    }
+
+    /// Render Data Transfer sequence synchronization statements for an SQL
+    /// file targeting this driver's dialect. Drivers without such a concept
+    /// may keep the empty default.
+    fn render_transfer_identity_sequence_sync_sql(
+        &self,
+        _schema: Option<&str>,
+        _table: &str,
+        _columns: &[String],
+    ) -> Result<Vec<String>, DriverError> {
+        Ok(Vec::new())
     }
 
     /// Begin a read-only transaction with a stable snapshot for a multi-page
@@ -1228,10 +1289,12 @@ mod structure_defaults_tests {
             pool_id: "pool".into(),
         };
 
-        assert!(!driver
-            .has_complete_foreign_key_catalog_visibility(&handle)
-            .await
-            .expect("default visibility capability"));
+        assert!(
+            !driver
+                .has_complete_foreign_key_catalog_visibility(&handle)
+                .await
+                .expect("default visibility capability")
+        );
     }
 
     #[tokio::test]
@@ -1567,33 +1630,29 @@ mod structure_defaults_tests {
             assert!(
                 validate_schema_target(&SchemaAware, "app", None, SchemaScope::AnySchema).is_ok()
             );
-            assert!(validate_schema_target(
-                &SchemaAware,
-                "app",
-                Some("public"),
-                SchemaScope::AnySchema
-            )
-            .is_ok());
-            assert!(validate_schema_target(
-                &SchemaAware,
-                "app",
-                Some("public"),
-                SchemaScope::ExactSchema
-            )
-            .is_ok());
+            assert!(
+                validate_schema_target(&SchemaAware, "app", Some("public"), SchemaScope::AnySchema)
+                    .is_ok()
+            );
+            assert!(
+                validate_schema_target(
+                    &SchemaAware,
+                    "app",
+                    Some("public"),
+                    SchemaScope::ExactSchema
+                )
+                .is_ok()
+            );
             let err = validate_schema_target(&SchemaAware, "app", None, SchemaScope::ExactSchema)
                 .expect_err("schema-aware driver must require a schema when resolving one table");
             assert!(
                 err.to_string().contains("explicit schema is required"),
                 "{err}"
             );
-            assert!(validate_schema_target(
-                &SchemaAware,
-                "app",
-                Some(" "),
-                SchemaScope::ExactSchema
-            )
-            .is_err());
+            assert!(
+                validate_schema_target(&SchemaAware, "app", Some(" "), SchemaScope::ExactSchema)
+                    .is_err()
+            );
         }
     }
 }

@@ -422,6 +422,10 @@ pub struct TableInspectResult {
     pub target_columns: Vec<String>,
     #[serde(default)]
     pub source_column_types: HashMap<String, String>,
+    /// Native target column types captured during inspection. This is used by
+    /// Data Transfer preflight to catch narrowing before the first write.
+    #[serde(default)]
+    pub target_column_types: HashMap<String, String>,
     pub incompatible_reason: Option<String>,
     pub source_row_count: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -435,6 +439,7 @@ pub enum DdlPreviewKind {
     Table,
     Index,
     ForeignKey,
+    DropTable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

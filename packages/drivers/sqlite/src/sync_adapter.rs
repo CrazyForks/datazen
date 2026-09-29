@@ -156,6 +156,10 @@ impl SyncTargetAdapter for SqliteSyncAdapter {
     fn auto_increment_keyword(&self) -> Option<&str> {
         Some("AUTOINCREMENT")
     }
+
+    fn supports_explicit_identity_values(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

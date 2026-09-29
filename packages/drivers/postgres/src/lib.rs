@@ -16,6 +16,7 @@ mod sql;
 mod sql_target;
 mod structure;
 mod sync_adapter;
+mod transfer_identity;
 mod type_decode;
 mod type_normalizer;
 pub use migration::{PostgresMigrationCapabilities, PostgresMigrationRenderer};

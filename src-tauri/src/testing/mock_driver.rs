@@ -517,6 +517,21 @@ impl DatabaseDriver for MockDriver {
                 execution_time_ms: 0,
             });
         }
+        // Data Transfer source-structure preflight queries are catalog probes,
+        // not the configured full-column-type fixture rows below. In the
+        // ordinary mock case no unsupported source objects are present.
+        if sql.contains("AS unsupported_object") {
+            return Ok(QueryResult {
+                columns: vec![ColumnInfo {
+                    name: "unsupported_object".into(),
+                    data_type: "text".into(),
+                    nullable: false,
+                }],
+                rows: Vec::new(),
+                rows_affected: None,
+                execution_time_ms: 0,
+            });
+        }
         let columns: Vec<ColumnInfo> = self
             .opts
             .columns

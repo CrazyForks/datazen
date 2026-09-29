@@ -78,9 +78,11 @@ pub(crate) async fn execute_transfer_data_with_resume_checkpoint(
         // In Structure+Data, a successful create is an earlier, separately
         // committed target write. Drop+Create is handled below as its own
         // preamble and is skipped by the structure phase.
-        let mut known_preamble_applied = job.mode == TransferMode::StructureAndData
-            && table.status == super::super::model::TableMappingStatus::CreateNew
-            && job.write_mode != WriteMode::DropCreateInsert;
+        let mut known_preamble_applied = drop_create
+            .is_some_and(|context| context.structure_precreated)
+            || (job.mode == TransferMode::StructureAndData
+                && table.status == super::super::model::TableMappingStatus::CreateNew
+                && job.write_mode != WriteMode::DropCreateInsert);
 
         let columns = active_column_mappings(&table.column_mappings);
         if columns.is_empty() {
@@ -359,55 +361,57 @@ pub(crate) async fn execute_transfer_data_with_resume_checkpoint(
                     "drop+create requires IR adapters",
                 ));
             };
-            if let Err(e) = drop_and_recreate_table(
-                ctx.src_adapter,
-                ctx.tgt_adapter,
-                ctx.src_driver,
-                ctx.src_handle,
-                ctx.tgt_driver,
-                ctx.tgt_handle,
-                table,
-                job,
-                ctx.source_schemas,
-                write_started,
-            )
-            .await
-            {
-                let (outcome, error) = match e {
-                    super::super::structure::DropCreateFailure::NotStarted(error) => (
-                        outcome_before_data_transaction(known_preamble_applied),
-                        error.to_string(),
-                    ),
-                    super::super::structure::DropCreateFailure::Unknown(error) => {
-                        (TableExecutionOutcome::Unknown, error.to_string())
+            if !ctx.structure_precreated {
+                if let Err(e) = drop_and_recreate_table(
+                    ctx.src_adapter,
+                    ctx.tgt_adapter,
+                    ctx.src_driver,
+                    ctx.src_handle,
+                    ctx.tgt_driver,
+                    ctx.tgt_handle,
+                    table,
+                    job,
+                    ctx.source_schemas,
+                    write_started,
+                )
+                .await
+                {
+                    let (outcome, error) = match e {
+                        super::super::structure::DropCreateFailure::NotStarted(error) => (
+                            outcome_before_data_transaction(known_preamble_applied),
+                            error.to_string(),
+                        ),
+                        super::super::structure::DropCreateFailure::Unknown(error) => {
+                            (TableExecutionOutcome::Unknown, error.to_string())
+                        }
+                    };
+                    tables_out.push(TableExecutionResult::database(
+                        &table.source_table,
+                        &table.target_table,
+                        (outcome != TableExecutionOutcome::Unknown).then_some(0),
+                        outcome,
+                        Some(error),
+                    ));
+                    partial = true;
+                    if outcome == TableExecutionOutcome::Unknown {
+                        append_not_started_after_unknown(
+                            &mut tables_out,
+                            &transfer_tables[table_index + 1..],
+                            completed_tables,
+                        );
+                        return Ok(TransferExecutionResult {
+                            tables: tables_out,
+                            rows_inserted: total_rows,
+                            cancelled: false,
+                            partial: true,
+                            resume_token: None,
+                        });
                     }
-                };
-                tables_out.push(TableExecutionResult::database(
-                    &table.source_table,
-                    &table.target_table,
-                    (outcome != TableExecutionOutcome::Unknown).then_some(0),
-                    outcome,
-                    Some(error),
-                ));
-                partial = true;
-                if outcome == TableExecutionOutcome::Unknown {
-                    append_not_started_after_unknown(
-                        &mut tables_out,
-                        &transfer_tables[table_index + 1..],
-                        completed_tables,
-                    );
-                    return Ok(TransferExecutionResult {
-                        tables: tables_out,
-                        rows_inserted: total_rows,
-                        cancelled: false,
-                        partial: true,
-                        resume_token: None,
-                    });
+                    if job.options.stop_on_error {
+                        break;
+                    }
+                    continue;
                 }
-                if job.options.stop_on_error {
-                    break;
-                }
-                continue;
             }
             known_preamble_applied = true;
         } else if job.write_mode == WriteMode::TruncateInsert {
@@ -494,6 +498,7 @@ pub(crate) async fn execute_transfer_data_with_resume_checkpoint(
         let mut table_rows = 0u64;
         let mut table_error: Option<String> = None;
         let mut was_cancelled = false;
+        let mut successful_data_batches = false;
         'batches: loop {
             if cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
                 was_cancelled = true;
@@ -553,10 +558,45 @@ pub(crate) async fn execute_transfer_data_with_resume_checkpoint(
             {
                 Ok(affected) => {
                     table_rows += affected;
+                    successful_data_batches = true;
                 }
                 Err(error) => {
                     table_error = Some(error.to_string());
                     break 'batches;
+                }
+            }
+        }
+        if table_error.is_none() && cancelled.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+            was_cancelled = true;
+            table_error = Some("transfer cancelled; current data transaction rolled back".into());
+        }
+        // `affected` can be zero for a successful INSERT ... ON CONFLICT
+        // DO NOTHING / ignore batch that still carried explicit identity
+        // values. Reseed based on successful batch execution, not row-count
+        // reporting, so the target sequence remains beyond imported IDs.
+        if table_error.is_none() && successful_data_batches {
+            let explicit_identity_columns = columns
+                .iter()
+                .filter(|mapping| {
+                    target_schema.columns.iter().any(|column| {
+                        column.name == mapping.target_column && column.is_auto_increment
+                    })
+                })
+                .map(|mapping| mapping.target_column.clone())
+                .collect::<Vec<_>>();
+            if !explicit_identity_columns.is_empty() {
+                if let Err(error) = tgt_driver
+                    .advance_transfer_identity_sequences(
+                        tgt_handle,
+                        target.schema.as_deref(),
+                        &table.target_table,
+                        &explicit_identity_columns,
+                    )
+                    .await
+                {
+                    table_error = Some(format!(
+                        "cannot safely synchronize generated identity values: {error}"
+                    ));
                 }
             }
         }

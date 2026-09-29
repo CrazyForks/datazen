@@ -654,6 +654,7 @@ async fn run_test_chunk_without_ack_fault_lock(
         source_primary_keys: vec!["id".into()],
         target_columns: vec!["id".into()],
         source_column_types: Default::default(),
+        target_column_types: Default::default(),
         incompatible_reason: None,
         source_row_count: Some(1),
         recordset: None,

@@ -95,7 +95,7 @@ impl PostgresDriver {
 
         let cols = sqlx::query(
             r#"
-                    SELECT column_name, data_type, is_nullable, column_default,
+                    SELECT column_name, data_type, is_nullable, column_default, is_identity,
                            col_description((quote_ident(table_schema)||'.'||quote_ident(table_name))::regclass, ordinal_position) as comment
                     FROM information_schema.columns
                     WHERE table_name = $1
@@ -144,7 +144,10 @@ impl PostgresDriver {
                     nullable: nullable == "YES",
                     default_value: r.get("column_default"),
                     comment: r.get("comment"),
-                    is_auto_increment: false,
+                    is_auto_increment: r.get::<String, _>("is_identity") == "YES"
+                        || r.get::<Option<String>, _>("column_default")
+                            .as_deref()
+                            .is_some_and(|default| default.contains("nextval(")),
                 }
             })
             .collect();
@@ -171,7 +174,7 @@ impl PostgresDriver {
                         THEN quote_ident(udt_schema) || '.' || quote_ident(udt_name)
                         ELSE data_type
                    END AS migration_data_type,
-                   is_nullable, column_default,
+                   is_nullable, column_default, is_identity,
                    col_description((quote_ident(table_schema)||'.'||quote_ident(table_name))::regclass, ordinal_position) as comment
             FROM information_schema.columns
             WHERE table_name = $1
@@ -243,10 +246,11 @@ impl PostgresDriver {
                 let name: String = r.get("column_name");
                 let nullable: String = r.get("is_nullable");
                 let default_value: Option<String> = r.get("column_default");
-                let is_auto_increment = default_value
-                    .as_deref()
-                    .map(|d| d.contains("nextval("))
-                    .unwrap_or(false);
+                let is_auto_increment = r.get::<String, _>("is_identity") == "YES"
+                    || default_value
+                        .as_deref()
+                        .map(|d| d.contains("nextval("))
+                        .unwrap_or(false);
                 ColumnSchema {
                     is_primary_key: pk_names.contains(&name),
                     name,

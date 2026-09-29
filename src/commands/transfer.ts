@@ -149,7 +149,7 @@ export interface TransferDdlPreview {
   sourceTable: string;
   targetTable: string;
   ddl: string;
-  kind?: 'table' | 'index' | 'foreignKey';
+  kind?: 'table' | 'index' | 'foreignKey' | 'dropTable';
   dependsOn?: string[];
 }
 

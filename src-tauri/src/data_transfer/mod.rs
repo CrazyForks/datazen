@@ -35,6 +35,7 @@ pub use model::{
 pub use pairing::{classify_transfer_pair, enforce_transfer_pairing, is_same_family};
 pub use preview::{build_preview, TransferPreviewAdapters};
 pub use profile::TransferProfile;
+pub(crate) use sql_structure::build_database_structure_plan;
 pub(crate) use structure::create_target_tables_with_write_observer;
 pub use structure::{column_ir_types_by_source, create_target_tables, source_schema_to_target_ir};
 

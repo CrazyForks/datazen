@@ -2,12 +2,46 @@
 
 use super::ir::{IRColumn, IRDefault, IRForeignKey, IRIndex, IRTable, IRTableObjects, IRType};
 use super::key::{contract_from_column, SyncKeyContract, SyncKeyValue};
-use crate::{ColumnSchema, TableSchema, Value};
+use crate::{ColumnSchema, TableOptions, TableSchema, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Converts native column metadata into IR (used for the *source* side of a sync).
 pub trait SyncSourceAdapter: Send + Sync {
+    /// Validate one source column for Data Transfer before any target write.
+    ///
+    /// This is intentionally separate from the Data Sync key contract and is
+    /// only called by the heterogeneous Data Transfer planner/executor. The
+    /// default keeps existing adapters source-compatible and behavior-neutral.
+    fn validate_transfer_source_column(&self, _column: &ColumnSchema) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Whether this source column is represented only by its native type name
+    /// in the transfer IR. Targets may preserve it only when they can prove the
+    /// same native type exists. This signal is Data Transfer-only.
+    fn transfer_source_type_is_native_only(
+        &self,
+        _column: &ColumnSchema,
+        _source_ir: &IRColumn,
+    ) -> bool {
+        false
+    }
+
+    /// Maximum source text size in bytes when the source type has a finite
+    /// documented bound. Used only by Data Transfer to compare an existing or
+    /// planned target type before writes. `None` means the adapter has no
+    /// transfer-specific bound to contribute.
+    fn transfer_source_text_limit_bytes(&self, _column: &ColumnSchema) -> Option<u64> {
+        None
+    }
+
+    /// Whether this source type needs a collation-preserving target mapping
+    /// that the source adapter cannot prove from its column metadata.
+    fn transfer_source_requires_collation_preservation(&self, _column: &ColumnSchema) -> bool {
+        false
+    }
+
     /// Describe the equality and total-order semantics that Data Sync may use
     /// for this column.  The default is conservative: an adapter must opt a
     /// key type in before the host can compare or page it.
@@ -131,12 +165,71 @@ pub trait SyncSourceAdapter: Send + Sync {
     fn table_options_query(&self, _table: &str) -> Option<String> {
         None
     }
+
+    /// Optional query that returns one row per source object whose structure
+    /// is not represented in the transfer metadata model (for example a
+    /// generated column or expression/prefix index).
+    fn unsupported_transfer_structure_query(
+        &self,
+        _database: &str,
+        _schema: Option<&str>,
+        _table: &str,
+    ) -> Option<String> {
+        None
+    }
 }
 
 /// Renders IR back into native DDL fragments (used for the *target* side of a sync).
 pub trait SyncTargetAdapter: Send + Sync {
     /// Render an `IRType` as a native DDL type string.
     fn ir_type_to_native(&self, ir_type: &IRType) -> String;
+
+    /// Data Transfer-only type renderer. Defaults to the shared renderer so
+    /// existing Data Sync and Schema Diff behavior is unchanged.
+    fn transfer_ir_type_to_native(&self, ir_type: &IRType) -> String {
+        self.ir_type_to_native(ir_type)
+    }
+
+    /// Whether a default is valid for a Data Transfer-created column. The
+    /// shared default policy remains the fallback for existing adapters.
+    fn transfer_allows_column_default(&self, ir_type: &IRType) -> bool {
+        self.allows_column_default(ir_type)
+    }
+
+    /// Whether an explicit native type is known to support a Data Transfer
+    /// default. `None` means the adapter cannot prove the native type's
+    /// default semantics; Transfer then rejects the default before writing.
+    /// Shared DDL callers continue using `allows_column_default`.
+    fn transfer_native_type_allows_column_default(&self, _native_type: &str) -> Option<bool> {
+        None
+    }
+
+    /// Data Transfer-only fallback for a type whose source default cannot be
+    /// represented directly. Returning `None` makes the transfer planner fail
+    /// closed instead of narrowing or dropping the source default.
+    fn transfer_default_capable_type_for(&self, ir_type: &IRType) -> Option<IRType> {
+        self.default_capable_type_for(ir_type)
+    }
+
+    /// Validate a source-to-target column mapping for Data Transfer before
+    /// any target write. `target_native_type` is populated from the inspected
+    /// target catalog for existing tables and from the reviewed mapping for
+    /// CREATE plans. `creating_target` distinguishes schema portability from
+    /// data-only compatibility with an existing table.
+    ///
+    /// The default is a no-op so this does not alter Data Sync or Schema Diff.
+    fn validate_transfer_column_type(
+        &self,
+        _source_column: &ColumnSchema,
+        _source_ir: &IRColumn,
+        _source_text_limit_bytes: Option<u64>,
+        _source_requires_collation_preservation: bool,
+        _source_type_is_native_only: bool,
+        _target_native_type: Option<&str>,
+        _creating_target: bool,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 
     /// Render an `IRDefault` as the content of a `DEFAULT` clause.
     /// Return `None` to omit the clause entirely (e.g. for auto-increment columns
@@ -174,6 +267,20 @@ pub trait SyncTargetAdapter: Send + Sync {
         }
     }
 
+    /// Quote a table relation using the target engine's namespace rules.
+    /// The database endpoint is part of the reviewed transfer scope even when
+    /// an engine cannot express it as a relation qualifier (for example,
+    /// PostgreSQL uses the selected database connection and an optional
+    /// schema, while MySQL can qualify a relation with its database).
+    fn qualify_relation(&self, _database: &str, schema: Option<&str>, table: &str) -> String {
+        match schema {
+            Some(schema) if !schema.trim().is_empty() => {
+                format!("{}.{}", self.quote_ident(schema), self.quote_ident(table))
+            }
+            _ => self.quote_ident(table),
+        }
+    }
+
     /// Whether the target database supports inline PRIMARY KEY constraints
     /// in CREATE TABLE. OLAP engines typically do not.
     fn supports_primary_key(&self) -> bool {
@@ -184,6 +291,71 @@ pub trait SyncTargetAdapter: Send + Sync {
     /// Return `None` if the engine uses a different mechanism (e.g. PG SERIAL/IDENTITY).
     fn auto_increment_keyword(&self) -> Option<&str> {
         None
+    }
+
+    /// Whether the target accepts explicit values for identity/auto-increment
+    /// columns during INSERT. The transfer writer currently inserts mapped
+    /// source values directly and does not toggle engine-specific session
+    /// modes such as SQL Server IDENTITY_INSERT.
+    fn supports_explicit_identity_values(&self) -> bool {
+        false
+    }
+
+    /// Whether non-primary index names are local to a table on this target.
+    /// Unknown engines default to the stricter schema-wide rule so a transfer
+    /// plan cannot defer a duplicate-name failure until after writes begin.
+    fn index_names_are_table_scoped(&self) -> bool {
+        false
+    }
+
+    /// Whether foreign-key constraint names are local to a table on this
+    /// target. Unknown engines default to the stricter schema-wide rule.
+    fn foreign_key_names_are_table_scoped(&self) -> bool {
+        false
+    }
+
+    /// Whether quoted secondary-object names preserve case for uniqueness.
+    /// Engines with case-folded identifiers should keep the conservative
+    /// default; PostgreSQL quoted names are case-sensitive.
+    fn object_names_are_case_sensitive(&self) -> bool {
+        false
+    }
+
+    /// Map source catalog table options to a target CREATE suffix. The default
+    /// recognizes InnoDB as a portable transactional row-store detail and
+    /// refuses all options whose semantics cannot be represented.
+    fn render_source_table_options(
+        &self,
+        options: &TableOptions,
+    ) -> Result<Option<String>, String> {
+        if let Some(collation) = options
+            .collation
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let charset_note = if options
+                .charset
+                .as_deref()
+                .is_some_and(|charset| charset.eq_ignore_ascii_case("utf8mb4"))
+            {
+                " The source UTF8MB4 character encoding can map to PostgreSQL UTF8, but that does not prove equivalent sort, case, or accent rules."
+            } else {
+                " Matching character encodings do not prove equivalent sort, case, or accent rules."
+            };
+            return Err(format!(
+                "source table collation '{collation}' has no proven equivalent on this target; choose a target collation with reviewed matching semantics or create the target table with an explicit reviewed conversion.{charset_note}"
+            ));
+        }
+        if options.comment.is_some() || options.charset.is_some() {
+            return Err("table comment or character set cannot be preserved".into());
+        }
+        if let Some(engine) = options.engine.as_deref() {
+            if !engine.eq_ignore_ascii_case("innodb") {
+                return Err(format!("source table engine '{engine}' is unsupported"));
+            }
+        }
+        Ok(None)
     }
 
     /// Appended after `CREATE TABLE (...)` closing paren. Default: use `ir_table.table_options` if present.
@@ -235,6 +407,23 @@ pub trait SyncTargetAdapter: Send + Sync {
             "CREATE {unique}INDEX {} ON {table_ref} ({columns})",
             self.quote_ident(&index.name)
         )))
+    }
+
+    /// Validate a mapped target column before placing it in an ordinary
+    /// secondary index. Engines that require prefix lengths or special index
+    /// forms for some native types should reject those types here so the host
+    /// can stop before any table DDL is executed.
+    fn validate_index_column_type(&self, _column: &IRColumn) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Validate a complete index key after its target columns have been
+    /// projected and mapped. Implementations may enforce aggregate key limits.
+    fn validate_index_columns(&self, columns: &[IRColumn]) -> Result<(), String> {
+        for column in columns {
+            self.validate_index_column_type(column)?;
+        }
+        Ok(())
     }
 
     /// Render one foreign key after all table definitions and row data. The

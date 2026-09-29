@@ -56,6 +56,23 @@ impl DatabaseDriver for ReuseDriver {
         self.inner.sync_family()
     }
 
+    fn transfer_explicit_identity_insert_clause(&self) -> Option<&'static str> {
+        self.inner.transfer_explicit_identity_insert_clause()
+    }
+
+    fn transfer_sql_file_insert_batch_size(&self) -> usize {
+        self.inner.transfer_sql_file_insert_batch_size()
+    }
+
+    fn render_transfer_sql_file_insert(
+        &self,
+        insert_template: &str,
+        identity_override_marker: &str,
+    ) -> Result<String, DriverError> {
+        self.inner
+            .render_transfer_sql_file_insert(insert_template, identity_override_marker)
+    }
+
     fn type_normalizer(&self) -> Option<Arc<dyn TypeNormalizer>> {
         self.inner.type_normalizer()
     }
@@ -941,9 +958,11 @@ mod tests {
             .unwrap();
         assert!(*inner.streamed.lock().unwrap());
         let events = events.lock().unwrap();
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, QueryStreamEvent::StatementStart { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, QueryStreamEvent::StatementStart { .. }))
+        );
         assert!(matches!(events.last(), Some(QueryStreamEvent::Done { .. })));
     }
 
@@ -956,10 +975,12 @@ mod tests {
             pool_id: "p".into(),
         };
 
-        assert!(reuse
-            .has_complete_foreign_key_catalog_visibility(&handle)
-            .await
-            .expect("forward visibility query"));
+        assert!(
+            reuse
+                .has_complete_foreign_key_catalog_visibility(&handle)
+                .await
+                .expect("forward visibility query")
+        );
     }
 
     #[tokio::test]

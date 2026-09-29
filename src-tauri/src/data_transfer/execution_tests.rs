@@ -1,13 +1,13 @@
 //! Generic execution journeys: bound values, projection, rollback and cancellation.
 use super::execute::{
-    execute_same_family_data, execute_transfer_data_with_write_observer, map_row_values,
-    ValueFormatter,
+    ValueFormatter, execute_same_family_data, execute_transfer_data_with_write_observer,
+    map_row_values,
 };
 use super::filter::SourceFilter;
 use super::model::*;
 use async_trait::async_trait;
 use datazen_driver_api::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -23,6 +23,9 @@ struct State {
     rollback: usize,
     metadata_refs: Vec<String>,
     source_queries: Vec<(String, Vec<Value>)>,
+    identity_sync_calls: Vec<(Option<String>, String, Vec<String>)>,
+    transfer_order: Vec<&'static str>,
+    write_sqls: Vec<String>,
 }
 struct Driver {
     rows: Rows,
@@ -36,6 +39,9 @@ struct Driver {
     begin_error_on_call: Option<usize>,
     schema_error_on_call: Option<usize>,
     execute_error_on_call: Option<usize>,
+    identity_sync_error: bool,
+    affected_override: Option<u64>,
+    include_identity_insert_clause: bool,
     stream_mode: u8,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -208,6 +214,31 @@ impl DatabaseDriver for Driver {
             connection_id: "target".into(),
         })
     }
+    async fn advance_transfer_identity_sequences(
+        &self,
+        _: &ConnectionHandle,
+        schema: Option<&str>,
+        table: &str,
+        columns: &[String],
+    ) -> Result<(), DriverError> {
+        let mut state = self.state.lock().unwrap();
+        state.transfer_order.push("sync");
+        state.identity_sync_calls.push((
+            schema.map(str::to_string),
+            table.to_string(),
+            columns.to_vec(),
+        ));
+        if self.identity_sync_error {
+            return Err(DriverError::QueryFailed(
+                "injected identity sequence synchronization failure".into(),
+            ));
+        }
+        Ok(())
+    }
+    fn transfer_explicit_identity_insert_clause(&self) -> Option<&'static str> {
+        self.include_identity_insert_clause
+            .then_some("OVERRIDING SYSTEM VALUE")
+    }
     async fn execute_with_params(
         &self,
         _: &ConnectionHandle,
@@ -216,6 +247,8 @@ impl DatabaseDriver for Driver {
     ) -> Result<u64, DriverError> {
         assert!(sql.contains("VALUES (?"));
         let mut state = self.state.lock().unwrap();
+        state.transfer_order.push("write");
+        state.write_sqls.push(sql.to_string());
         state.calls += 1;
         if self.fail_at == Some(state.calls) {
             return Err(DriverError::QueryFailed("injected write failure".into()));
@@ -228,10 +261,11 @@ impl DatabaseDriver for Driver {
             .split_once("VALUES ")
             .map(|(_, values)| values.matches('(').count() as u64)
             .unwrap_or(1);
-        Ok(affected)
+        Ok(self.affected_override.unwrap_or(affected))
     }
     async fn commit(&self, _: TransactionHandle) -> Result<(), DriverError> {
         let mut state = self.state.lock().unwrap();
+        state.transfer_order.push("commit");
         match self.commit_error_after_effect {
             Some(true) => {
                 let pending = std::mem::take(&mut state.pending);
@@ -304,6 +338,9 @@ fn driver(rows: Rows, schema: TableSchema) -> Driver {
         begin_error_on_call: None,
         schema_error_on_call: None,
         execute_error_on_call: None,
+        identity_sync_error: false,
+        affected_override: None,
+        include_identity_insert_clause: false,
         stream_mode: 0,
         cancel: None,
     }
@@ -385,6 +422,7 @@ fn inspected(name: &str, mappings: Vec<ColumnMapping>) -> TableInspectResult {
         source_columns: vec![],
         target_columns: vec![],
         source_column_types: HashMap::new(),
+        target_column_types: HashMap::new(),
         incompatible_reason: None,
         source_row_count: None,
         recordset: None,
@@ -466,6 +504,143 @@ async fn batched_insert_reports_all_affected_rows_with_one_target_call() {
     assert_eq!(state.committed[0].len(), 2);
 }
 
+#[tokio::test]
+async fn successful_explicit_identity_import_synchronizes_before_commit() {
+    let source = driver(vec![vec![Some(Value::Integer(41))]], schema(&["id"]));
+    let mut target_schema = schema(&["renamed_id"]);
+    target_schema.columns[0].is_auto_increment = true;
+    let target = driver(vec![], target_schema);
+    let result = run(
+        &source,
+        &target,
+        &[inspected("source_table", vec![mapping("id", "renamed_id")])],
+        None,
+    )
+    .await;
+
+    assert!(!result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::Committed)
+    );
+    let state = target.state.lock().unwrap();
+    assert_eq!(
+        state.identity_sync_calls,
+        vec![(None, "source_table".into(), vec!["renamed_id".into()])]
+    );
+    assert_eq!(state.committed.len(), 1);
+    assert_eq!(state.rollback, 0);
+    assert_eq!(state.transfer_order, vec!["write", "sync", "commit"]);
+}
+
+#[tokio::test]
+async fn explicit_identity_import_synchronizes_when_driver_reports_zero_affected_rows() {
+    let source = driver(vec![vec![Some(Value::Integer(41))]], schema(&["id"]));
+    let mut target_schema = schema(&["id"]);
+    target_schema.columns[0].is_auto_increment = true;
+    let mut target = driver(vec![], target_schema);
+    target.include_identity_insert_clause = true;
+    // Model a successful conflict-ignore batch: the INSERT was issued with
+    // explicit IDs, but the driver reports no newly affected rows.
+    target.affected_override = Some(0);
+    let result = run(
+        &source,
+        &target,
+        &[inspected("source_table", vec![mapping("id", "id")])],
+        None,
+    )
+    .await;
+
+    assert!(!result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::Committed)
+    );
+    let state = target.state.lock().unwrap();
+    assert_eq!(state.identity_sync_calls.len(), 1);
+    assert_eq!(state.transfer_order, vec!["write", "sync", "commit"]);
+    assert!(state.write_sqls[0].contains("OVERRIDING SYSTEM VALUE"));
+    assert_eq!(state.committed.len(), 1);
+}
+
+#[tokio::test]
+async fn identity_override_clause_requires_a_mapped_target_identity_column() {
+    let source = driver(vec![vec![Some(Value::Integer(41))]], schema(&["id"]));
+    let target = driver(vec![], schema(&["id"]));
+    let mut target = target;
+    target.include_identity_insert_clause = true;
+    let result = run(
+        &source,
+        &target,
+        &[inspected("source_table", vec![mapping("id", "id")])],
+        None,
+    )
+    .await;
+
+    assert!(!result.partial);
+    let state = target.state.lock().unwrap();
+    assert!(!state.write_sqls[0].contains("OVERRIDING SYSTEM VALUE"));
+}
+
+#[tokio::test]
+async fn identity_sync_failure_rolls_back_the_successful_row_batches() {
+    let source = driver(vec![vec![Some(Value::Integer(41))]], schema(&["id"]));
+    let mut target_schema = schema(&["id"]);
+    target_schema.columns[0].is_auto_increment = true;
+    let mut target = driver(vec![], target_schema);
+    target.identity_sync_error = true;
+    let result = run(
+        &source,
+        &target,
+        &[inspected("source_table", vec![mapping("id", "id")])],
+        None,
+    )
+    .await;
+
+    assert!(result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::RolledBack)
+    );
+    let state = target.state.lock().unwrap();
+    assert_eq!(state.identity_sync_calls.len(), 1);
+    assert_eq!(state.rollback, 1);
+    assert!(state.pending.is_empty());
+    assert!(state.committed.is_empty());
+}
+
+#[tokio::test]
+async fn failed_identity_import_never_synchronizes_sequence() {
+    let source = driver(
+        vec![
+            vec![Some(Value::Integer(31))],
+            vec![Some(Value::Integer(41))],
+        ],
+        schema(&["id"]),
+    );
+    let mut target_schema = schema(&["id"]);
+    target_schema.columns[0].is_auto_increment = true;
+    let mut target = driver(vec![], target_schema);
+    target.fail_at = Some(1);
+    let result = run(
+        &source,
+        &target,
+        &[inspected("source_table", vec![mapping("id", "id")])],
+        None,
+    )
+    .await;
+
+    assert!(result.partial);
+    assert_eq!(
+        result.tables[0].outcome,
+        Some(TableExecutionOutcome::RolledBack)
+    );
+    let state = target.state.lock().unwrap();
+    assert!(state.identity_sync_calls.is_empty());
+    assert_eq!(state.rollback, 1);
+    assert!(state.committed.is_empty());
+}
+
 #[test]
 fn projected_rows_keep_skips_reorder_and_subsets() {
     let schema = schema(&["id", "name", "age"]);
@@ -510,10 +685,12 @@ fn projected_text_bytes_decode_as_utf8_while_binary_bytes_remain_bytes() {
         Some(Value::Bytes(vec![0xff])),
         Some(Value::Bytes(vec![0, 255])),
     ];
-    assert!(map_row_values(&invalid, &source_schema, &refs)
-        .unwrap_err()
-        .to_string()
-        .contains("not valid UTF-8"));
+    assert!(
+        map_row_values(&invalid, &source_schema, &refs)
+            .unwrap_err()
+            .to_string()
+            .contains("not valid UTF-8")
+    );
 }
 
 #[tokio::test]
@@ -1179,6 +1356,7 @@ async fn unknown_drop_create_preamble_stops_later_tables_before_data_writes() {
         tgt_driver: &target,
         tgt_handle: &target_handle,
         source_schemas: &schemas,
+        structure_precreated: false,
     };
     let formatter = ValueFormatter::SameFamily;
     let write_started = AtomicBool::new(false);
@@ -1250,6 +1428,7 @@ async fn confirmed_drop_create_preamble_is_partial_when_begin_fails_and_can_cont
         tgt_driver: &target,
         tgt_handle: &target_handle,
         source_schemas: &schemas,
+        structure_precreated: false,
     };
     let formatter = ValueFormatter::SameFamily;
 
@@ -1298,6 +1477,7 @@ async fn cancel_after_write_reports_current_table_and_rolls_back() {
         schema(&["id"]),
     );
     let mut target = driver(vec![], schema(&["id"]));
+    target.schema.columns[0].is_auto_increment = true;
     target.cancel = Some(Arc::clone(&flag));
     let result = run(
         &source,
@@ -1318,6 +1498,7 @@ async fn cancel_after_write_reports_current_table_and_rolls_back() {
     let state = target.state.lock().unwrap();
     assert_eq!(state.rollback, 1);
     assert!(state.committed.is_empty());
+    assert!(state.identity_sync_calls.is_empty());
 }
 
 #[test]
@@ -1365,16 +1546,18 @@ fn same_named_columns_use_their_own_table_ir_and_missing_types_fail() {
         .unwrap();
         assert!(matches!(&params[0], Value::String(value) if value == expected));
     }
-    assert!(super::writer::bound_insert(
-        &driver,
-        "missing",
-        "target",
-        &[&binding],
-        &driver.schema,
-        &row,
-        &formatter
-    )
-    .is_err());
+    assert!(
+        super::writer::bound_insert(
+            &driver,
+            "missing",
+            "target",
+            &[&binding],
+            &driver.schema,
+            &row,
+            &formatter
+        )
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -1472,10 +1655,12 @@ async fn test_tester_dotted_target_schema_fails_before_any_bound_write() {
 
     assert!(result.partial);
     assert_eq!(result.rows_inserted, 0);
-    assert!(result.tables[0]
-        .error
-        .as_deref()
-        .is_some_and(|message| message.contains("structured relation support")));
+    assert!(
+        result.tables[0]
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("structured relation support"))
+    );
     let target_state = target.state.lock().unwrap();
     assert_eq!(target_state.calls, 0);
     assert!(target_state.metadata_refs.is_empty());
@@ -1545,4 +1730,57 @@ async fn same_session_catalog_and_normalized_schema_rejects_before_any_write() {
     assert_eq!(state.calls, 0);
     assert!(state.metadata_refs.is_empty());
     assert!(state.committed.is_empty());
+}
+
+#[tokio::test]
+async fn unknown_structure_ddl_fences_and_reports_every_unattempted_statement() {
+    let mut target = driver(vec![], schema(&["id"]));
+    target.execute_error_on_call = Some(1);
+    let handle = ConnectionHandle {
+        id: "target".into(),
+        pool_id: "target".into(),
+    };
+    let plan = vec![
+        DdlPreviewItem {
+            source_table: "child".into(),
+            target_table: "child_copy".into(),
+            ddl: "DROP TABLE IF EXISTS child_copy".into(),
+            kind: DdlPreviewKind::DropTable,
+            depends_on: Vec::new(),
+        },
+        DdlPreviewItem {
+            source_table: "parent".into(),
+            target_table: "parent_copy".into(),
+            ddl: "CREATE TABLE parent_copy (id INT)".into(),
+            kind: DdlPreviewKind::Table,
+            depends_on: Vec::new(),
+        },
+        DdlPreviewItem {
+            source_table: "parent".into(),
+            target_table: "parent_copy".into(),
+            ddl: "CREATE INDEX parent_idx ON parent_copy (id)".into(),
+            kind: DdlPreviewKind::Index,
+            depends_on: vec!["parent".into()],
+        },
+    ];
+
+    let results = super::structure::execute_database_structure_plan(
+        &target,
+        &handle,
+        &plan,
+        &HashSet::from(["child".into(), "parent".into()]),
+        super::structure::DatabaseStructurePhase::Prepare,
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0].outcome, Some(TableExecutionOutcome::Unknown));
+    assert!(
+        results[1..]
+            .iter()
+            .all(|result| result.outcome == Some(TableExecutionOutcome::NotStarted))
+    );
+    assert_eq!(target.state.lock().unwrap().execute_calls, 1);
 }

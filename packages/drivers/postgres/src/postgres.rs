@@ -403,6 +403,44 @@ impl DatabaseDriver for PostgresDriver {
         Self::begin_transaction_impl(self, handle).await
     }
 
+    async fn advance_transfer_identity_sequences(
+        &self,
+        handle: &ConnectionHandle,
+        schema: Option<&str>,
+        table: &str,
+        columns: &[String],
+    ) -> Result<(), DriverError> {
+        self.advance_transfer_identity_sequences_impl(handle, schema, table, columns)
+            .await
+    }
+
+    fn transfer_explicit_identity_insert_clause(&self) -> Option<&'static str> {
+        Some("OVERRIDING SYSTEM VALUE")
+    }
+
+    fn transfer_sql_file_insert_batch_size(&self) -> usize {
+        500
+    }
+
+    fn render_transfer_sql_file_insert(
+        &self,
+        insert_template: &str,
+        identity_override_marker: &str,
+    ) -> Result<String, DriverError> {
+        crate::transfer_identity::render_sql_file_insert(insert_template, identity_override_marker)
+    }
+
+    fn render_transfer_identity_sequence_sync_sql(
+        &self,
+        schema: Option<&str>,
+        table: &str,
+        columns: &[String],
+    ) -> Result<Vec<String>, DriverError> {
+        Ok(crate::transfer_identity::render_sync_sql(
+            self, schema, table, columns,
+        ))
+    }
+
     async fn begin_read_snapshot(
         &self,
         handle: &ConnectionHandle,

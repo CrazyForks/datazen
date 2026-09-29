@@ -13,6 +13,12 @@ fn only_innodb_tables_claim_consistent_snapshot_support() {
 }
 
 #[test]
+fn mysql_table_options_query_captures_the_exact_default_collation() {
+    assert!(MYSQL_TABLE_OPTIONS_QUERY.contains("t.TABLE_COLLATION AS TABLE_COLLATION"));
+    assert!(MYSQL_TABLE_OPTIONS_QUERY.contains("COLLATION_CHARACTER_SET_APPLICABILITY"));
+}
+
+#[test]
 fn mysql_group_replication_members_share_canonical_database_identity() {
     let member_a = mysql_group_replication_scope(Some("group-uuid"), Ok(Some("ONLINE")));
     let member_b = mysql_group_replication_scope(Some("group-uuid"), Ok(Some("online")));
