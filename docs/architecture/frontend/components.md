@@ -1127,7 +1127,62 @@ gitignored 文件里的 blocking 判定降级为 advisory（未跟踪的 codegen
 「关闭了检查面」——新增必填字段时，类型错误会出现在消费它的测试/实现里，而不是
 自动出现在每个 stub 上。
 
-## 10. 复制反馈（useCopyFeedback）
+## 10. 闭集 props 组件的 `data-*` 透传契约
+
+设计系统中**自声明 props 列表**的组件（`Select` 等，不继承 DOM `*Attributes`）
+必须实现 `packages/ui/src/dataAttrs.ts` 的 `DataAttrProps` 契约：调用方传入的
+任意 `data-*` 属性原样透传到**唯一可交互元素**上，`data-testid` 也不例外。
+契约本身（`DataAttrProps` / `splitDataAttrs`）已从 `@datazen/ui` 的 barrel 导出，
+后续组件直接实现同一份契约，不要在包内重新声明。
+
+`Select` 的落点：非 `searchable` 时是 `<button aria-haspopup="listbox">`；
+`searchable` 时是 combobox `<input>`。**不允许落在包裹用的 `<div>` 上** ——
+定位到一个不可点击、不可输入的外层壳，等于把同一个缺陷下移一层；E2E 因此
+不再需要 `[data-testid="x"] input` 这种穿透写法。
+
+**当前覆盖：上面这条规则目前只有 `Select` 实现。** 同样是闭集 props 的
+`Label`、`Tabs`、`Dialog`、`PathInput`、`Slider` 尚未实现，属于**明确延后**，
+延后理由是它们当前**没有任何调用点需要 `data-*` 定位** —— 全部调用点
+（`Label` 74 处、`Dialog` 62 处、`PathInput` 9 处、`Slider` 3 处、`Tabs` 1 处）
+中，带 `data-*` 属性的为 0 处，经 JSX 展开传入的也为 0 处，因此实现契约对
+现有代码零收益，等出现第一个需要定位的调用点时再实现。规则本身仍然是**新写
+闭集 props 组件时的强制要求**，上表只是记录当前达成度，不是豁免。
+
+`PathInput` 与 `Dialog` 各自有一条既有定位通道，但**两者机制不同、结论也
+不同，不能合并陈述**：
+
+- **`PathInput` 是真正已覆盖的。** 它的 `inputTestId?: string` 在
+  `packages/ui/src/PathInput.tsx:52` **无条件**落到 `data-testid`，
+  不经 `tid()`，因此**任何构建里都存在**（普通构建、`VITE_E2E` 构建、
+  生产构建均同）。对 `PathInput` 而言，契约的意图已由既有机制真正满足。
+- **`Dialog` 只在 E2E 构建里有定位符，仍未实现契约。** 它的
+  `testId?: string` 在 `packages/ui/src/Dialog.tsx:113` 是经 `tid()` 应用的，
+  而 `tid()`（`packages/ui/src/tid.ts:6`）返回
+  `import.meta.env.VITE_E2E ? { 'data-testid': id } : {}` ——
+  **该属性只在 `VITE_E2E` 构建下存在，其他构建一律为空对象**。所以在
+  正常生产构建里，`Dialog` 既没有本契约，也没有任何自己的定位符。
+  上面「零调用点」这条延后理由对 `Dialog` 依然成立且未变；E2E-only 这个事实
+  说明的是它**不紧急**，**不是**说它已经完整。
+
+`Dialog` 的 `testId` 与 `PathInput` 的 `inputTestId` 都是既有 API，
+本节不建议改动它们，也不建议改 `tid()` 或 `VITE_E2E` 开关。
+
+真正待补的是 `Label`、`Tabs`、`Slider` —— 这三个连专门的定位 prop 都没有，
+任何构建下都无法被定位。
+
+契约两端都很窄，这是刻意的：
+
+- **类型侧**用**模式索引签名** ``[key: `data-${string}`]: string | undefined``，
+  而不是 `[key: string]`。TypeScript 的多余属性检查认这个 `data-` 前缀，
+  因此 `data-testid` / `data-foo` 通过，而 `dataTestId`（丢了连字符）与
+  `onchane`（拼错已声明 prop）**仍然是编译错误**。换成宽索引签名就是把
+  响亮的类型错误换成静默失效的 prop。
+- **运行时侧** `splitDataAttrs()` 只放行 `data-*`，其余键一律丢弃并（仅开发
+  构建）`console.warn` 点名。非 `data-*` 的 prop 若经 `...rest` 透传会落到
+  DOM 节点上，触发 React 未知属性告警；`{...rest}` 又不受多余属性检查保护，
+  所以开发期告警是覆盖「展开写法」这条路径的唯一护栏。
+
+## 11. 复制反馈（useCopyFeedback）
 
 `packages/ui/src/useCopyFeedback.ts`（`@datazen/ui` 导出）— 统一的「已复制」确认：
 
@@ -1244,7 +1299,7 @@ WebKit 会抛 `NotAllowedError`），**搬不进 `packages/ui`**——它依赖 
 `DataSyncWindow`、Redis `ValueViewer` / `useKeyRowActions`）或用的是异类反馈
 （`SqlSnippetsCard` 走 toast）。给它们加反馈属于新增功能，不在收敛范围内。
 
-## 11. 开发阶段规划
+## 12. 开发阶段规划
 
 | 阶段                    | 内容                                                                                   | 输出                   |
 | ----------------------- | -------------------------------------------------------------------------------------- | ---------------------- |

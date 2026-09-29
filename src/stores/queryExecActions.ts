@@ -79,25 +79,29 @@ async function notifySchemaChangedIfNeeded(dbSessionId: string, sql: string): Pr
 
 let streamRunCounter = 0;
 
+/**
+ * `key` is a `queryExec` map key, i.e. a **pane** key (`paneKey(panelId, paneId)`
+ * — for a panel's default pane it is just the panel id; see `./paneKeys`).
+ */
 export function patchExec(
   current: Map<string, QueryExecState>,
-  panelId: string,
+  key: string,
   patch: Partial<QueryExecState>,
 ): Map<string, QueryExecState> {
   const next = new Map(current);
-  const prev = current.get(panelId) ?? emptyQueryExecState();
-  next.set(panelId, { ...prev, ...patch });
+  const prev = current.get(key) ?? emptyQueryExecState();
+  next.set(key, { ...prev, ...patch });
   return next;
 }
 
 function transitionExec(
   current: Map<string, QueryExecState>,
-  panelId: string,
+  key: string,
   transition: QueryExecutionTransition,
 ): Map<string, QueryExecState> {
-  const exec = current.get(panelId);
+  const exec = current.get(key);
   if (!exec) return current;
-  return patchExec(current, panelId, reduceQueryExecutionState(exec, transition));
+  return patchExec(current, key, reduceQueryExecutionState(exec, transition));
 }
 
 function queryErrorTransition(exec: QueryExecState, message: string): QueryExecutionTransition {
@@ -112,8 +116,17 @@ function queryErrorTransition(exec: QueryExecState, message: string): QueryExecu
   return { type: 'failed', error: message };
 }
 
+/**
+ * Stream a query into the pane identified by `paneKey`.
+ *
+ * `paneKey` is captured once, up front, and every asynchronous write below uses
+ * that captured value. It must stay stable for the whole stream: re-resolving
+ * the focused pane inside `onEvent` would let a focus change between two chunks
+ * divert the rest of the result set into a different pane. Staleness is instead
+ * detected by `streamRunId`, which a newer run of the *same* pane bumps.
+ */
 export async function runStreamingQuery(
-  panelId: string,
+  paneKey: string,
   dbSessionId: string,
   sql: string,
   getExec: () => Map<string, QueryExecState>,
@@ -126,29 +139,29 @@ export async function runStreamingQuery(
   params?: BindParams,
 ): Promise<void> {
   const runId = ++streamRunCounter;
-  const currentExec = getExec().get(panelId);
+  const currentExec = getExec().get(paneKey);
   const pinnedResults = (currentExec?.results ?? []).filter((r) => r.pinned);
   const baseOffset = pinnedResults.length;
 
   setExec(
     transitionExec(
-      patchExec(getExec(), panelId, {
+      patchExec(getExec(), paneKey, {
         results: pinnedResults,
         activeResultIdx: baseOffset,
         streamRunId: runId,
         executionTimeMs: null,
         executionId: null,
       }),
-      panelId,
+      paneKey,
       { type: 'start' },
     ),
   );
 
   const onEvent = (event: QueryStreamEvent) => {
-    const exec = getExec().get(panelId);
+    const exec = getExec().get(paneKey);
     if (!exec || exec.streamRunId !== runId) return;
     const updated = applyQueryStreamEvent(exec, event, baseOffset);
-    setExec(patchExec(getExec(), panelId, updated));
+    setExec(patchExec(getExec(), paneKey, updated));
   };
 
   try {
@@ -158,26 +171,26 @@ export async function runStreamingQuery(
       ...(params && Object.keys(params).length > 0 ? { params } : {}),
     };
     await queryCommands.executeQueryStream(dbSessionId, sql, onEvent, streamOptions);
-    const exec = getExec().get(panelId);
+    const exec = getExec().get(paneKey);
     if (exec && exec.streamRunId === runId) {
       const viewMode = resolvePostQueryViewMode(exec.results[0]);
-      const withViewMode = patchExec(getExec(), panelId, { resultViewMode: viewMode });
-      setExec(transitionExec(withViewMode, panelId, { type: 'succeeded' }));
+      const withViewMode = patchExec(getExec(), paneKey, { resultViewMode: viewMode });
+      setExec(transitionExec(withViewMode, paneKey, { type: 'succeeded' }));
       if (!exec.error) {
         await notifySchemaChangedIfNeeded(dbSessionId, sql);
       }
     }
   } catch (e) {
-    const exec = getExec().get(panelId);
+    const exec = getExec().get(paneKey);
     if (exec && exec.streamRunId === runId) {
       const message = extractError(e);
-      setExec(transitionExec(getExec(), panelId, queryErrorTransition(exec, message)));
+      setExec(transitionExec(getExec(), paneKey, queryErrorTransition(exec, message)));
     }
   }
 }
 
 export async function runBoundQuery(
-  panelId: string,
+  paneKey: string,
   dbSessionId: string,
   sql: string,
   params: BindParams,
@@ -188,5 +201,5 @@ export async function runBoundQuery(
   /** F7: panel's PG-family schema target — drivers inline it when supported. */
   schema?: string | null,
 ): Promise<void> {
-  await runStreamingQuery(panelId, dbSessionId, sql, getExec, setExec, database, schema, params);
+  await runStreamingQuery(paneKey, dbSessionId, sql, getExec, setExec, database, schema, params);
 }

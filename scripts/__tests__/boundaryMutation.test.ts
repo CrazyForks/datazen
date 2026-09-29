@@ -272,6 +272,10 @@ describe('withProbeLockAt · recovery from a killed run', () => {
     const { lockDir, probeRoot } = sandbox();
     const holder = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
     holder.unref();
+    // `ChildProcess.pid` is genuinely optional in @types/node, and this case is
+    // only meaningful with a live holder: without one there is nothing to steal
+    // from and the assertion below would pass for the wrong reason.
+    if (holder.pid === undefined) throw new Error('lock holder did not spawn; case is void');
     plantLock(lockDir, holder.pid);
 
     let entered = false;

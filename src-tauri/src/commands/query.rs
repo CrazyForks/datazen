@@ -7,7 +7,8 @@ use super::driver_command::{
 use super::error::{CmdExt, CommandError};
 use super::AppState;
 use crate::db::{ExplainResult, MultiQueryResult};
-use crate::store::QueryHistoryEntry;
+use crate::store::history_db::DEFAULT_HISTORY_PAGE_SIZE;
+use crate::store::{HistoryOrder, QueryHistoryEntry, QueryHistoryFilter, QueryHistoryPage};
 use datazen_driver_api::{QueryExecutionId, QueryStreamCallback, QueryStreamEvent};
 use tauri::ipc::Channel;
 use tauri::State;
@@ -208,46 +209,100 @@ pub(crate) async fn clear_query_history_impl(state: &AppState) -> Result<(), Com
         .cmd_err("clear_query_history")
 }
 
-pub(crate) async fn get_favorite_queries_impl(
-    state: &AppState,
-    connection_id: Option<String>,
-) -> Result<Vec<crate::store::FavoriteQuery>, CommandError> {
-    Ok(state
-        .store
-        .get_favorite_queries(connection_id.as_deref())
-        .await)
+/// The raw shape of a paged history read, as it arrives over IPC.
+///
+/// Tauri's command macro requires one parameter per IPC argument, so the
+/// `#[tauri::command]` below unavoidably has a long positional list. Everything
+/// past that boundary works on this struct instead, so the filter's fields
+/// cannot be silently reordered at a call site.
+///
+/// Mirrors the frontend's `HistoryQueryState` in
+/// `src/components/history/historyQuery.ts`. The two are not identical by
+/// design: the frontend uses `'all'` sentinels because it binds to selects,
+/// while an absent value is a real `Option` over the wire.
+#[derive(Debug, Clone)]
+pub struct HistoryPageRequest {
+    pub limit: usize,
+    pub connection_id: Option<String>,
+    pub database: Option<String>,
+    pub schema: Option<String>,
+    pub search: Option<String>,
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub order: Option<String>,
 }
 
-pub(crate) async fn add_favorite_query_impl(
+impl Default for HistoryPageRequest {
+    /// Hand-written for the same reason `QueryHistoryFilter`'s is: a derived
+    /// `Default` would give `limit: 0`, and `LIMIT 0` returns an empty page
+    /// that reads as "no history" rather than "no rows requested".
+    fn default() -> Self {
+        Self {
+            limit: DEFAULT_HISTORY_PAGE_SIZE,
+            connection_id: None,
+            database: None,
+            schema: None,
+            search: None,
+            since: None,
+            until: None,
+            order: None,
+        }
+    }
+}
+
+impl HistoryPageRequest {
+    /// Validate the order and project onto the store's filter.
+    ///
+    /// An unknown order is rejected rather than silently defaulting: a UI that
+    /// asks for "slowest first" and gets "most recent" is a worse outcome than
+    /// an error, because nothing on screen reveals the substitution.
+    ///
+    /// Borrows rather than consumes, because `QueryHistoryFilter` borrows its
+    /// strings. The caller owns the request for as long as it needs the filter.
+    fn to_filter(&self) -> Result<QueryHistoryFilter<'_>, CommandError> {
+        let order = match self.order.as_deref() {
+            None | Some("") => HistoryOrder::Recent,
+            Some(other) => HistoryOrder::parse(other)
+                .ok_or_else(|| CommandError::Validation(format!("unknown order: {other}")))?,
+        };
+        Ok(QueryHistoryFilter {
+            limit: self.limit,
+            connection_id: self.connection_id.as_deref(),
+            database: self.database.as_deref(),
+            schema: self.schema.as_deref(),
+            search: self.search.as_deref(),
+            since: self.since.as_deref(),
+            until: self.until.as_deref(),
+            order,
+        })
+    }
+}
+
+/// Paged history read. `total` is the full match count, so a UI can state
+/// "showing N of M" instead of implying the page is everything.
+pub(crate) async fn get_query_history_page_impl(
     state: &AppState,
-    connection_id: String,
-    title: String,
-    sql: String,
-) -> Result<crate::store::FavoriteQuery, CommandError> {
-    let fav = crate::store::FavoriteQuery {
-        id: uuid::Uuid::new_v4().to_string(),
-        connection_id,
-        title,
-        sql,
-        created_at: chrono::Utc::now(),
-    };
+    request: HistoryPageRequest,
+) -> Result<QueryHistoryPage, CommandError> {
+    let filter = request.to_filter()?;
     state
         .store
-        .add_favorite_query(fav.clone())
+        .get_query_history_page(&filter)
         .await
-        .cmd_err("add_favorite_query")?;
-    Ok(fav)
+        .cmd_err("get_query_history_page")
 }
 
-pub(crate) async fn delete_favorite_query_impl(
+/// Remove exactly one history row. Returns how many rows went away so a caller
+/// can reject a no-op instead of showing a success it did not earn.
+pub(crate) async fn delete_query_history_impl(
     state: &AppState,
     id: String,
-) -> Result<(), CommandError> {
+) -> Result<u64, CommandError> {
     state
         .store
-        .delete_favorite_query(&id)
+        .delete_query_history(&id)
         .await
-        .cmd_err("delete_favorite_query")
+        .cmd_err("delete_query_history")
 }
 
 #[tauri::command]
@@ -322,30 +377,80 @@ pub async fn clear_query_history(state: State<'_, AppState>) -> Result<(), Comma
     clear_query_history_impl(&state).await
 }
 
+/// Tauri requires one parameter per IPC argument, so this signature cannot
+/// shrink. The struct above is how the rest of the code sees it.
 #[tauri::command]
-pub async fn get_favorite_queries(
+#[allow(clippy::too_many_arguments)]
+pub async fn get_query_history_page(
     state: State<'_, AppState>,
+    limit: usize,
     connection_id: Option<String>,
-) -> Result<Vec<crate::store::FavoriteQuery>, CommandError> {
-    get_favorite_queries_impl(&state, connection_id).await
+    database: Option<String>,
+    schema: Option<String>,
+    search: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    order: Option<String>,
+) -> Result<QueryHistoryPage, CommandError> {
+    get_query_history_page_impl(
+        &state,
+        HistoryPageRequest {
+            limit,
+            connection_id,
+            database,
+            schema,
+            search,
+            since,
+            until,
+            order,
+        },
+    )
+    .await
 }
 
 #[tauri::command]
-pub async fn add_favorite_query(
-    state: State<'_, AppState>,
-    connection_id: String,
-    title: String,
-    sql: String,
-) -> Result<crate::store::FavoriteQuery, CommandError> {
-    add_favorite_query_impl(&state, connection_id, title, sql).await
-}
-
-#[tauri::command]
-pub async fn delete_favorite_query(
+pub async fn delete_query_history(
     state: State<'_, AppState>,
     id: String,
-) -> Result<(), CommandError> {
-    delete_favorite_query_impl(&state, id).await
+) -> Result<u64, CommandError> {
+    delete_query_history_impl(&state, id).await
+}
+
+/// Write `content` to a user-chosen path. Resolves `false` when the save
+/// dialog is dismissed, so the caller can stay silent instead of claiming a
+/// file it never wrote.
+#[tauri::command]
+pub async fn save_sql_file(
+    app: tauri::AppHandle,
+    default_file_name: String,
+    content: String,
+) -> Result<bool, CommandError> {
+    // The dialog filters to `.sql`; the extension is appended when the user
+    // types a bare stem, so a Windows user who types "queries" still gets a
+    // file the editor and any `.sql` tooling will open.
+    let path = super::dialog::save_file(
+        &app,
+        ("SQL".into(), vec!["sql".to_string()]),
+        default_file_name,
+    )
+    .await?;
+
+    let Some(path) = path else {
+        return Ok(false);
+    };
+    let path = if path.extension().is_some() {
+        path
+    } else {
+        path.with_extension("sql")
+    };
+
+    std::fs::write(&path, content).map_err(|e| {
+        CommandError::Io(std::io::Error::new(
+            e.kind(),
+            format!("write {}: {e}", path.display()),
+        ))
+    })?;
+    Ok(true)
 }
 
 pub(crate) async fn begin_session_transaction_impl(
@@ -518,556 +623,5 @@ mod log_hygiene_tests {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::{ColumnSchema, DriverCapabilities, DriverError, ExplainResult, Value};
-    use crate::store::AppSettings;
-    use crate::testing::app_state::TestAppState;
-    use crate::testing::mock_driver::MockDriverOptions;
-
-    #[tokio::test]
-    async fn execute_query_success_records_history() {
-        let test = TestAppState::with_tables().await;
-        let (_, conn_id) = test.save_and_connect("q-cfg").await;
-        let result = execute_query_impl(&test.state, conn_id, "SELECT 1".into(), None)
-            .await
-            .unwrap();
-        assert_eq!(result.results.len(), 1);
-
-        let history = get_query_history_impl(&test.state, 10, None, None, None)
-            .await
-            .unwrap();
-        assert_eq!(history.len(), 1);
-        assert!(history[0].success);
-    }
-
-    #[tokio::test]
-    async fn execute_query_respects_result_limit_setting() {
-        let test = TestAppState::with_tables().await;
-        let mut settings = AppSettings::default();
-        settings.limit_select_results = true;
-        settings.query_result_limit = 5;
-        test.state.store.save_settings(settings).await.unwrap();
-
-        let (_, conn_id) = test.save_and_connect("limit-cfg").await;
-        execute_query_impl(&test.state, conn_id, "SELECT * FROM users".into(), None)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn get_explain_query() {
-        let opts = MockDriverOptions {
-            explain_plan: ExplainResult {
-                plan_text: "Seq Scan".into(),
-                plan_json: None,
-                plan_tree: None,
-                total_cost: Some(1.0),
-                estimated_rows: Some(10),
-            },
-            ..Default::default()
-        };
-        let test = TestAppState::with_options(opts).await;
-        test.registry
-            .register_test_driver_with_capabilities(
-                "postgres",
-                test.mock.clone(),
-                DriverCapabilities {
-                    has_multi_database: false,
-                    supports_cancel_query: true,
-                    supports_query_execution_cancel: true,
-                    supports_explain: true,
-                    supports_streaming_results: true,
-                    supports_offset: true,
-                    has_schema_level: true,
-                },
-            )
-            .await;
-        let (_, conn_id) = test.save_and_connect("explain-cfg").await;
-
-        let plan = get_explain_impl(&test.state, conn_id.clone(), "SELECT 1".into(), None)
-            .await
-            .unwrap();
-        assert_eq!(plan.plan_text, "Seq Scan");
-    }
-
-    #[tokio::test]
-    async fn cancel_query_rejects_when_driver_capability_is_unknown_without_calling_driver() {
-        let test = TestAppState::with_options(MockDriverOptions {
-            cancel_error: Some("legacy driver cancellation must not be called".into()),
-            ..Default::default()
-        })
-        .await;
-        let (_, conn_id) = test.save_and_connect("cancel-unknown").await;
-        let execution_id = QueryExecutionId::new("exec-unknown");
-        test.state
-            .query_executions
-            .register(execution_id.clone(), conn_id.clone())
-            .await
-            .unwrap();
-
-        assert!(test
-            .registry
-            .get_capabilities(&"postgres".to_string())
-            .await
-            .is_none());
-        let error = cancel_query_impl(&test.state, conn_id, execution_id.as_str().to_string())
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            super::super::error::CommandError::Validation(message)
-                if message.starts_with("UNSUPPORTED_OPERATION:cancel_query:")
-                    && message.ends_with("capability is unknown")
-        ));
-        assert_eq!(test.mock.cancel_query_calls(), 0);
-    }
-
-    #[tokio::test]
-    async fn cancel_query_rejects_when_driver_capability_is_disabled() {
-        let test = TestAppState::new().await;
-        let (_, conn_id) = test.save_and_connect("cancel-unsupported").await;
-        let execution_id = QueryExecutionId::new("exec-unsupported");
-        test.state
-            .query_executions
-            .register(execution_id.clone(), conn_id.clone())
-            .await
-            .unwrap();
-        test.registry
-            .register_test_driver_with_capabilities(
-                "postgres",
-                test.mock.clone(),
-                DriverCapabilities {
-                    has_multi_database: false,
-                    supports_cancel_query: false,
-                    supports_query_execution_cancel: false,
-                    supports_explain: true,
-                    supports_streaming_results: true,
-                    supports_offset: true,
-                    has_schema_level: true,
-                },
-            )
-            .await;
-
-        let error = cancel_query_impl(&test.state, conn_id, execution_id.as_str().to_string())
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            super::super::error::CommandError::Validation(message)
-                if message.starts_with("UNSUPPORTED_OPERATION:cancel_query:")
-        ));
-        assert_eq!(test.mock.cancel_query_calls(), 0);
-    }
-
-    #[tokio::test]
-    async fn cancel_query_surfaces_driver_unsupported_without_claiming_success() {
-        let test = TestAppState::with_options(MockDriverOptions {
-            cancel_error: Some("backend cancellation is unavailable".into()),
-            ..Default::default()
-        })
-        .await;
-        let (_, conn_id) = test.save_and_connect("cancel-driver-unsupported").await;
-        let execution_id = QueryExecutionId::new("exec-driver-unsupported");
-        test.state
-            .query_executions
-            .register(execution_id.clone(), conn_id.clone())
-            .await
-            .unwrap();
-        test.registry
-            .register_test_driver_with_capabilities(
-                "postgres",
-                test.mock.clone(),
-                DriverCapabilities {
-                    has_multi_database: false,
-                    // The legacy session-wide capability is deliberately
-                    // independent; precise cancellation must not be gated by
-                    // or fall back to that old API.
-                    supports_cancel_query: false,
-                    supports_query_execution_cancel: true,
-                    supports_explain: true,
-                    supports_streaming_results: true,
-                    supports_offset: true,
-                    has_schema_level: true,
-                },
-            )
-            .await;
-
-        let error = cancel_query_impl(&test.state, conn_id, execution_id.as_str().to_string())
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            super::super::error::CommandError::Driver(DriverError::Unsupported(message))
-                if message == "backend cancellation is unavailable"
-        ));
-        assert_eq!(test.mock.cancel_query_calls(), 0);
-        assert_eq!(test.mock.precise_cancel_query_calls(), 1);
-    }
-
-    #[tokio::test]
-    async fn execute_query_not_connected_errors() {
-        let test = TestAppState::new().await;
-        assert!(
-            execute_query_impl(&test.state, "nope".into(), "SELECT 1".into(), None)
-                .await
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn favorite_queries_roundtrip() {
-        let test = TestAppState::new().await;
-        assert!(get_favorite_queries_impl(&test.state, None)
-            .await
-            .unwrap()
-            .is_empty());
-
-        let fav = add_favorite_query_impl(
-            &test.state,
-            "cfg-test".into(),
-            "My query".into(),
-            "SELECT 1".into(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            get_favorite_queries_impl(&test.state, None)
-                .await
-                .unwrap()
-                .len(),
-            1
-        );
-
-        delete_favorite_query_impl(&test.state, fav.id)
-            .await
-            .unwrap();
-        assert!(get_favorite_queries_impl(&test.state, None)
-            .await
-            .unwrap()
-            .is_empty());
-    }
-
-    #[tokio::test]
-    async fn clear_query_history() {
-        let test = TestAppState::with_tables().await;
-        let (_, conn_id) = test.save_and_connect("hist-cfg").await;
-        execute_query_impl(&test.state, conn_id, "SELECT 1".into(), None)
-            .await
-            .unwrap();
-        clear_query_history_impl(&test.state).await.unwrap();
-        assert!(get_query_history_impl(&test.state, 10, None, None, None)
-            .await
-            .unwrap()
-            .is_empty());
-    }
-
-    #[tokio::test]
-    async fn execute_query_with_columns_returns_rows() {
-        let opts = MockDriverOptions {
-            columns: vec![ColumnSchema {
-                name: "id".into(),
-                data_type: "integer".into(),
-                nullable: false,
-                default_value: None,
-                comment: None,
-                is_primary_key: true,
-                is_auto_increment: false,
-            }],
-            query_rows: vec![vec![Some(Value::Integer(7))]],
-            ..Default::default()
-        };
-        let test = TestAppState::with_options(opts).await;
-        let (_, conn_id) = test.save_and_connect("rows-cfg").await;
-        let result = execute_query_impl(&test.state, conn_id, "SELECT id FROM t".into(), None)
-            .await
-            .unwrap();
-        assert_eq!(result.results[0].rows.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn execute_query_stream_does_not_apply_limit_when_switch_off() {
-        let test = TestAppState::with_tables().await;
-        assert!(!test.state.store.get_settings().await.limit_select_results);
-        let (_, conn_id) = test.save_and_connect("stream-nolimit").await;
-        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let events_cb = std::sync::Arc::clone(&events);
-        let cb: QueryStreamCallback = std::sync::Arc::new(move |ev| {
-            events_cb.lock().unwrap().push(ev);
-        });
-        execute_query_stream_impl(
-            &test.state,
-            conn_id,
-            "SELECT 1".into(),
-            None,
-            cb,
-            ExecuteQueryStreamOpts::default(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(test.mock.last_query_limit(), Some(None));
-        let events = events.lock().unwrap();
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, QueryStreamEvent::StatementStart { .. })));
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, QueryStreamEvent::Done { .. })));
-        let history = get_query_history_impl(&test.state, 10, None, None, None)
-            .await
-            .unwrap();
-        assert!(history.iter().any(|e| e.success));
-    }
-
-    #[tokio::test]
-    async fn execute_query_stream_respects_limit_select_setting() {
-        let test = TestAppState::with_tables().await;
-        let mut settings = AppSettings::default();
-        settings.limit_select_results = true;
-        settings.query_result_limit = 5;
-        test.state.store.save_settings(settings).await.unwrap();
-
-        let (_, conn_id) = test.save_and_connect("stream-limit").await;
-        let cb: QueryStreamCallback = std::sync::Arc::new(|_| {});
-        execute_query_stream_impl(
-            &test.state,
-            conn_id,
-            "SELECT * FROM users".into(),
-            None,
-            cb,
-            ExecuteQueryStreamOpts::default(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(test.mock.last_query_limit(), Some(Some(5)));
-    }
-
-    #[tokio::test]
-    async fn execute_query_stream_can_skip_result_limit_for_export() {
-        let test = TestAppState::with_tables().await;
-        let mut settings = AppSettings::default();
-        settings.limit_select_results = true;
-        settings.query_result_limit = 5;
-        test.state.store.save_settings(settings).await.unwrap();
-
-        let (_, conn_id) = test.save_and_connect("stream-export").await;
-        let cb: QueryStreamCallback = std::sync::Arc::new(|_| {});
-        execute_query_stream_impl(
-            &test.state,
-            conn_id,
-            "SELECT * FROM users".into(),
-            None,
-            cb,
-            ExecuteQueryStreamOpts {
-                apply_result_limit: false,
-                record_history: false,
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(test.mock.last_query_limit(), Some(None));
-        let history = get_query_history_impl(&test.state, 10, None, None, None)
-            .await
-            .unwrap();
-        assert!(history.is_empty());
-    }
-
-    #[tokio::test]
-    async fn execute_query_stream_failure_records_history() {
-        let opts = MockDriverOptions {
-            query_error: Some("boom".into()),
-            ..Default::default()
-        };
-        let test = TestAppState::with_options(opts).await;
-        let (_, conn_id) = test.save_and_connect("stream-fail").await;
-        let cb: QueryStreamCallback = std::sync::Arc::new(|_| {});
-        let err = execute_query_stream_impl(
-            &test.state,
-            conn_id,
-            "SELECT 1".into(),
-            None,
-            cb,
-            ExecuteQueryStreamOpts::default(),
-        )
-        .await
-        .unwrap_err();
-        assert!(err.to_string().contains("boom"));
-        let history = get_query_history_impl(&test.state, 10, None, None, None)
-            .await
-            .unwrap();
-        assert_eq!(history.len(), 1);
-        assert!(!history[0].success);
-        assert!(history[0]
-            .error_message
-            .as_ref()
-            .is_some_and(|m| m.contains("boom")));
-    }
-
-    #[tokio::test]
-    async fn execute_query_stream_not_connected_errors() {
-        let test = TestAppState::new().await;
-        let cb: QueryStreamCallback = std::sync::Arc::new(|_| {});
-        assert!(execute_query_stream_impl(
-            &test.state,
-            "nope".into(),
-            "SELECT 1".into(),
-            None,
-            cb,
-            ExecuteQueryStreamOpts::default(),
-        )
-        .await
-        .is_err());
-    }
-
-    /// BUG-003 regression: a query aimed at another database must never be
-    /// served by re-pointing the shared pooled session. The target rides the
-    /// command envelope so the driver qualifies the SQL itself.
-    #[tokio::test]
-    async fn execute_query_never_switches_the_session_database() {
-        let test = TestAppState::with_tables().await;
-        let (_, conn_id) = test.save_and_connect("switch-db-cfg").await;
-
-        let result = execute_query_impl(
-            &test.state,
-            conn_id.clone(),
-            "SELECT 1".into(),
-            Some("analytics".into()),
-        )
-        .await
-        .unwrap();
-        assert_eq!(result.results.len(), 1);
-
-        // The whole point of the refactor: no session switch, ever.
-        assert!(
-            test.mock.use_database_calls().is_empty(),
-            "execute_query must not switch the session's database"
-        );
-        // ...and the session record still reports its own configured database,
-        // because the request target is per-call, not session state.
-        let config = test
-            .state
-            .connection_manager
-            .get_session_config(&conn_id)
-            .await
-            .unwrap();
-        assert_eq!(config.database.as_deref(), Some("app"));
-    }
-
-    #[tokio::test]
-    async fn execute_query_never_switches_for_same_blank_or_absent_pin() {
-        let test = TestAppState::with_tables().await;
-        let (_, conn_id) = test.save_and_connect("no-switch-db-cfg").await;
-
-        for pin in [None, Some("app".to_string()), Some("   ".to_string())] {
-            execute_query_impl(&test.state, conn_id.clone(), "SELECT 1".into(), pin)
-                .await
-                .unwrap();
-        }
-
-        assert!(test.mock.use_database_calls().is_empty());
-        let config = test
-            .state
-            .connection_manager
-            .get_session_config(&conn_id)
-            .await
-            .unwrap();
-        assert_eq!(config.database.as_deref(), Some("app"));
-    }
-
-    #[tokio::test]
-    async fn get_explain_never_switches_the_session_database() {
-        let test = TestAppState::with_tables().await;
-        let (_, conn_id) = test.save_and_connect("explain-db-cfg").await;
-        get_explain_impl(
-            &test.state,
-            conn_id.clone(),
-            "SELECT 1".into(),
-            Some("other".into()),
-        )
-        .await
-        .unwrap();
-        assert!(
-            test.mock.use_database_calls().is_empty(),
-            "get_explain must not switch the session's database"
-        );
-        let config = test
-            .state
-            .connection_manager
-            .get_session_config(&conn_id)
-            .await
-            .unwrap();
-        assert_eq!(config.database.as_deref(), Some("app"));
-    }
-
-    #[tokio::test]
-    async fn session_transaction_begin_commit_and_status() {
-        let test = TestAppState::new().await;
-        let (_, conn_id) = test.save_and_connect("tx-cfg").await;
-        assert!(
-            !session_transaction_status_impl(&test.state, conn_id.clone())
-                .await
-                .unwrap()
-        );
-        begin_session_transaction_impl(&test.state, conn_id.clone())
-            .await
-            .unwrap();
-        assert!(
-            session_transaction_status_impl(&test.state, conn_id.clone())
-                .await
-                .unwrap()
-        );
-        begin_session_transaction_impl(&test.state, conn_id.clone())
-            .await
-            .unwrap();
-        commit_session_transaction_impl(&test.state, conn_id.clone())
-            .await
-            .unwrap();
-        assert!(
-            !session_transaction_status_impl(&test.state, conn_id.clone())
-                .await
-                .unwrap()
-        );
-        begin_session_transaction_impl(&test.state, conn_id.clone())
-            .await
-            .unwrap();
-        rollback_session_transaction_impl(&test.state, conn_id.clone())
-            .await
-            .unwrap();
-        assert!(!session_transaction_status_impl(&test.state, conn_id)
-            .await
-            .unwrap());
-    }
-
-    #[tokio::test]
-    async fn commit_and_rollback_without_tx_are_validation_errors() {
-        let test = TestAppState::new().await;
-        let (_, conn_id) = test.save_and_connect("tx-empty").await;
-        let commit_err = commit_session_transaction_impl(&test.state, conn_id.clone())
-            .await
-            .unwrap_err();
-        assert!(commit_err.to_string().contains("No open transaction"));
-        let rollback_err = rollback_session_transaction_impl(&test.state, conn_id)
-            .await
-            .unwrap_err();
-        assert!(rollback_err.to_string().contains("No open transaction"));
-    }
-
-    #[tokio::test]
-    async fn concurrent_begin_is_idempotent() {
-        let test = TestAppState::new().await;
-        let (_, conn_id) = test.save_and_connect("tx-race").await;
-        let a = begin_session_transaction_impl(&test.state, conn_id.clone());
-        let b = begin_session_transaction_impl(&test.state, conn_id.clone());
-        let (ra, rb) = tokio::join!(a, b);
-        assert!(ra.is_ok());
-        assert!(rb.is_ok());
-        assert!(
-            session_transaction_status_impl(&test.state, conn_id.clone())
-                .await
-                .unwrap()
-        );
-        commit_session_transaction_impl(&test.state, conn_id)
-            .await
-            .unwrap();
-    }
-}
+#[path = "query_tests.rs"]
+mod tests;

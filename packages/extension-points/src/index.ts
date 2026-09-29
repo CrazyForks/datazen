@@ -18,6 +18,7 @@ export type {
   SqlEditorEnhancedOptions,
   SqlEditorProFeatures,
   SqlEditorProOptions,
+  EditorPanelSlot,
   ExtensionSettingOption,
   ExtensionSettingItem,
   ExtensionSettingRenderProps,

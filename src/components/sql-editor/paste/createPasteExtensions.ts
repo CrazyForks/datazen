@@ -13,12 +13,15 @@ import {
   type ExtensionPoint,
 } from '@datazen/extension-points';
 import type { DroppedTablePayload } from '../contracts';
+import type { ProSettingsBag } from '../proCompartments';
 import { createMultipleSelectionsExtension } from './multipleSelections';
 
 export interface PasteCompartmentOptions {
   connectionId?: string;
   onDrop?: (payload: DroppedTablePayload, pos: number | null) => void;
   onDropError?: (message: string) => void;
+  /** Privileged settings bag, forwarded verbatim to the EP (G3 generic path). */
+  proSettings?: ProSettingsBag;
 }
 
 export function createPasteExtensions(opts: PasteCompartmentOptions): Extension[] {

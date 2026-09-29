@@ -26,7 +26,11 @@ pub struct QueryHistoryEntry {
     pub error_message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A saved SQL favorite, backed by one `.sql` file under the favorites root.
+///
+/// The `id` is the file's stem — a ULID the app mints, never a title-derived
+/// name, so renaming a favorite never rewrites a file (see plan §2.6.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FavoriteQuery {
     pub id: String,
@@ -35,6 +39,20 @@ pub struct FavoriteQuery {
     pub title: String,
     pub sql: String,
     pub created_at: DateTime<Utc>,
+    /// `None` for favorites migrated from SQLite, which had no such column.
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+    /// Optional completion keyword from the front-matter (`-- keyword:`).
+    /// Read and round-tripped today; binding it to completion is a later track.
+    #[serde(default)]
+    pub keyword: Option<String>,
+    /// Logical database the statement targets, when the file records one.
+    #[serde(default)]
+    pub database: Option<String>,
+    /// Directory of this favorite relative to the favorites root, `/`-separated.
+    /// `None` = the root itself.
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 
 /// Persisted state for a data-sync task (checkpoint / resume).

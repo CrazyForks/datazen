@@ -83,7 +83,12 @@ describe('ensure-generated-drivers', () => {
     const result = runEnsureGeneratedDrivers({
       root,
       argv: [],
-      log: (msg: string) => logged.push(msg),
+      // `log` carries the console.log contract — variadic `unknown[]` — so record
+      // the same space-joined line a real console would, instead of narrowing the
+      // parameter to a single `string` the declaration never promised.
+      log: (...args: unknown[]) => {
+        logged.push(args.map(String).join(' '));
+      },
       runResolve: (args) => {
         calls.push(args);
       },

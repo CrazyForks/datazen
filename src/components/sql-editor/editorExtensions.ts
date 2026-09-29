@@ -11,17 +11,13 @@ import type { MutableRefObject } from 'react';
 import { EditorView, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { sql, keywordCompletionSource, type SQLNamespace } from '@codemirror/lang-sql';
-import {
-  Compartment,
-  StateField,
-  StateEffect,
-  type Extension,
-  Transaction,
-} from '@codemirror/state';
+import { StateField, StateEffect, type Extension } from '@codemirror/state';
 import {
   autocompletion,
   closeBrackets,
   acceptCompletion,
+  completionKeymap,
+  startCompletion,
   type Completion,
   type CompletionSource,
 } from '@codemirror/autocomplete';
@@ -72,6 +68,7 @@ import {
 import { buildSemanticModel } from './semantic/scopeModel';
 import type { EditorMetadataSnapshot } from './metadata/types';
 import type { SqlSemanticModel } from './semantic/types';
+import type { ProSettingsBag } from './proCompartments';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                      */
@@ -117,21 +114,23 @@ export const documentVersionField = StateField.define<number>({
 /*  Compartments                                                               */
 /* -------------------------------------------------------------------------- */
 
-/** §S6-D priority order compartments */
-export const compartments = {
-  /** Statement frame + gutter (S4-A) */
-  statement: new Compartment(),
-  /** Completion + signature (S4-B) */
-  completion: new Compartment(),
-  /** Intention + hint (S4-C) */
-  intention: new Compartment(),
-  /** Hover + navigation (S4-D) */
-  hover: new Compartment(),
-  /** Paste + drop + multi-cursor (S5-A) */
-  paste: new Compartment(),
-  /** Linter / Diagnostics (S4-E) */
-  linter: new Compartment(),
-};
+/**
+ * Compartments are an extensible registry, not a fixed six-slot set — see
+ * `proCompartments.ts` for the mount/reconfigure contract. Re-exported here so
+ * existing `@/editorExtensions` call sites keep resolving.
+ */
+export {
+  compartments,
+  getProCompartment,
+  ensureProCompartment,
+  registeredProCompartmentIds,
+  mountProCompartments,
+  reconfigureProCompartments,
+  BASE_PRO_COMPARTMENT_IDS,
+  EXTRA_COMPARTMENT_ID,
+  KEYMAP_COMPARTMENT_ID,
+  type ProCompartmentPayload,
+} from './proCompartments';
 
 /* -------------------------------------------------------------------------- */
 /*  Theme extensions                                                           */
@@ -349,7 +348,19 @@ export function createFormatKeymap(databaseType?: string): Extension {
 /*  Statement compartment (S4-A): frame + gutter                               */
 /* -------------------------------------------------------------------------- */
 
-export interface CreateStatementExtensionsOptions {
+/**
+ * Every compartment factory accepts the privileged settings bag.
+ *
+ * This is the generic half of the G3 fix: the bag is forwarded verbatim to the
+ * EP (which may read any key it declared in `settingsContributions`) and is a
+ * dependency of the memo that builds the compartment, so toggling a key
+ * reconfigures the slot instead of being silently ignored.
+ */
+export interface ProCompartmentOptionsBase {
+  proSettings?: ProSettingsBag;
+}
+
+export interface CreateStatementExtensionsOptions extends ProCompartmentOptionsBase {
   onExecuteStatement?: (sql: string) => void;
   enabled?: boolean;
 }
@@ -376,7 +387,7 @@ export function createStatementExtensions(opts?: CreateStatementExtensionsOption
 /*  Completion/signature compartment (S4-B)                                    */
 /* -------------------------------------------------------------------------- */
 
-export interface CompletionCompartmentOptions {
+export interface CompletionCompartmentOptions extends ProCompartmentOptionsBase {
   databaseType?: string;
   metadataSnapshot?: EditorMetadataSnapshot;
   schema?: SQLNamespace;
@@ -609,14 +620,30 @@ export function createCompletionExtensions(
     [],
   );
 
-  return [completionSources, ...signatureHelpExts];
+  // The stock `completionKeymap` triggers on `Ctrl-Space`. That chord is
+  // delivered with its modifier flag already cleared on the WebKit build the
+  // E2E suite runs (measured: `['Control',' ']` and `['Alt',' ']` both arrive as
+  // a bare Space, only `['Meta',' ']` survives), so the stock binding is
+  // unreachable there and was simply never exercised — the extension was
+  // installed without any keymap at all, leaving `activateOnTyping` as the only
+  // way in. `Mod-Space` is the portable equivalent and is what VS Code and
+  // Sublime bind. It is prepended so it wins over the `Ctrl-Space` entry it
+  // replaces rather than sitting behind it; every other binding of the stock
+  // keymap (Escape, Enter, arrows) is kept as-is, because `closeCompletion` at
+  // `Prec.highest` is what the Escape-vs-multi-cursor contract depends on.
+  const completionKeymapExt = keymap.of([
+    { key: 'Mod-Space', run: startCompletion },
+    ...completionKeymap.filter((b) => b.key !== 'Ctrl-Space'),
+  ]);
+
+  return [completionSources, completionKeymapExt, ...signatureHelpExts];
 }
 
 /* -------------------------------------------------------------------------- */
 /*  Intention/hint compartment (S4-C)                                          */
 /* -------------------------------------------------------------------------- */
 
-export interface IntentionCompartmentOptions {
+export interface IntentionCompartmentOptions extends ProCompartmentOptionsBase {
   insertValueHints?: boolean;
   databaseType?: string;
   schema?: SqlSchema;
@@ -646,7 +673,7 @@ export function createIntentionExtensions(
 /*  Hover/navigation compartment (S4-D)                                        */
 /* -------------------------------------------------------------------------- */
 
-export interface HoverCompartmentOptions {
+export interface HoverCompartmentOptions extends ProCompartmentOptionsBase {
   metadataSnapshot?: EditorMetadataSnapshot;
   onNavigateToTable?: SqlEditorProps['onNavigateToTable'];
   onNavigateToStructure?: SqlEditorProps['onNavigateToStructure'];
@@ -675,7 +702,7 @@ export function createHoverExtensions(
 /*  Linter compartment (S4-E)                                                  */
 /* -------------------------------------------------------------------------- */
 
-export interface LinterCompartmentOptions {
+export interface LinterCompartmentOptions extends ProCompartmentOptionsBase {
   /** Opt-in lightbulb actions; does not disable diagnostics or Alt+Enter intentions. */
   intentionActions?: boolean;
   databaseType?: string;
@@ -812,28 +839,4 @@ export function createModelBuilderExtension(
 
 function parentsEqual(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((seg, i) => seg === b[i]);
-}
-
-/** §EP hot-plug: batch-reconfigure all Pro-driven compartments on a live EditorView. */
-export interface ProCompartmentPayload {
-  statement: Extension[];
-  completion: Extension[];
-  intention: Extension[];
-  hover: Extension[];
-  paste: Extension[];
-  linter: Extension[];
-}
-
-export function reconfigureProCompartments(view: EditorView, payload: ProCompartmentPayload): void {
-  view.dispatch({
-    effects: [
-      compartments.statement.reconfigure(payload.statement),
-      compartments.completion.reconfigure(payload.completion),
-      compartments.intention.reconfigure(payload.intention),
-      compartments.hover.reconfigure(payload.hover),
-      compartments.paste.reconfigure(payload.paste),
-      compartments.linter.reconfigure(payload.linter),
-    ],
-    annotations: Transaction.addToHistory.of(false),
-  });
 }

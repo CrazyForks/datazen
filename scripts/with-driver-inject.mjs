@@ -32,7 +32,8 @@ export const INJECT_ACTIVE_ENV = 'DATAZEN_DRIVER_INJECT_ACTIVE';
  * @param {{
  *   exists?: () => boolean,
  *   env?: NodeJS.ProcessEnv,
- * }} [opts]
+ * }} | (() => boolean) [opts] the bare-function form is the legacy spelling and is
+ *   still honoured: it stands for `{ exists }`, and env then means process.env
  * @returns {{ ownStash: boolean, nested: boolean, orphanStash: boolean }}
  */
 export function planDriverInjectLifecycle(opts = {}) {
@@ -59,6 +60,8 @@ export function planDriverInjectLifecycle(opts = {}) {
  *   env?: NodeJS.ProcessEnv,
  *   runResolve?: (args: string) => void,
  *   runRestore?: () => void,
+ *   runResolvePro?: (args: string) => void,
+ *   runRestorePro?: () => void,
  *   runCommand?: (cmd: string, args: string[], env: NodeJS.ProcessEnv) => { status: number | null },
  *   log?: (msg: string) => void,
  * }} [options]

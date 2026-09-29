@@ -63,7 +63,7 @@ export function extractCiMatrixDriverIds(ciMatrixText) {
   return [...ids].sort();
 }
 
-/** @returns {{ ok: boolean, missing: string[], registryIds: string[] }} */
+/** @returns {{ ok: boolean, missing: string[], mentioned: string[], registryIds: string[] }} */
 export function checkCiMatrixDrivers(opts = {}) {
   const root = opts.root ?? ROOT;
   const registry = JSON.parse(read(root, PATHS.registry));

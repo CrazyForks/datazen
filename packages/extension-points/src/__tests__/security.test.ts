@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import {
   buildSignaturePayload,
   EP_SIGNATURE_ALGORITHM,
@@ -444,5 +447,252 @@ describe('EP security gate (security.test.ts)', () => {
     if (!result.ok) {
       expect(result.code).toBe('invalid-signature');
     }
+  });
+});
+
+/**
+ * The 1.1.0 contract version, pinned from both ends.
+ *
+ * `checkEngineCompatibility` compares `engines.extensionPointsVersion` to
+ * `EXTENSION_POINTS_VERSION` with exact string equality and silently falls
+ * back to the community feature set on a mismatch — it does not range-check and
+ * it does not warn. A one-sided bump is therefore invisible: either the host
+ * rejects the Pro package, or (worse) an old manifest is rejected by a new
+ * host, and the failure surfaces as "Pro features quietly stopped working"
+ * rather than as an error.
+ *
+ * ── Why the five cases are split three ways ───────────────────────────────────
+ *
+ * They do not need the same things, and the split is what makes this file
+ * runnable in a host-only checkout without ever reporting a seam it did not
+ * walk as green:
+ *
+ *   - ONE case pins the host constant and reads nothing else.
+ *   - TWO cases assert that the two repos AGREE. That claim is meaningless
+ *     unless both sides are actually read, so they need the real Pro
+ *     `manifest.json` and are gated on the shared verdict.
+ *   - TWO cases assert the host's COMPARISON RULE — exact equality, not a
+ *     range check. The rule is a pure function of one field, so they are pinned
+ *     to a synthetic manifest and run on every checkout, Pro or not.
+ *
+ * The two groups used to be fused: the last two spread `readProManifest()`, so a
+ * checkout without the Pro ENOENTed on a bare `readFileSync` and this file was a
+ * FOURTH Pro-dependent guard that consulted neither the shared verdict nor
+ * `DATAZEN_ALLOW_MISSING_PRO` — three guards with one opt-out between them, and
+ * a fourth that had never heard of it. It now reads the same verdict as the
+ * rest, from `scripts/pro-seam-gate.mjs`, which is the single implementation
+ * `pack-ep.test.ts` and the CI seam gate also read.
+ */
+
+/**
+ * The shared three-state verdict, produced by `scripts/pro-seam-gate.mjs`.
+ *
+ * This file used to answer "is the Pro here?" by opening the very
+ * `manifest.json` it wanted to read, and had no answer at all for a Pro
+ * directory that exists but is incomplete. It now asks the same question as
+ * every other host guard, over a process boundary: the root typecheck program
+ * has `allowJs: false`, so a `packages/**` TypeScript file importing the `.mjs`
+ * would fail with TS7016, and a hand-written `.d.mts` would be a fourth,
+ * drift-prone copy of the same shape. The JSON is the implementation's own
+ * output, so it cannot disagree with the gate or with `pack-ep`.
+ */
+interface ProVerdict {
+  state: 'absent' | 'partial' | 'present';
+  present: boolean;
+  dir: string;
+  dirExists: boolean;
+  missing: string[];
+  allowMissing: boolean;
+  maySkip: boolean;
+  mustFail: boolean;
+}
+
+/** Narrow the parsed verdict to a record, without `any` and without a cast. */
+function toVerdictRecord(parsed: unknown, raw: string): Record<string, unknown> {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`pro-seam-gate --verdict did not return a JSON object: ${raw}`);
+  }
+  const record: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parsed)) record[key] = value;
+  return record;
+}
+
+/**
+ * Ask `pro-seam-gate.mjs` what it can see of the Pro checkout.
+ *
+ * Every field is validated rather than assumed: a silently reshaped verdict has
+ * to fail loudly here, not propagate as `undefined` into the gating below, where
+ * `undefined` reads as "not present" and would turn into a skip.
+ */
+function readSharedProVerdict(): ProVerdict {
+  const script = resolve(process.cwd(), 'scripts/pro-seam-gate.mjs');
+  const out = execFileSync(process.execPath, [script, '--verdict', `--root=${process.cwd()}`], {
+    encoding: 'utf8',
+  });
+  const record = toVerdictRecord(JSON.parse(out) as unknown, out);
+  const readString = (key: string): string => {
+    const value = record[key];
+    if (typeof value !== 'string') throw new Error(`verdict "${key}" is not a string: ${out}`);
+    return value;
+  };
+  const readBoolean = (key: string): boolean => {
+    const value = record[key];
+    if (typeof value !== 'boolean') throw new Error(`verdict "${key}" is not a boolean: ${out}`);
+    return value;
+  };
+  const state = readString('state');
+  if (state !== 'absent' && state !== 'partial' && state !== 'present') {
+    throw new Error(`verdict has an unknown state "${state}": ${out}`);
+  }
+  const missingRaw = record.missing;
+  if (!Array.isArray(missingRaw)) throw new Error(`verdict "missing" is not an array: ${out}`);
+  const missing: string[] = [];
+  for (const entry of missingRaw) {
+    if (typeof entry !== 'string') throw new Error(`verdict "missing" is not a string[]: ${out}`);
+    missing.push(entry);
+  }
+  return {
+    state,
+    present: readBoolean('present'),
+    dir: readString('dir'),
+    dirExists: readBoolean('dirExists'),
+    missing,
+    allowMissing: readBoolean('allowMissing'),
+    maySkip: readBoolean('maySkip'),
+    mustFail: readBoolean('mustFail'),
+  };
+}
+
+/** Decided once per file, from the same implementation every other guard uses. */
+const sharedVerdict = readSharedProVerdict();
+
+const PRO_ABSENT_REASON =
+  `Pro checkout absent (state=${sharedVerdict.state}) at ${sharedVerdict.dir} — the ` +
+  'host↔Pro manifest contract is UNTESTED and nothing in this file read it.';
+
+/**
+ * A synthetic stand-in for the Pro `manifest.json`, for the two cases that pin
+ * the host's comparison rule rather than the two repos agreeing.
+ *
+ * Those two cases used to spread the real manifest and override one field, which
+ * welded a host-only rule to a cross-repo checkout: without the Pro the file
+ * ENOENTed, so the rule the host actually owns was only ever exercised where the
+ * Pro happens to be. `checkEngineCompatibility` reads exactly one field,
+ * `engines.extensionPointsVersion`, so the surrounding fields are inert here and
+ * are modelled on the real manifest's shape. The baseline value tracks
+ * `EXTENSION_POINTS_VERSION`, so the fixture can never disagree with the host it
+ * is tested against; a one-sided Pro bump is still caught, by the two cases that
+ * read the real manifest.
+ */
+const PRO_MANIFEST_FIXTURE: ExtensionManifest = {
+  id: 'sql-editor-pro',
+  version: '0.0.0',
+  main: 'dist/index.esm.js',
+  engines: {
+    datazen: '>=0.1.2',
+    extensionPointsVersion: EXTENSION_POINTS_VERSION,
+  },
+};
+
+/**
+ * Declare a case that can only mean something with the real Pro manifest.
+ *
+ * Four outcomes, mirroring `proVerdict()` exactly — this file does not get a
+ * second, laxer opinion about what "the Pro is here" means:
+ *
+ *   present                    → the case runs.
+ *   absent  + acknowledged     → `it.skip`, with the reason in the test NAME so
+ *                                the gap is visible in the reporter output
+ *                                rather than inferred from a line count.
+ *   absent  + NOT acknowledged → a real, failing test. The guards are
+ *                                fail-by-default so that an unrunnable seam is a
+ *                                loud failure, not a quiet green.
+ *   partial (mustFail)         → a real, failing test, never waivable. The
+ *                                directory is here but incomplete; the opt-out
+ *                                means "this checkout knowingly has no Pro",
+ *                                which is false here, and honouring it is
+ *                                exactly how a broken checkout becomes a green
+ *                                skip.
+ */
+function proManifestTest(name: string, body: () => void): void {
+  if (sharedVerdict.mustFail) {
+    it(name, () => {
+      throw new Error(
+        `Pro checkout is PRESENT BUT INCOMPLETE at ${sharedVerdict.dir} ` +
+          `(missing: ${sharedVerdict.missing.join(', ')}). The host↔Pro manifest ` +
+          'contract is UNREAD and DATAZEN_ALLOW_MISSING_PRO=1 does not apply — it ' +
+          'acknowledges a checkout with no Pro, not a broken one. Repair or ' +
+          'remove the Pro checkout.',
+      );
+    });
+    return;
+  }
+  if (!sharedVerdict.present) {
+    if (sharedVerdict.allowMissing) {
+      it.skip(`${name} [SKIPPED — no Pro checkout: ${PRO_ABSENT_REASON}]`, body);
+      return;
+    }
+    it(name, () => {
+      throw new Error(
+        `${PRO_ABSENT_REASON} Refusing to report a green host gate for a ` +
+          'cross-repo contract that was never read. Provision the Pro checkout, ' +
+          'or re-run with DATAZEN_ALLOW_MISSING_PRO=1 to acknowledge the gap ' +
+          'explicitly.',
+      );
+    });
+    return;
+  }
+  it(name, body);
+}
+
+describe('EXTENSION_POINTS_VERSION 1.1.0 contract (security.test.ts)', () => {
+  // `import.meta.url` is not a file: URL under this Vitest transform, so the
+  // manifest is located from the workspace root instead. Vitest runs with cwd
+  // at the config root, which is the repository root.
+  const PRO_MANIFEST_PATH = resolve(
+    process.cwd(),
+    'packages/pro-extensions/sql-editor-pro/manifest.json',
+  );
+
+  function readProManifest(): ExtensionManifest {
+    return JSON.parse(readFileSync(PRO_MANIFEST_PATH, 'utf8')) as ExtensionManifest;
+  }
+
+  it('pins the host contract version at 1.1.0', () => {
+    expect(EXTENSION_POINTS_VERSION).toBe('1.1.0');
+  });
+
+  proManifestTest('the Pro manifest declares the same version', () => {
+    // `engines` lives in manifest.json, not package.json.
+    expect(readProManifest().engines?.extensionPointsVersion).toBe('1.1.0');
+  });
+
+  proManifestTest('the real Pro manifest is compatible with this host', () => {
+    const result = checkEngineCompatibility(readProManifest());
+    expect(result).toEqual({ compatible: true });
+  });
+
+  it('a manifest pinned to the previous 1.0.0 contract is rejected', () => {
+    // The failure mode a one-sided bump produces. Asserted explicitly so the
+    // exactness of the comparison cannot be quietly relaxed to a range check.
+    const result = checkEngineCompatibility({
+      ...PRO_MANIFEST_FIXTURE,
+      engines: { ...PRO_MANIFEST_FIXTURE.engines, extensionPointsVersion: '1.0.0' },
+    });
+    expect(result.compatible).toBe(false);
+    if (!result.compatible) {
+      expect(result.reason).toContain('1.0.0');
+    }
+  });
+
+  it('a minor mismatch is rejected too — there is no semver range', () => {
+    // '1.2.0' would satisfy a caret range on a 1.1.0 host, but this gate is
+    // exact equality on purpose: the hook surface is not negotiated at runtime.
+    expect(
+      checkEngineCompatibility({
+        ...PRO_MANIFEST_FIXTURE,
+        engines: { ...PRO_MANIFEST_FIXTURE.engines, extensionPointsVersion: '1.2.0' },
+      }).compatible,
+    ).toBe(false);
   });
 });

@@ -260,15 +260,15 @@ const colourOf = (cs: string[]) => cs.filter((c) => COLOUR.test(c)).sort();
 /** Render the real component with the props parsed from a real call-site tag. */
 function renderTag(tag: string): string[] {
   const { unmount } = render(
-    createElement(
-      ErrorBanner,
-      {
-        variant: (attr(tag, 'variant') ?? 'plain') as 'plain',
-        className: attr(tag, 'className') ?? '',
-        icon: /\bicon=/.test(tag) ? createElement('span') : undefined,
-      },
-      'x',
-    ),
+    createElement(ErrorBanner, {
+      variant: (attr(tag, 'variant') ?? 'plain') as 'plain',
+      className: attr(tag, 'className') ?? '',
+      icon: /\bicon=/.test(tag) ? createElement('span') : undefined,
+      // `children` is a required prop here, so it belongs in the props object —
+      // `createElement`'s rest-children overload only applies when the props
+      // object already satisfies the component's own type.
+      children: 'x',
+    }),
   );
   const el = document.querySelector('[role="alert"]');
   const head = el?.getAttribute('class')?.split(/\s+/).filter(Boolean) ?? [];

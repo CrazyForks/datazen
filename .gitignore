@@ -68,6 +68,26 @@ src-tauri/src/driver_init.rs
 packages/pro-extensions/
 src-tauri/resources/builtin-ep/
 artifacts/
+# "staging run did not finish" markers written next to a staged EP tree
+# (pack-ep.mjs / resolve-pro.mjs). A stale one must survive `git status` so a
+# failed build cannot be mistaken for a clean one.
+#
+# Note on redundancy — measured, not assumed (`git check-ignore -v <file>`):
+# for the marker the EP pipeline actually writes, which lands INSIDE
+# src-tauri/resources/builtin-ep/, rule 69 (the directory rule) matches too and
+# is the one git reports. The reason is NOT "the last matching rule wins": in a
+# scratch repo `dir/` on line 1 beats `*.incomplete` on line 2, and swapping
+# those two lines only moves which line number reports the directory rule — it
+# still wins. A matching directory rule excludes the subtree by itself: git
+# never descends into an excluded directory, so no other pattern is consulted
+# for the paths beneath it. (Control, same scratch repo: with a NON-matching
+# `dir/other/` on line 1, `*.incomplete` on line 2 does win — so ordering does
+# decide among the patterns actually evaluated for a given path.)
+# This line is NOT redundant in general: a root level `foo.incomplete` is matched
+# by this rule and by nothing else, and --stage-dir is unvalidated, so it may
+# point anywhere in the tree. Kept for that reason; do not read "rule 69 already
+# covers it" as licence to delete this.
+*.incomplete
 
 # Built-in locale codegen (written by generate-builtin-locales.mjs; not committed)
 src/locales/builtinLocales.ts

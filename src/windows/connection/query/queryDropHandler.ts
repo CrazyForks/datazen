@@ -10,6 +10,7 @@ import { openDashboardWindow } from '../../../lib/windowManager';
 import { emitCrossWindow } from '../../../lib/crossWindowBus';
 import { createEmptyDashboard } from '../../dashboard/DashboardPanel';
 import { usePanelStore } from '../../../stores/panelStore';
+import { paneArgs } from '../../../stores/paneKeys';
 import {
   buildExplainAction,
   buildFixSqlAction,
@@ -158,6 +159,8 @@ export function createQueryDropHandler({
 
 export interface UseQueryPanelWorkflowsOptions {
   panelId: string;
+  /** Pane the panel's actions target; omitted = the panel's own pane. */
+  paneId?: string;
   connectionId: string;
   dbSessionId: string;
   databaseType?: string;
@@ -181,13 +184,14 @@ export interface UseQueryPanelWorkflowsOptions {
     confirmLabel?: string;
     kind?: 'warning' | 'info';
   }) => Promise<boolean>;
-  updateSql: (panelId: string, sql: string) => void;
+  updateSql: (panelId: string, sql: string, paneId?: string) => void;
   showMessageDialog: (text: string, kind?: 'error' | 'success') => void;
   t: (key: import('../../../locales').I18nKey, params?: Record<string, string | number>) => string;
 }
 
 export function useQueryPanelWorkflows({
   panelId,
+  paneId,
   connectionId,
   dbSessionId,
   databaseType,
@@ -274,10 +278,10 @@ export function useQueryPanelWorkflows({
   const handleApplyFixSql = useCallback(
     (nextSql: string) => {
       buildFixSqlAction(diagnosisContext, nextSql).applyToEditor((draft) =>
-        updateSql(panelId, draft.draftSql),
+        updateSql(panelId, draft.draftSql, ...paneArgs(paneId)),
       );
     },
-    [diagnosisContext, panelId, updateSql],
+    [diagnosisContext, panelId, paneId, updateSql],
   );
 
   const handleRetry = useCallback(async () => {
@@ -302,6 +306,7 @@ export function useQueryPanelWorkflows({
     const latestValidationInput = readCurrentQueryPanelRetryValidationInput(
       panelId,
       paramValuesRef.current,
+      paneId,
     );
     if (!latestValidationInput) return;
     let retryExecution: Promise<void> | undefined;
@@ -314,6 +319,7 @@ export function useQueryPanelWorkflows({
     confirmRetry,
     diagnosisContext,
     panelId,
+    paneId,
     paramValuesRef,
     retryAction,
     runExecute,

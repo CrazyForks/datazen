@@ -110,6 +110,15 @@ pub struct AppSettings {
     pub mcp_allowed_connection_ids: Vec<String>,
     #[serde(default)]
     pub context_dir: String,
+    /// Directory holding the user's favorites, one `.sql` file each.
+    ///
+    /// Empty/`None` means `{appData}/favorites`. The default is **not** inside
+    /// a cloud drive — on macOS and Windows the platform app-data directory
+    /// does not sync — so this field is what makes cross-device favorites
+    /// possible: point it at an iCloud/Dropbox/GitHub folder and the files
+    /// travel (plan §2.6.3).
+    #[serde(default)]
+    pub favorites_root: Option<String>,
     /// When true, GUI checks for app updates on startup (default off).
     #[serde(default)]
     pub check_for_updates_on_startup: bool,
@@ -243,6 +252,7 @@ impl Default for AppSettings {
             mcp_permission_mode: McpPermissionMode::default(),
             mcp_allowed_connection_ids: Vec::new(),
             context_dir: String::new(),
+            favorites_root: None,
             check_for_updates_on_startup: false,
             auto_chart_on_query: false,
             monitor: MonitorSettings::default(),

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { cn } from './cn';
+import { splitDataAttrs, type DataAttrProps } from './dataAttrs';
 import { Spinner } from './Spinner';
 
 export interface SelectOption {
@@ -23,7 +24,17 @@ export const defaultSelectLabels: SelectLabels = {
   toggleOptions: 'Toggle options',
 };
 
-export interface SelectProps {
+/**
+ * Props of the design-system listbox.
+ *
+ * `DataAttrProps` makes any `data-*` attribute part of the public contract: it
+ * is forwarded to the single interactive trigger — the
+ * `<button aria-haspopup="listbox">`, or the combobox `<input>` when
+ * `searchable` — so a locator such as `data-testid` lands on the element you
+ * actually click or type into. Props outside `data-*` are still dropped rather
+ * than leaked onto a DOM node; `./dataAttrs.ts` explains the trade.
+ */
+export interface SelectProps extends DataAttrProps {
   readonly value: string | number;
   readonly options: readonly SelectOption[];
   readonly onChange: (value: string) => void;
@@ -41,6 +52,10 @@ export interface SelectProps {
   readonly listMinWidth?: number;
   /** After picking an option, blur the trigger instead of refocusing (combobox). */
   readonly blurOnSelect?: boolean;
+  /**
+   * Escape hatch for attributes the trigger owns. Superseded by a matching
+   * `data-*` prop passed directly, which wins on key collision.
+   */
   readonly triggerDataAttrs?: Record<string, string>;
   readonly labels?: Partial<SelectLabels>;
 }
@@ -134,8 +149,33 @@ export function Select({
   blurOnSelect = false,
   triggerDataAttrs,
   labels: labelsProp,
+  ...rest
 }: SelectProps) {
   const labels = { ...defaultSelectLabels, ...labelsProp };
+  // Only `data-*` may reach the DOM; anything else a caller slipped in is
+  // reported below rather than leaked onto a node (see ./dataAttrs.ts).
+  const { data: callerData, unknown: unknownProps } = splitDataAttrs(rest);
+  const triggerAttrs = { ...triggerDataAttrs, ...callerData };
+  // Sorted, so the key identifies the *set* of unknown props rather than their
+  // order. `Object.entries` preserves JSX prop insertion order, so an unsorted
+  // join yields a different key — and therefore a fresh `console.warn` — for the
+  // very same keys passed in a different order. Sorting makes the key a pure
+  // function of the key set.
+  const unknownPropKey = [...unknownProps].sort().join(',');
+  useEffect(() => {
+    // Dev-only rail for the one path the type system cannot cover: a spread
+    // (`{...rest}`) is exempt from excess-property checking, so a typo that
+    // arrives that way compiles. Production bundles stay silent.
+    //
+    // Keyed on the sorted set, so a re-render passing the same unknown props —
+    // in any order — does not warn again.
+    if (!import.meta.env.DEV || unknownPropKey.length === 0) return;
+    console.warn(
+      `[datazen/ui] <Select> dropped unknown prop(s): ${unknownPropKey}. ` +
+        'Declare them on SelectProps, or pass a `data-*` attribute — those are ' +
+        'forwarded to the listbox trigger.',
+    );
+  }, [unknownPropKey]);
   const [open, setOpen] = useState(false);
   const [highlightIdx, setHighlightIdx] = useState(-1);
   const [filterQuery, setFilterQuery] = useState('');
@@ -387,7 +427,6 @@ export function Select({
           ref={triggerRef as React.RefObject<HTMLDivElement>}
           title={title}
           aria-busy={loading || undefined}
-          {...triggerDataAttrs}
           className={cn(
             triggerShellClass,
             fitContent ? 'inline-flex w-auto' : 'w-full',
@@ -407,6 +446,7 @@ export function Select({
             aria-activedescendant={open ? activeDescendant : undefined}
             aria-autocomplete="list"
             aria-label={accessibleLabel}
+            {...triggerAttrs}
             className={cn(
               'bg-transparent outline-none',
               fitContent ? 'shrink-0 pl-2.5 pr-0' : 'min-w-0 flex-1 px-2.5',
@@ -484,7 +524,7 @@ export function Select({
         disabled={isDisabled}
         aria-busy={loading || undefined}
         title={title}
-        {...triggerDataAttrs}
+        {...triggerAttrs}
         className={cn(
           triggerShellClass,
           fitContent ? 'inline-flex w-auto' : 'w-full',
