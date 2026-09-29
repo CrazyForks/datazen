@@ -1,7 +1,7 @@
 # migration-schema-sqlite-rebuild-BUG-004 · SQLite reviewed deploy scope disagrees with the UI catalog
 
 - **严重度**：高（发布阻断：SQLite Schema Diff 生成计划后无法部署）
-- **状态**：待修复
+- **状态**：已修复并通过 R8 文件型 WDIO
 - **涉及文件**：`src-tauri/src/commands/schema_diff.rs`、`src-tauri/src/commands/schema_diff/unified_plan.rs`
 
 ## 描述
@@ -26,3 +26,8 @@
 - SQLite 审阅范围以逻辑 catalog `main` 冻结，与部署请求一致；文件路径仍用于连接身份验证。
 - 同一 WDIO 旅程完整部署表重建，目标已有行 `id=7, value='kept'` 与新 `BLOB` 列定义均保留。
 - PostgreSQL/MySQL 现有 database/schema 范围校验保持不变。
+
+## 修复与验证
+
+- `d3d53307`：SQLite reviewed plan 冻结逻辑 catalog `main`，部署请求仍以文件路径验证连接身份。
+- 独立 R8 WDIO 完成 2/2，重建部署成功且目标行与新列类型读回正确；漂移用例确认目标变化后拒绝旧计划；见 `validation/sqlite-r8-wdio.md`。

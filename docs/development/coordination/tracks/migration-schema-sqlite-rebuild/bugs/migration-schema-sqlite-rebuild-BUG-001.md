@@ -1,7 +1,7 @@
 # migration-schema-sqlite-rebuild-BUG-001 · SQLite rebuild drops ON CONFLICT policies
 
 - **严重度**：高（发布阻断：重建会改变已审核表的写入语义）
-- **状态**：待复测
+- **状态**：已修复并通过独立复测（R5 文件型 driver journey 9/9）
 - **涉及文件**：`packages/drivers/sqlite/src/sqlite/schema.rs`、`packages/drivers/sqlite/src/migration/rebuild.rs`、`packages/drivers/sqlite/tests/schema_rebuild_journey.rs`
 
 ## 描述
@@ -30,4 +30,4 @@ SQLite 列级或表级约束上的 `ON CONFLICT` 策略没有进入 Schema Diff 
 - 在 `sqlite_master.sql` 的 token 流中检查未引用的 `ON CONFLICT` 关键字对，覆盖列级与表级语法、跨注释空白形式；不匹配字符串字面量或引用标识符。策略加入 `migration_blockers`，沿用已有 rebuild preflight 在任何写入前拒绝。
 - 添加文件型回归，覆盖列级 UNIQUE / NOT NULL / PRIMARY KEY，以及表级 UNIQUE / PRIMARY KEY / CHECK 和五种 SQLite conflict actions；验证目录和行集不变、`IGNORE` 行为保留。
 - 自验通过：新增冲突策略回归 1/1；文件型 rebuild 旅程 9/9；SQLite driver suites 78 passed / 1 个已知 baseline assertion filtered；Host planner 74/74、deploy 7/7。
-- 独立复测待开始；实现 commit：`c20e837ea1887f94678b85f226ec02f80c4b9d16`。
+- 新鲜 R5 tester 文件型 SQLite driver journey 9/9 通过，其中包含普通重建读回与 `ON CONFLICT` fail-closed 零写入检查；实现 commit：`c20e837ea1887f94678b85f226ec02f80c4b9d16`。

@@ -1,7 +1,7 @@
 # migration-schema-sqlite-rebuild-BUG-003 · Schema Diff passes SQLite file paths as catalog names
 
 - **严重度**：高（发布阻断：SQLite Schema Diff 在表列表后无法比较表结构）
-- **状态**：待修复
+- **状态**：已修复并通过 R8 文件型 WDIO
 - **涉及文件**：`src-tauri/src/commands/schema_diff.rs`、`src-tauri/src/commands/schema_diff/unified_plan.rs`
 
 ## 描述
@@ -26,3 +26,8 @@ BUG-002 修复后，两个 file-backed SQLite 专用会话都能成功打开，�
 - SQLite 文件路径只用于连接；SQLite catalog 元数据调用使用 `main` 或驱动定义的 catalog 名。
 - 两个 SQLite 文件可完整完成表列表、Compare、计划审阅及表重建部署，并保持目标现有行和新结构。
 - PostgreSQL/MySQL 的数据库名仍按现有逻辑传给驱动。
+
+## 修复与验证
+
+- `e9fa90d1`：Schema Diff 的 metadata catalog 查询对 SQLite 配置路径统一改用 `main`。
+- 独立 R8 WDIO 完成 2/2，覆盖表列表、Compare、计划审阅、部署和读回，并确认漂移后拒绝写入；见 `validation/sqlite-r8-wdio.md`。

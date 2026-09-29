@@ -1,7 +1,7 @@
 # migration-schema-sqlite-rebuild-BUG-002 · Schema Diff SQLite endpoints cannot open dedicated sessions
 
 - **严重度**：高（发布阻断：SQLite 结构对比向导无法加载表列表）
-- **状态**：待修复
+- **状态**：已修复并通过 R8 文件型 WDIO
 - **涉及文件**：`src/windows/schema-diff/useSchemaDiffEndpoints.ts`、`src/lib/dedicatedDbSession.ts`、`src-tauri/src/services/connection_manager/connections.rs`
 
 ## 描述
@@ -26,3 +26,8 @@
 - SQLite dedicated session 保持原连接配置中的真实文件路径；UI 选择的 `main` 用于后续 schema/catalog 查询，不覆盖文件路径。
 - 两个不同 SQLite 文件的 Schema Diff 可列出表、比较、生成计划、部署一次需要 table rebuild 的差异，部署后读回目标已有行和新结构。
 - PostgreSQL/MySQL 选数据库的 dedicated session 行为保持正常。
+
+## 修复与验证
+
+- `c4908888`：SQLite `main` 仅作为 catalog，dedicated session 继续使用配置文件路径。
+- 独立 R8 WDIO 完成 2/2：一例加载两份文件库、比较、审阅并部署重建，目标行和新列类型读回正确；另一例验证加载后的漂移拒绝路径；见 `validation/sqlite-r8-wdio.md`。
