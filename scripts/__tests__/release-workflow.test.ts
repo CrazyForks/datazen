@@ -237,7 +237,13 @@ describe('Per-SKU updater channels', () => {
       string,
       {
         strategy?: { matrix: { include: Array<Record<string, string>> } };
-        steps: Array<{ name?: string; if?: string; run?: string; env?: Record<string, string> }>;
+        steps: Array<{
+          id?: string;
+          name?: string;
+          if?: string;
+          run?: string;
+          env?: Record<string, string>;
+        }>;
       }
     >;
   };

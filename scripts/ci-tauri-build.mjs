@@ -51,11 +51,7 @@ export const TYPECHECK_ONCE_ENV = 'DATAZEN_CI_TYPECHECK_ONCE';
 export const FAST_FRONTEND_BUILD_COMMAND = 'pnpm build:bundle';
 
 /** Relative paths that must exist under the staged Pro extension tree. */
-export const REQUIRED_PRO_STAGED_PATHS = [
-  'manifest.json',
-  'dist/index.esm.js',
-  'signature.sig',
-];
+export const REQUIRED_PRO_STAGED_PATHS = ['manifest.json', 'dist/index.esm.js', 'signature.sig'];
 
 export function builtinEpStagingDir(root = ROOT) {
   return join(root, 'src-tauri', 'resources', 'builtin-ep', 'sql-editor-pro');
@@ -75,9 +71,7 @@ export function builtinEpStagingDir(root = ROOT) {
  */
 export function checkProStagingReady({ root = ROOT, log = console.log } = {}) {
   const staging = builtinEpStagingDir(root);
-  const missing = REQUIRED_PRO_STAGED_PATHS.filter(
-    (rel) => !existsSync(join(staging, rel)),
-  );
+  const missing = REQUIRED_PRO_STAGED_PATHS.filter((rel) => !existsSync(join(staging, rel)));
   const marker = stagingMarkerPath(staging);
   if (existsSync(marker)) {
     missing.push(basename(marker));
@@ -88,9 +82,7 @@ export function checkProStagingReady({ root = ROOT, log = console.log } = {}) {
     );
   }
   if (missing.length > 0) {
-    log(
-      `::notice::[pro-staging] missing staged files under ${staging}: ${missing.join(', ')}`,
-    );
+    log(`::notice::[pro-staging] missing staged files under ${staging}: ${missing.join(', ')}`);
   } else {
     log(`[pro-staging] staged tree ready at ${staging}`);
   }
@@ -158,6 +150,7 @@ export function updaterEndpointsForVariant(variant, repo = DEFAULT_REPO) {
  *   updater?: boolean,
  *   isPro?: boolean,
  *   beforeBuildCommand?: string | null,
+ *   variant?: string | null,
  *   dir?: string,
  * }} [opts]
  */
@@ -203,6 +196,7 @@ export function writeTauriConfigFile({
  *   configPath?: string | null,
  *   updaterConfigPath?: string | null,
  *   beforeBuildCommand?: string | null,
+ *   variant?: string | null,
  *   extraArgs?: string[],
  * }} [opts]
  */
