@@ -195,3 +195,21 @@ datazen-redis-work/
 # 运行清扫；这些名字由 withTempSourceFiles 强制保留，不会命中任何真实源码。
 __boundaryProbe__*
 __uiBoundaryProbe__*
+
+# tsconfig.node.json 以 composite 项目引用 vite.config.ts / tailwind.config.ts
+# （tsconfig.json 的 references）。composite 必须 emit，而它编译的是仓库根目录的
+# 配置文件——一旦 outDir 缺失，tsc -b 就会把 vite.config.js / tailwind.config.js
+# 及其 .d.ts 直接喷在源码树里。Vite 的 DEFAULT_CONFIG_FILES 把 `.js` 排在 `.ts`
+# 之前（vite/dist/node/constants.js），所以那份派生产物会**盖住**真正的手写配置：
+# 改 vite.config.ts 不生效，而 Tailwind 走 @config 读 .ts，两个真相源。
+# 编译输出已改道到 node_modules/.tmp/（见 tsconfig.node.json）；这里同时挡住复发。
+/vite.config.js
+/vite.config.d.ts
+/tailwind.config.js
+/tailwind.config.d.ts
+
+# 根 tsconfig.json 同为 composite 且未设 tsBuildInfoFile，`tsc -b` 会把增量构建信息
+# 直接写在仓库根目录（与上面 tsconfig.node.json 的漏洞同一类，只是产物是元数据
+# 而非可执行配置）。`pnpm typecheck` 走 tsc --noEmit 不会产生它，只有直接跑
+# `tsc -b` 才会——而那正是当初触发上一条漏洞的方式。根级名字见上方 161 行。
+/tsconfig.tsbuildinfo

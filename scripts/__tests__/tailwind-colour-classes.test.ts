@@ -12,9 +12,15 @@ import { describe, expect, it } from 'vitest';
 import type { Dirent } from 'node:fs';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { readScannedIfPresent } from '../lib/scanTargets.mjs';
+import { isSkippedPath, readScannedIfPresent } from '../lib/scanTargets.mjs';
 
-import tailwindConfig from '../../tailwind.config';
+// The extension is deliberate. Extensionless, this resolves through Vite's
+// `resolve.extensions` where `.js` precedes `.ts` — so it silently loaded
+// `tailwind.config.js` whenever `tsc -b` had sprayed that compiled copy into the
+// repo root (tsconfig.node.json is a composite project over these two files, and
+// a composite project must emit). This guard is only as trustworthy as the file
+// it reads, so it names the source file outright.
+import tailwindConfig from '../../tailwind.config.ts';
 
 /** Utilities that take a colour argument. */
 const COLOUR_UTILITIES = [
@@ -201,8 +207,16 @@ function walk(dir: string, out: ScannedFile[] = []): ScannedFile[] {
     // Some filesystems report DT_UNKNOWN, which leaves both predicates false;
     // fall back to a stat only in that case, so the common path stays windowless.
     const isDir = entry.isDirectory() || (!entry.isFile() && statSync(full).isDirectory());
-    if (isDir) walk(full, out);
-    else if (/\.(ts|tsx|js|jsx|css)$/.test(entry.name)) {
+    if (isDir) {
+      // `packages/pro-extensions/**` is independently versioned code that no
+      // Host build produces and no Host commit controls — see
+      // `SKIP_PATH_PREFIXES` in scripts/lib/scanTargets.mjs for why this has to
+      // be a path and not a bare directory name. The dead-colour responsibility
+      // for that tree belongs to the extension's own repository, which always
+      // has its own checkout.
+      if (isSkippedPath(relative(process.cwd(), full).split(/[\\/]/).join('/'))) continue;
+      walk(full, out);
+    } else if (/\.(ts|tsx|js|jsx|css)$/.test(entry.name)) {
       const content = readScannedIfPresent(full);
       // Deleted between the directory read and this one: not in the tree, so it
       // has no class names for this guard to have an opinion about.
