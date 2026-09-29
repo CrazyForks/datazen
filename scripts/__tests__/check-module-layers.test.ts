@@ -4,7 +4,10 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 import { checkModuleLayers, LAYER_RULES } from '../check-module-layers.mjs';
-import { checkDriverImportBoundaries } from '../check-driver-import-boundaries.mjs';
+import {
+  checkDriverImportBoundaries,
+  createGitIgnorePredicate,
+} from '../check-driver-import-boundaries.mjs';
 import { SKIP_DIR_NAMES } from '../lib/scanTargets.mjs';
 import {
   PROBE_PATHS,
@@ -18,6 +21,33 @@ function run() {
   const logs: string[] = [];
   const code = checkModuleLayers({ log: (msg: unknown) => logs.push(String(msg)) });
   return { code, logs, output: logs.join('\n') };
+}
+
+/**
+ * A tracking predicate that un-hides exactly one probe path and defers to the
+ * real git state for everything else.
+ *
+ * `checkDriverImportBoundaries` downgrades a finding to advisory when the file
+ * it sits in is gitignored (BUG-008: untracked external trees — git-driver
+ * clones, a staged Pro EP — must never block the host gate). The probe files
+ * these tests write are themselves gitignored, so without an override the
+ * guard would report the probe it just planted as "external", and the
+ * comparison being tested would be vacuous.
+ *
+ * The override used to be `() => false`, i.e. "nothing is untracked". That is
+ * broader than the intent: it also re-armed the BUG-008 downgrade for the whole
+ * tree, so the moment a Pro checkout was present beside the worktree its
+ * `setLocale()` advisories became blocking and this test failed — a failure
+ * caused entirely by a tree this test is not about, asserting a global
+ * property it had never meant to assert. Forcing exactly one path visible
+ * keeps the comparison local to the probe and leaves real tracking state in
+ * charge of everything else.
+ */
+function onlyProbeVisible(probeRel: string): (rel: string) => boolean {
+  const realIsIgnored = createGitIgnorePredicate(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../..'),
+  );
+  return (rel: string) => rel !== probeRel && realIsIgnored(rel);
 }
 
 /** The design-system rule, asserted to exist so a rename cannot silently drop it. */
@@ -253,7 +283,7 @@ describe('checkModuleLayers watches the same file set as the driver boundary gua
         error: (msg: unknown) => theirs.push(String(msg)),
         // Probe names are gitignored on purpose, so the gitignore downgrade
         // would hide a real finding from the guard being compared with.
-        isIgnored: () => false,
+        isIgnored: onlyProbeVisible(rel),
       });
       const theirOutput = theirs.join('\n');
 
@@ -274,7 +304,7 @@ describe('checkModuleLayers watches the same file set as the driver boundary gua
         error: (msg: unknown) => theirs.push(String(msg)),
         // Probe names are gitignored on purpose, so the gitignore downgrade
         // would hide a real finding from the guard being compared with.
-        isIgnored: () => false,
+        isIgnored: onlyProbeVisible(rel),
       });
       expect(mine.code).toBe(0);
       expect(theirCode).toBe(0);
