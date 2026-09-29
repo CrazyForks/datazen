@@ -437,6 +437,17 @@ pub(super) fn schema_catalog_database<'a>(
     }
 }
 
+pub(super) fn schema_catalog_scope(
+    database_type: &str,
+    configured_database: Option<&str>,
+) -> Option<String> {
+    if normalize_dialect(database_type) == "sqlite" {
+        Some("main".into())
+    } else {
+        configured_database.map(str::to_owned)
+    }
+}
+
 async fn fetch_target_table_schema(
     driver: &dyn datazen_driver_api::DatabaseDriver,
     handle: &datazen_driver_api::ConnectionHandle,
@@ -1025,7 +1036,10 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             target_dependency_catalog.as_deref(),
             &src_d,
             &tgt_d,
-            tgt_config.database.as_deref(),
+            Some(schema_catalog_database(
+                &tgt_config.database_type,
+                tgt_config.database.as_deref(),
+            )),
             target_dependency_schema_scope,
             PlanOptions {
                 allow_destructive,
@@ -1041,7 +1055,10 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             target_dependency_catalog.as_deref(),
             &src_d,
             &tgt_d,
-            tgt_config.database.as_deref(),
+            Some(schema_catalog_database(
+                &tgt_config.database_type,
+                tgt_config.database.as_deref(),
+            )),
             target_dependency_schema_scope,
             PlanOptions {
                 allow_destructive,
@@ -1080,7 +1097,7 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             &tgt_handle,
             &tgt_config,
             frozen_target_snapshots,
-            tgt_config.database.clone(),
+            schema_catalog_scope(&tgt_config.database_type, tgt_config.database.as_deref()),
             target_schema_scope.map(str::to_owned),
             target_dependency_schema_scope.map(str::to_owned),
         )
@@ -1092,7 +1109,7 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             &tgt_handle,
             &tgt_config,
             frozen_target_snapshots,
-            tgt_config.database.clone(),
+            schema_catalog_scope(&tgt_config.database_type, tgt_config.database.as_deref()),
             target_schema_scope.map(str::to_owned),
         )
         .await;
@@ -1240,7 +1257,7 @@ pub async fn prepare_schema_view_plan(
         &tgt_config,
         Vec::new(),
         target_snapshots,
-        tgt_config.database.clone(),
+        schema_catalog_scope(&tgt_config.database_type, tgt_config.database.as_deref()),
         tgt_config.schema.clone(),
         target_mysql_view_scope_context,
     )
@@ -1361,7 +1378,7 @@ pub async fn prepare_schema_routine_trigger_plan(
         &tgt_config,
         Vec::new(),
         target_snapshots,
-        tgt_config.database.clone(),
+        schema_catalog_scope(&tgt_config.database_type, tgt_config.database.as_deref()),
         tgt_config.schema.clone(),
     )
     .await;
@@ -1477,7 +1494,7 @@ pub async fn prepare_schema_sequence_plan(
         &tgt_config,
         Vec::new(),
         target_snapshots,
-        tgt_config.database.clone(),
+        schema_catalog_scope(&tgt_config.database_type, tgt_config.database.as_deref()),
         tgt_config.schema.clone(),
     )
     .await;
@@ -1593,7 +1610,7 @@ pub async fn prepare_schema_type_plan(
         &tgt_config,
         Vec::new(),
         target_snapshots,
-        tgt_config.database.clone(),
+        schema_catalog_scope(&tgt_config.database_type, tgt_config.database.as_deref()),
         tgt_config.schema.clone(),
     )
     .await;
@@ -2923,5 +2940,13 @@ mod tests {
         );
         assert_eq!(schema_catalog_database("postgresql", Some("app")), "app");
         assert_eq!(schema_catalog_database("mysql", None), "");
+        assert_eq!(
+            schema_catalog_scope("sqlite", Some("/tmp/target.sqlite")),
+            Some("main".into())
+        );
+        assert_eq!(
+            schema_catalog_scope("postgresql", Some("app")),
+            Some("app".into())
+        );
     }
 }

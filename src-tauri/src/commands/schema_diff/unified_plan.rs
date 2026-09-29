@@ -338,7 +338,10 @@ pub async fn prepare_schema_unified_plan(
         {
             target_dependency_schema_scope
         } else {
-            target_config.database.as_deref()
+            Some(super::schema_catalog_database(
+                &target_config.database_type,
+                target_config.database.as_deref(),
+            ))
         };
         if snapshot.kind == ObjectKind::View && snapshot.schema.as_deref() != target_object_scope {
             // Cross-scope view dependencies must retain their source identities
@@ -541,7 +544,10 @@ pub async fn prepare_schema_unified_plan(
         target_table_identity_catalog,
         has_complete_target_dependency_catalog,
         target_catalog_complete,
-        target_config.database.clone(),
+        super::schema_catalog_scope(
+            &target_config.database_type,
+            target_config.database.as_deref(),
+        ),
         target_schema_scope.map(str::to_owned),
         target_dependency_schema_scope.map(str::to_owned),
         ReviewedSourceSnapshot {
