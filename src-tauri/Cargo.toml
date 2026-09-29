@@ -75,9 +75,20 @@ sha2 = "0.10"
 
 tempfile = { version = "3.27.0", optional = true }
 
+# macOS 静默 E2E：让 webdriver 构建在 `DATAZEN_E2E_QUIET` 下拒绝进程激活，
+# 避免本地跑测试时抢走开发者焦点（见 `src/e2e_quiet.rs`）。两个 crate 都由
+# `webdriver` feature 引入，正式构建既不编译也不链接它们。
+#
+# 必须放在 `<<driver-dependencies>>` 标记**之后**：`resolve-drivers.mjs` 只替换两个
+# 标签之间的内容，若在本表头之前插入 `[dependencies]` 的后半段（含标记）会被一并
+# 划进这张表，导致注入的驱动依赖变成 macOS 专属、Linux/Windows 构建失败。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6.4", optional = true }
+objc2-app-kit = { version = "0.3.2", optional = true }
+
 [features]
 default = []
-webdriver = ["tauri-plugin-webdriver"]
+webdriver = ["tauri-plugin-webdriver", "dep:objc2", "dep:objc2-app-kit"]
 # Enables `datazen::test_harness` for src-tauri/tests/ IPC migration integration tests.
 test-harness = ["dep:tempfile"]
 # Driver features — injected by resolve-drivers.mjs at build time; do NOT add manually.
