@@ -87,7 +87,7 @@ interface Gateway {
 function gateway(plan: SourcePlan = {}): Gateway {
   const calls: Gateway['calls'] = [];
   const invoke = vi.fn(
-    async (pluginId: string, command: string, args?: Record<string, unknown>) => {
+    async (_pluginId: string, command: string, args?: Record<string, unknown>) => {
       calls.push({ command, args });
       const key = KEY_BY_COMMAND[command];
       if (!key) throw new Error(`unexpected command ${command}`);

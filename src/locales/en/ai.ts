@@ -52,6 +52,8 @@ const pack = {
   'nl2sql.clear': 'Clear',
   'nl2sql.selectDatabaseFirst': 'Please select a database from the sidebar first',
   'nl2sql.applyAndChart': 'Apply & Chart',
+  'nl2sql.preview': 'SQL preview',
+  'nl2sql.result': 'Generated SQL',
   'explain.title': 'EXPLAIN Analysis',
   'explain.rawOutput': 'Execution Plan',
   'explain.planTree': 'Plan Tree',

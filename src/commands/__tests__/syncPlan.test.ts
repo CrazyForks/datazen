@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SyncProfile } from '../sync';
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
@@ -33,7 +34,7 @@ describe('Data Sync immutable plan IPC', () => {
       options: { insert: true, update: true, delete: false },
       createdAt: '2026-09-21T00:00:00.000Z',
       updatedAt: '2026-09-21T00:00:00.000Z',
-    } as const;
+    } satisfies SyncProfile;
     await syncCommands.getSyncProfiles();
     await syncCommands.saveSyncProfile(profile);
     await syncCommands.deleteSyncProfile(profile.id);

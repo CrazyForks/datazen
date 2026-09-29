@@ -14,12 +14,12 @@ import { useTableDataStore } from '../../stores/tableDataStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { usePanelStore, type ViewPanel } from '../../stores/panelStore';
-import { useQueryBuilderStore } from '../../stores/queryBuilderStore';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
 import { ContentToolbar } from './ContentToolbar';
 import { PanelTabBar } from './PanelTabBar';
 import { ContentStatusBar } from './ContentStatusBar';
 import { PanelContentRenderer } from './PanelContentRenderer';
+import { useQueryBuilderContribution } from './query/useQueryBuilderContribution';
 import { usePanelHandlers } from './usePanelHandlers';
 import { useConnectionContextMenu } from './useConnectionContextMenu';
 import { useConnectionWorkspaceMeta } from './useConnectionWorkspaceMeta';
@@ -62,7 +62,11 @@ export interface ContentViewProps {
    * `onSelectDatabase`, with the connection supplied here because only this
    * layer knows which one the active panel belongs to.
    */
-  onSelectKvDb?: (connectionId: string, dbName: string) => void;
+  onSelectKvDb?: (
+    connectionId: string,
+    dbName: string,
+    pendingAction?: import('../../stores/panelStore').RedisPendingAction,
+  ) => void;
 }
 
 export function ContentView({
@@ -73,6 +77,7 @@ export function ContentView({
   onSelectKvDb,
 }: ContentViewProps) {
   const { t } = useI18n();
+  const { contribution: queryBuilder } = useQueryBuilderContribution();
   const safeMode = useSettingsStore((s) => s.settings.safeMode);
 
   const allPanels = usePanelStore((s) => s.panels);
@@ -192,15 +197,14 @@ export function ContentView({
   // The visual builder belongs to the query panel that opened it, so it is torn
   // down when that panel is closed — not when the component unmounts, because
   // switching tabs unmounts the inactive panel and its canvas must survive that.
-  const destroyQbForPanel = useQueryBuilderStore((s) => s.destroyFor);
   const knownPanelIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const liveIds = new Set(allPanels.map((p) => p.id));
     for (const id of knownPanelIdsRef.current) {
-      if (!liveIds.has(id)) destroyQbForPanel(id);
+      if (!liveIds.has(id)) queryBuilder?.destroyFor(id);
     }
     knownPanelIdsRef.current = liveIds;
-  }, [allPanels, destroyQbForPanel]);
+  }, [allPanels, queryBuilder]);
 
   // Table-data slices live and die with their panel; prune the ones left behind
   // when a tab (or a whole connection) closes.
@@ -249,11 +253,18 @@ export function ContentView({
   const selectKvDatabase = useMemo(
     () =>
       onSelectKvDb
-        ? (database: string) => {
-            onSelectKvDb(connectionId, database);
+        ? (
+            database: string,
+            pendingAction?: import('../../stores/panelStore').RedisPendingAction,
+          ) => {
+            // sidebarConnCtx carries the active connection identity derived from the
+            // running db session (even when no panel is open — the overview home).
+            // `connectionId` falls back to '' when activePanel is null, which would
+            // cause handleSelectKvDb to bail out silently.  Use sidebarConnCtx first.
+            onSelectKvDb(sidebarConnCtx?.connectionId ?? connectionId, database, pendingAction);
           }
         : undefined,
-    [onSelectKvDb, connectionId],
+    [onSelectKvDb, connectionId, sidebarConnCtx?.connectionId],
   );
   const kvActions = useKvSlotActions({
     onRefresh: handlers.handleRefresh,
@@ -382,6 +393,7 @@ export function ContentView({
         openCreateSchema: () => setCreateSchemaOpen(true),
         openCreateUser: () => setCreateUserOpen(true),
         openErDiagram: handlers.handleOpenErDiagram,
+        openTableStructure: handlers.handleOpenStructure,
         refresh: handlers.handleRefresh,
         openObject: handlers.handleOpenDbObject,
         openTableAction: handlers.handleOpenTableAction,
@@ -462,7 +474,23 @@ export function ContentView({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      {activePanel && (
+      {/*
+        The 48px toolbar band is skipped entirely for KV panels.
+
+        Every SQL affordance it carries is already false there (a key-value
+        driver supports no query/table/ER/objects), and the one slot that used
+        to fill it — the driver's `contextBar` — was removed rather than
+        re-styled: the db selector and key/memory counters restated facts the
+        key browser and status bar already show, and its action buttons belong
+        to the panel, not to a host row shared with every other driver. The
+        panel's own controls live in its tab bar, so a KV panel now starts at
+        the panel tab bar with no empty band above it.
+
+        Side effect, deliberate: the band's AI-chat button and detail-panel
+        toggle (the latter opens a KV driver's key-props sidebar) lose their
+        entry point along with the band. Both features are untouched in code.
+      */}
+      {activePanel && !isKvPanel && (
         <ContentToolbar
           showNewQuery={showNewQuery}
           showNewTable={showNewTable}

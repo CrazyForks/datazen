@@ -3,7 +3,9 @@ import { render, waitFor } from '@testing-library/react';
 
 const getErData = vi.fn(async () => []);
 vi.mock('../../../commands/database', () => ({
-  databaseCommands: { getErData: (...args: unknown[]) => getErData(...args) },
+  databaseCommands: {
+    getErData: (...args: Parameters<typeof getErData>) => getErData(...args),
+  },
 }));
 
 // React Flow needs a measurable container; the diagram's data fetch is what

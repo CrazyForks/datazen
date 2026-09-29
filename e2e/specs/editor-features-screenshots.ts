@@ -9,6 +9,7 @@
  * - docs/release-notes/screenshots/
  */
 import { browser, $ } from '@wdio/globals';
+import { assertGallerySize, ensureMaximized } from '../lib/capture-window';
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
@@ -55,7 +56,12 @@ async function shot(name: string, settleMs = 800) {
   console.log(`[shot] ${name} (${size} bytes) -> saved to site & docs`);
 }
 
-async function setWindowSize(w = 2200, h = 1400) {
+/**
+ * Pins a *child* window only. The main window is left maximized by the capture
+ * run so its screenshot comes out at the display's natural 2x size; only windows
+ * the app sized for itself need pinning, to the same 1440x824 logical box.
+ */
+async function setWindowSize(w = 1440, h = 824) {
   await invoke('plugin:window|set_size', { size: { width: w, height: h } });
   await browser.pause(600);
 }
@@ -282,6 +288,8 @@ async function expandDemoDbTables() {
 
 describe('SQL Editor Latest Features Screenshots', () => {
   before(async () => {
+    await ensureMaximized();
+    await assertGallerySize('editor-features before');
     fs.mkdirSync(OUT_SITE, { recursive: true });
     fs.mkdirSync(OUT_DOCS, { recursive: true });
 
@@ -320,7 +328,6 @@ describe('SQL Editor Latest Features Screenshots', () => {
 
     await browser.url('tauri://localhost');
     await browser.pause(1500);
-    await setWindowSize(2200, 1400);
     await browser.pause(1000);
   });
 

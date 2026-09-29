@@ -365,7 +365,12 @@ describe('Workflow Tab System (WORKFLOW-WINDOW)', () => {
 
     // Click the first history item
     const historyItems = await $$('button*=E2E Tab Test WF');
-    if (historyItems.length > 0) {
+    // The installed wdio types type `.length` on this construct as
+    // Promise<number> (TS2365 on `>`, TS2801 on truthiness); the runtime
+    // value is a plain number — normalize through Promise.resolve so both
+    // the type checker and runtime agree.
+    const historyCount = await Promise.resolve(historyItems.length);
+    if (historyCount > 0) {
       await historyItems[0].click();
       await browser.pause(1000);
 
@@ -381,7 +386,8 @@ describe('Workflow Tab System (WORKFLOW-WINDOW)', () => {
       await findAndClickButton(['执行记录', 'History']);
       await browser.pause(500);
       const historyItems2 = await $$('button*=E2E Tab Test WF');
-      if (historyItems2.length > 0) {
+      const historyCount2 = await Promise.resolve(historyItems2.length);
+      if (historyCount2 > 0) {
         await historyItems2[0].click();
         await browser.pause(1000);
       }
@@ -411,17 +417,32 @@ describe('Workflow Tab System (WORKFLOW-WINDOW)', () => {
       body.includes('val') || body.includes('alpha') || body.includes('step_a');
     expect(hasStepContent).toBe(true);
 
-    // The step_a tab should have the active/selected styling
-    const isStepAActive = await browser.execute(() => {
-      const buttons = document.querySelectorAll('button');
-      for (const btn of buttons) {
-        if (btn.textContent?.includes('step_a') && btn.className.includes('accent')) {
-          return true;
-        }
-      }
-      return false;
+    // The step tab bar follows workflowStepResultOrder (app default 'desc' —
+    // last step first; see settingsStore default + WorkflowPage.firstShownIndex,
+    // blessed by WorkflowPage.test.tsx "shows step results last-step-first by
+    // default"). Assert order-agnostically that the FIRST DISPLAYED step tab
+    // carries the active styling: step_a is legitimately inactive/second.
+    const bothTabsReady = await browser.waitUntil(
+      async () =>
+        await browser.execute(() => {
+          const tabs = Array.from(document.querySelectorAll('button')).filter((b) => {
+            const text = b.textContent || '';
+            return text.includes('[') && /step_[ab]/.test(text);
+          });
+          return tabs.length >= 2;
+        }),
+      { timeout: 10000, timeoutMsg: 'step tab bar did not render both step tabs' },
+    );
+    expect(bothTabsReady).toBe(true);
+
+    const isFirstShownStepActive = await browser.execute(() => {
+      const tabs = Array.from(document.querySelectorAll('button')).filter((b) => {
+        const text = b.textContent || '';
+        return text.includes('[') && /step_[ab]/.test(text);
+      });
+      return tabs.length > 0 && tabs[0].className.includes('accent');
     });
-    expect(isStepAActive).toBe(true);
+    expect(isFirstShownStepActive).toBe(true);
   });
 
   it('参数输入框应在步骤标签栏上方', async function () {

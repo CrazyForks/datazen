@@ -19,12 +19,22 @@ import { describe, expect, it } from 'vitest';
 import type { KeyEntry } from '@datazen/driver-sdk';
 import type { KeyTreeRow } from '../key-browser/keyTree';
 import {
+  compileGlob,
   countSelectableRows,
   filterKeysByPattern,
   filterTreeRowsByPattern,
+  globMatcher,
   isBreadcrumbRow,
-  redisGlobMatch,
 } from '../key-browser/keyTreeFilter';
+
+/**
+ * Single-call convenience over the two exported primitives, rebuilt here: the
+ * suite is about *Redis MATCH semantics*, so it names its own matcher instead
+ * of leaning on a production shortcut that nothing on the UI path calls.
+ */
+function redisGlobMatch(name: string, pattern: string): boolean {
+  return globMatcher(compileGlob(pattern))(name);
+}
 
 /* ── independent reference: literal transliteration of Redis 7.2 util.c ───── */
 

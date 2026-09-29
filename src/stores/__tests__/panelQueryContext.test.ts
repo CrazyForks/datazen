@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { panelTargetDatabase, panelTargetSchema } from '../panelQueryContext';
 import type { QueryPanel } from '../panelTypes';
+import type { DatabaseType } from '../../types';
 
 const schemaStoreState = vi.hoisted(() => ({
   schemas: new Map<
@@ -29,6 +30,10 @@ const basePanel: QueryPanel = {
   dbSessionId: 'sess-1',
   connectionName: 'Test',
   databaseType: 'postgresql',
+  // Empty / null = "panel pins no target", so the schema store decides — which
+  // is exactly what the cases below exercise.
+  database: '',
+  schema: null,
 };
 
 describe('[tester] panelQueryContext', () => {
@@ -83,12 +88,14 @@ describe('[tester] panelQueryContext', () => {
 
     const panel: QueryPanel = {
       ...basePanel,
-      databaseType: 'superset',
+      // `superset` only exists in the `DatabaseType` union when that driver is
+      // resolved into the build; the case is gated on DB_REGISTRY above.
+      databaseType: 'superset' as unknown as DatabaseType,
       namespacePath: ['hive', 'snap'],
     };
     expect(panelTargetDatabase(panel)).toBe('558:presto_afi_data/hive/snap');
-    expect(
-      panelTargetDatabase(panel, 'SELECT * FROM hive.snap.orders'),
-    ).toBe('558:presto_afi_data/hive/snap');
+    expect(panelTargetDatabase(panel, 'SELECT * FROM hive.snap.orders')).toBe(
+      '558:presto_afi_data/hive/snap',
+    );
   });
 });

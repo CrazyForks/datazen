@@ -33,8 +33,7 @@ import type { ReactNode } from 'react';
 import { Fragment } from 'react';
 import type { KvStatusBarProps } from '@datazen/driver-sdk';
 import { Badge, useI18n } from '@datazen/ui';
-import { formatSize } from '../shared/formatSize';
-import { formatCompactCount } from './contextBarModel';
+import { formatCompactCount, formatSize } from '../shared/formatSize';
 import { useDbKeyCount } from './dbKeyCounts';
 import { attributeViewState, describeTtl, formatDurationMs } from './keyObjectInfo';
 import {

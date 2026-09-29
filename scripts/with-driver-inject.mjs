@@ -12,7 +12,7 @@
  * before this wrapper takes ownership (avoids leaving Cargo.toml injected).
  *
  * Usage:
- *   node scripts/with-driver-inject.mjs [--drivers=...] -- <cmd> [args...]
+ *   node scripts/with-driver-inject.mjs [--drivers=...] [--variant=...] -- <cmd> [args...]
  *   node scripts/with-driver-inject.mjs -- tauri build
  */
 
@@ -83,7 +83,11 @@ export function runWithDriverInject(options = {}) {
     return { status: 1, ownStash: false, nested: false, orphanStash: false };
   }
 
-  const driversArgs = ahead.filter((a) => a.startsWith('--drivers'));
+  // `--variant=<sku>` (scripts/release-variants.mjs) must reach resolve-drivers:
+  // it is baked into the frontend codegen and republished via
+  // .driver-features.json for ci-tauri-build to pick the right updater endpoint.
+  // `DATAZEN_VARIANT` needs no special casing — baseEnv already reaches both.
+  const driversArgs = ahead.filter((a) => a.startsWith('--drivers') || a.startsWith('--variant'));
   const resolveArgs = driversArgs.join(' ');
 
   const proFlag =

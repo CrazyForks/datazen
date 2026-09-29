@@ -33,35 +33,3 @@ export function parseInfoSections(raw: string): InfoSection[] {
 
   return sections;
 }
-
-export interface FilteredInfoResult {
-  sections: InfoSection[];
-  totalEntries: number;
-  matchedEntries: number;
-}
-
-/** Filter parsed INFO sections by optional section name and keyword search. */
-export function filterInfoSections(sections: InfoSection[], search?: string): FilteredInfoResult {
-  const q = search?.toLowerCase().trim();
-  let totalEntries = 0;
-  let matchedEntries = 0;
-  const filtered: InfoSection[] = [];
-
-  for (const section of sections) {
-    totalEntries += section.entries.length;
-    const matched = section.entries.filter((e) => {
-      if (!q) {
-        matchedEntries++;
-        return true;
-      }
-      const hit = e.key.toLowerCase().includes(q) || e.value.toLowerCase().includes(q);
-      if (hit) matchedEntries++;
-      return hit;
-    });
-    if (matched.length > 0) {
-      filtered.push({ name: section.name, entries: matched });
-    }
-  }
-
-  return { sections: filtered, totalEntries, matchedEntries };
-}

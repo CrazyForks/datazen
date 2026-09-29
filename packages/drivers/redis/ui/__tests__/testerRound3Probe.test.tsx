@@ -76,16 +76,22 @@ class MockResizeObserver {
 }
 globalThis.ResizeObserver ??= MockResizeObserver as unknown as typeof ResizeObserver;
 
-const commands = vi.fn(async (_pluginId: string, command: string): Promise<unknown> => {
-  switch (command) {
-    case 'delete_keys':
-      return 1;
-    case 'batch_set_ttl':
-      return { updated: 1, errors: [] };
-    default:
-      return undefined;
-  }
-});
+const commands = vi.fn(
+  async (
+    _pluginId: string,
+    command: string,
+    _args: Record<string, unknown> = {},
+  ): Promise<unknown> => {
+    switch (command) {
+      case 'delete_keys':
+        return 1;
+      case 'batch_set_ttl':
+        return { updated: 1, errors: [] };
+      default:
+        return undefined;
+    }
+  },
+);
 
 const getKey = vi.fn();
 const getKeyRaw = vi.fn();
@@ -131,9 +137,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 

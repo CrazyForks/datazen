@@ -4,6 +4,7 @@ import {
   connectSeededPgInWorkspace,
   closeExtraWindows,
   executeSQL,
+  executeSQLChecked,
   openQueryTab,
   clickTableInSidebar,
   switchSubTab,
@@ -55,15 +56,18 @@ describe('表数据编辑 (DE-002~DE-005)', () => {
     await browser.pause(1500);
 
     await openQueryTab();
-    await executeSQL(`DROP TABLE IF EXISTS ${TEST_TABLE}`);
-    await executeSQL(
+    // Checked DDL: a swallowed backend error (stale session bound to a
+    // replaced worker DB) used to surface only as a 20s
+    // `waitForTableInSidebar` timeout with no hint of the real cause.
+    await executeSQLChecked(`DROP TABLE IF EXISTS ${TEST_TABLE}`);
+    await executeSQLChecked(
       `CREATE TABLE ${TEST_TABLE} (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
         score INT NOT NULL DEFAULT 0
       )`,
     );
-    await executeSQL(
+    await executeSQLChecked(
       `INSERT INTO ${TEST_TABLE} (name, score) VALUES
         ('Alice', 100),
         ('Bob', 200),
@@ -174,7 +178,8 @@ describe('表数据编辑 (DE-002~DE-005)', () => {
     expect((await preview.getText()).toUpperCase()).toContain('UPDATE');
     expect(await preview.getText()).toContain('AliceStaged');
     const previewButtons = await preview.$$('button');
-    await previewButtons[previewButtons.length - 1].click();
+    const previewButtonCount = await previewButtons.length;
+    await previewButtons[previewButtonCount - 1].click();
     await preview.waitForDisplayed({ reverse: true, timeout: 5000 });
 
     await $('[data-testid="pending-rollback"]').click();

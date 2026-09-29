@@ -166,10 +166,17 @@ pnpm tauri:build:community             # 构建 Community 社区版
 pnpm tauri:build:pro                   # 构建 Pro 增强版
 npx vitest run                         # Host 前端单元测试（不含 packages/drivers）
 pnpm test:unit:drivers                 # Path 驱动 UI 单测（packages/drivers/*/ui）
+pnpm typecheck                         # tsc --noEmit，覆盖 src + packages，**含测试文件**
 cargo test -p datazen --lib            # Host Rust 单元测试
 cargo test -p datazen-ai-api --lib     # AI API 单元测试
 cargo test -p datazen-driver-postgres  # 示例：某个驱动 crate 的 Rust 测试
 ```
+
+> **测试文件参与类型检查**：`tsconfig.json` 不再排除 `__tests__/` 与 `*.test.ts(x)`，
+> 新增或修改测试后必须保证 `pnpm typecheck` 干净。历史上测试被排除在外，导致 mock
+> 与真实类型长期漂移而不被发现（例如 `TableInfo.rowCount` 实收 `null` 却声明为 `?: number`）。
+> 若某个 mock 确实只实现子集，请用精确断言（`as unknown as X`、`satisfies`、`Pick<>`）显式说明，
+> 禁止用 `any` 绕过；也不要为了让类型通过而删测试或删断言。
 
 多功能需求由主代理协调编码/测试子代理并行开发：三角色模型、bug 流转状态机、worktree 轨道编排与子代理恢复协议见 [docs/development/subagent/](docs/development/subagent/README.md)。
 

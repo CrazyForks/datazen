@@ -221,14 +221,6 @@ export function globMatcher(compiled: ByteSeq | null): GlobMatcher {
 }
 
 /**
- * Does `name` match the Redis MATCH glob `pattern`? Single-call convenience over
- * {@link globMatcher}; prefer compiling once when matching a list.
- */
-export function redisGlobMatch(name: string, pattern: string): boolean {
-  return globMatcher(compileGlob(pattern))(name);
-}
-
-/**
  * The identity a pattern is matched against, chosen by `row.kind` — the single
  * place allowed to reach for `path` vs `entry.key`. Forking on whether some field
  * is *present* instead would mis-handle a child-level leaf row, whose `entry.key`

@@ -75,7 +75,9 @@ export interface ExtensionVerificationFailure {
     | 'unsigned-rejected';
 }
 
-export type ExtensionVerificationResult = ExtensionVerificationSuccess | ExtensionVerificationFailure;
+export type ExtensionVerificationResult =
+  | ExtensionVerificationSuccess
+  | ExtensionVerificationFailure;
 
 export interface VerifyExtensionOptions extends ExtensionSecurityConfig {
   manifest: ExtensionManifest;
@@ -141,7 +143,9 @@ export function checkEngineCompatibility(
   return { compatible: true };
 }
 
-async function computeActualDigests(files: ExtensionPackageFiles): Promise<Record<string, { sha256: string }>> {
+async function computeActualDigests(
+  files: ExtensionPackageFiles,
+): Promise<Record<string, { sha256: string }>> {
   return {
     'manifest.json': { sha256: await sha256Hex(files.manifestContent) },
     'dist/index.esm.js': { sha256: await sha256Hex(files.bundleContent) },
@@ -239,7 +243,7 @@ export async function verifyExtensionPackage(
   }
 
   const engineCheck = checkEngineCompatibility(options.manifest, hostVersion);
-  if (!engineCheck.compatible) {
+  if (engineCheck.compatible === false) {
     return {
       ok: false,
       code: 'engine-incompatible',

@@ -3,8 +3,8 @@ import { useCallback, useState } from 'react';
 /**
  * Checkbox selection set of the key tree (屏 B left column).
  *
- * Owns only *which* keys are checked; what a batch action does with them stays
- * with `BatchBar`/the dialogs. Carved out of `RedisWorkbench.tsx` (D-0) because
+ * Owns only *which* keys are checked; what an action does with them stays with
+ * the dialogs that own it. Carved out of `RedisWorkbench.tsx` (D-0) because
  * R1's header action group (select-all / clear) and I-9's `⌘A`/`Esc` both need
  * the same mutators.
  *

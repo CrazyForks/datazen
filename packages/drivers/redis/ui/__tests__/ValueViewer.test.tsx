@@ -22,7 +22,7 @@ vi.mock('../shared/redisInvoke', () => ({
 }));
 
 import { ValueViewer } from '../value-editors/ValueViewer';
-import { bytesToBase64 } from '../value-editors/valueView/codecs';
+import { bytesToBase64 } from '../__testing__/bytes';
 
 const HOSTILE_B64 = bytesToBase64(new Uint8Array([0x00, 0x01, 0xff, 0x41]));
 const frame = {
@@ -97,7 +97,7 @@ describe('ValueViewer', () => {
  * 轨验收面的新可达性形状，故在此钉住。
  */
 describe('[tester] ValueViewer read-only preview actions (E-3 reachability)', () => {
-  const writeText = vi.fn(async () => undefined);
+  const writeText = vi.fn(async (_payload: string) => undefined);
 
   beforeEach(() => {
     Object.defineProperty(navigator, 'clipboard', {

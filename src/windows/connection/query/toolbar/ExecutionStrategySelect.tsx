@@ -9,7 +9,8 @@ import type { SqlExecutionStrategy } from '../../../../types';
 import type { I18nKey } from '../../../../locales';
 
 export interface ExecutionStrategySelectProps {
-  compact?: boolean;
+  /** Icon-only trigger; the active strategy stays in the tooltip / aria-label. */
+  iconOnly?: boolean;
   disabled?: boolean;
 }
 
@@ -23,7 +24,7 @@ const STRATEGIES: Array<{
   { id: 'ask', labelKey: 'query.executionStrategy.ask' as I18nKey },
 ];
 
-export function ExecutionStrategySelect({ compact, disabled }: ExecutionStrategySelectProps) {
+export function ExecutionStrategySelect({ iconOnly, disabled }: ExecutionStrategySelectProps) {
   const { t } = useI18n();
   const currentStrategy =
     useSettingsStore((s) => s.settings.sqlExecutionStrategy) ?? 'current_statement';
@@ -54,7 +55,7 @@ export function ExecutionStrategySelect({ compact, disabled }: ExecutionStrategy
 
   return (
     <ToolbarButton
-      compact={compact}
+      iconOnly={iconOnly}
       variant="ghost"
       label={t(activeLabelKey)}
       title={`${t('query.executionStrategy.title')}: ${t(activeLabelKey)}`}

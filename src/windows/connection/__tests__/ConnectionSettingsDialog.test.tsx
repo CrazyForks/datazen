@@ -5,8 +5,8 @@ import type { AppSettings } from '../../../types';
 
 const updateSettingsMock = vi.fn().mockResolvedValue(undefined);
 
-const baseSettings = {
-  theme: { mode: 'dark' as const, packId: null },
+const baseSettings: AppSettings = {
+  theme: { mode: 'dark', packId: null },
   language: 'zh-CN',
   limitSelectResults: true,
   queryResultLimit: 5000,
@@ -15,24 +15,32 @@ const baseSettings = {
   confirmOnDelete: true,
   autoCommit: true,
   safeMode: true,
+  confirmDangerousExecution: true,
   defaultPageSize: 50,
   connectionPoolSize: 10,
   checkForUpdatesOnStartup: true,
-  logLevel: 'info' as const,
+  logLevel: 'info',
   logPath: '',
   mcpServerEnabled: false,
-  mcpDisabledTools: [] as string[],
-  mcpPermissionMode: 'read_only' as const,
+  mcpDisabledTools: [],
+  mcpPermissionMode: 'read_only',
+  mcpAllowedConnectionIds: [],
   contextDir: '',
   driverSettings: {},
+  wappSettings: {},
+  autoChartOnQuery: false,
+  aiStrictEgress: true,
+  // Connection settings never read `monitor`; the shape here is the real
+  // `MonitorSettings` contract, not the older pollInterval/alerts variant.
   monitor: {
-    enabled: false,
-    pollIntervalSecs: 60,
-    retentionDays: 7,
     trayEnabled: false,
-    alertsEnabled: false,
+    closeToTray: false,
+    maxConcurrentQueries: 2,
+    exportIncludeDashboardRuns: true,
+    runRetentionCount: 50,
+    runRetentionDays: 7,
   },
-} as AppSettings;
+};
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),

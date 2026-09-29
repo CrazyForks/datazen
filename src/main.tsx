@@ -34,7 +34,6 @@ import * as cmView from '@codemirror/view';
 import * as cmState from '@codemirror/state';
 import * as cmLint from '@codemirror/lint';
 import * as cmAutocomplete from '@codemirror/autocomplete';
-import { useQueryBuilderStore } from './stores/queryBuilderStore';
 import { useSchemaStore } from './stores/schemaStore';
 import { getCachedTableSchema } from './lib/schemaCache';
 
@@ -58,7 +57,6 @@ import { getCachedTableSchema } from './lib/schemaCache';
 // E2E test hooks: expose Zustand stores on globalThis for WebDriver tests.
 // Module-level window assignments in store files get tree-shaken by Vite,
 // so the stores must be registered here in the entry module.
-(globalThis as any).__qbStore = useQueryBuilderStore;
 (globalThis as any).__schemaStore = useSchemaStore;
 
 // Seed the shared @datazen/ui i18n engine from the persisted language and

@@ -331,7 +331,7 @@ describe('tableDataStore (panel-scoped)', () => {
   it('setSort triggers reload', async () => {
     await loadTable();
     mockDatabaseCommands.getTableData.mockClear();
-    const sort: SortCondition = { column: 'name', direction: 'asc' };
+    const sort: SortCondition = { column: 'name', descending: false };
     useTableDataStore.getState().setSort(PANEL, sort);
     await vi.waitFor(() => expect(mockDatabaseCommands.getTableData).toHaveBeenCalled());
     expect(loaded().sorts).toEqual([sort]);
@@ -500,6 +500,21 @@ describe('tableDataStore (panel-scoped)', () => {
     useTableDataStore.getState().selectRow(PANEL, 0);
     useTableDataStore.getState().selectRow(PANEL, 1, { range: true });
     expect(loaded().selectedRows).toEqual(new Set([0, 1]));
+  });
+
+  it('selectRow toggles the sole selected row off on a second plain click', async () => {
+    await loadTable();
+    useTableDataStore.getState().selectRow(PANEL, 0);
+    expect(loaded().selectedRows).toEqual(new Set([0]));
+
+    useTableDataStore.getState().selectRow(PANEL, 0);
+    expect(loaded().selectedRows).toEqual(new Set());
+    expect(loaded().lastSelectedIndex).toBeNull();
+
+    // A plain click on another row still replaces (rather than clears) it.
+    useTableDataStore.getState().selectRow(PANEL, 0);
+    useTableDataStore.getState().selectRow(PANEL, 1);
+    expect(loaded().selectedRows).toEqual(new Set([1]));
   });
 
   it('toggleSelectAll selects and deselects all rows', async () => {

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type { KvSlotName } from '@datazen/driver-sdk';
 import type { DatabaseType } from '../../../types';
-import type { ConnectionContext, Panel } from '../../../stores/panelStore';
+import type { ConnectionContext, Panel, RedisDbPanel } from '../../../stores/panelStore';
 import type { DatabaseTypeMeta } from '../../../lib/databaseMeta';
 import { resetKvSlotStatesForTests } from '../../../lib/kvSlotState';
 import { useKvWorkspaceSlots, resolveKvDatabaseIndex } from '../useKvWorkspaceSlots';
@@ -23,7 +23,7 @@ const StatusBarFixture = () => null;
 const KeyPropsFixture = () => null;
 const HomeFixture = () => null;
 
-function registerMeta(dbType: string, over: Partial<DatabaseTypeMeta>) {
+function registerMeta(dbType: string, over: Partial<DatabaseTypeMeta> = {}) {
   registry[dbType] = {
     label: dbType,
     shortLabel: 'FX',
@@ -69,7 +69,8 @@ const HOME_CONTEXT: ConnectionContext = {
   connectionId: 'cfg-1',
   dbSessionId: 'sess-1',
   connectionName: 'KV Local',
-  databaseType: 'kvhome',
+  // Fake driver id, like the `kvfull` cast in `args()`: the registry is mocked here.
+  databaseType: 'kvhome' as DatabaseType,
 };
 
 /** Module-level stand-in for the host dispatcher: one identity, like the real one. */
@@ -284,11 +285,11 @@ describe('useKvWorkspaceSlots', () => {
   it('[tester] swaps to a fresh atom when the active panel changes on one connection', () => {
     registerMeta('kvfull', { kvWorkspace: { contextBar: true, statusBar: true } });
     contributeAll('kvfull');
-    const panelDb5 = { ...PANEL, id: 'panel-kv-5', dbName: 'db5' } as unknown as Panel;
-    const panelDb7 = { ...PANEL, id: 'panel-kv-7', dbName: 'db7' } as unknown as Panel;
+    const panelDb5 = { ...PANEL, id: 'panel-kv-5', dbName: 'db5' } as unknown as RedisDbPanel;
+    const panelDb7 = { ...PANEL, id: 'panel-kv-7', dbName: 'db7' } as unknown as RedisDbPanel;
 
     const { result, rerender } = renderHook(
-      ({ panel }: { panel: Panel }) =>
+      ({ panel }: { panel: RedisDbPanel }) =>
         useKvWorkspaceSlots(args({ activePanel: panel, database: panel.dbName ?? null })),
       { initialProps: { panel: panelDb5 } },
     );
@@ -372,7 +373,10 @@ describe('useKvWorkspaceSlots', () => {
         args({
           activePanel: null,
           databaseType: 'kvhome-capable-only' as DatabaseType,
-          connectionContext: { ...HOME_CONTEXT, databaseType: 'kvhome-capable-only' },
+          connectionContext: {
+            ...HOME_CONTEXT,
+            databaseType: 'kvhome-capable-only' as DatabaseType,
+          },
         }),
       ),
     );

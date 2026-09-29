@@ -1,39 +1,10 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { filterCompletions, getCompletionPrefix, REDIS_COMMANDS } from '../console/redisCommands';
 import {
   loadConsoleHistory,
   navigateConsoleHistory,
   pushConsoleHistory,
   saveConsoleHistory,
 } from '../console/consoleHistory';
-
-describe('filterCompletions', () => {
-  it('prefers commands then keys', () => {
-    const out = filterCompletions('GE', ['GET', 'SET'], ['user:1', 'gear']);
-    expect(out).toEqual(['GET', 'gear']);
-  });
-
-  it('matches case-insensitively', () => {
-    const out = filterCompletions('get', REDIS_COMMANDS, ['GET-key']);
-    expect(out[0]).toBe('GET');
-  });
-
-  it('returns empty list for empty prefix', () => {
-    expect(filterCompletions('', REDIS_COMMANDS, ['a'])).toEqual([]);
-  });
-
-  it('dedupes command and key with same spelling', () => {
-    const out = filterCompletions('ping', ['PING'], ['ping']);
-    expect(out).toEqual(['PING']);
-  });
-});
-
-describe('getCompletionPrefix', () => {
-  it('reads the token before the cursor on the current line', () => {
-    expect(getCompletionPrefix('GET foo\nSE', 10)).toBe('SE');
-    expect(getCompletionPrefix('  GET k', 7)).toBe('k');
-  });
-});
 
 describe('consoleHistory', () => {
   beforeEach(() => {

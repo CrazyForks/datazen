@@ -11,7 +11,7 @@
  * 文案只断 i18n key，不读英文字面量、不做视口几何反查。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { create } from 'zustand';
 import {
   bindConfirmDialog,
@@ -64,9 +64,6 @@ globalThis.ResizeObserver ??= MockResizeObserver as unknown as typeof ResizeObse
 vi.mock('../console/RedisConsole', () => ({
   RedisConsole: () => <div data-testid="stub-console" />,
 }));
-vi.mock('../observe/MonitorPanel', () => ({
-  MonitorPanel: () => <div data-testid="stub-monitor" />,
-}));
 vi.mock('../observe/PubSubPanel', () => ({
   PubSubPanel: () => <div data-testid="stub-pubsub" />,
 }));
@@ -95,7 +92,10 @@ vi.mock('../value-editors/keyEditorsInvokes', async (importOriginal) => ({
 
 import type { KeyDetail } from '../shared/types';
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
+import { resetRightTab } from '../shared/rightTabState';
 import { RedisConnectionView } from '../connection/RedisConnectionView';
+import { panelCloseStub } from '../__testing__/panelClose';
+import { resetPanelBindings } from '../shared/panelLifecycle';
 import {
   __resetDraftGuard,
   isDraftDirty,
@@ -114,9 +114,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -138,6 +143,8 @@ function renderWorkbench() {
 function renderView() {
   return render(
     <RedisConnectionView
+      panelId="panel-i1"
+      onPanelClosed={panelClose.onPanelClosed}
       dbSessionId="sess-i1"
       connectionId="cfg-i1"
       connectionName="local"
@@ -163,7 +170,13 @@ async function selectAndDraft() {
   await waitFor(() => expect(editor().getAttribute('data-string-dirty')).toBe('true'));
 }
 
+// The view registers a close handler on mount; cases fire it explicitly.
+const panelClose = panelCloseStub();
+
 beforeEach(() => {
+  panelClose.clear();
+  // `panelLifecycle` binds per panelId at module scope, so it outlives cleanup().
+  resetPanelBindings();
   getKey.mockImplementation((...args: unknown[]) => {
     const key = args[2] as string;
     return Promise.resolve(stringDetail(key, key === 'user:1' ? 'hello' : 'other'));
@@ -188,6 +201,10 @@ beforeEach(() => {
   });
   dbSizes.mockResolvedValue([{ db: 0, keys: 2 }]);
   setString.mockResolvedValue(undefined);
+  // The active sub-tab is a module-level store so it survives the remount a
+  // top-level tab switch causes. Every case here shares `sess-i1`, so without
+  // this the tab chosen by one case leaks into the next.
+  resetRightTab('panel-i1');
 });
 
 afterEach(() => {
@@ -358,34 +375,37 @@ describe('I-1 拦截点逐一验证（workbench 级）', () => {
   });
 });
 
-describe('I-1 切页签（keep-alive 隐藏页签下对话框仍可见）', () => {
+describe('I-1 切页签（卸载-恢复模式：切换后旧 panel 卸载，新 panel 挂载）', () => {
   it('guards tab switches and honors both leave answers', async () => {
     renderView();
     await selectAndDraft();
 
     // 进入：脏 + 切页签 ⇒ 对话框，页签还没动。
-    fireEvent.click(screen.getByTestId('redis-tab-console'));
+    fireEvent.click(screen.getByTestId('redis-right-tab-console'));
     await screen.findByTestId('redis-draft-discard');
-    expect(screen.getByTestId('redis-tab-items').getAttribute('data-active')).toBe('true');
-    expect(screen.getByTestId('redis-tab-console').getAttribute('data-active')).toBe('false');
+    expect(screen.getByTestId('redis-right-tab-detail').getAttribute('data-active')).toBe('true');
+    expect(screen.getByTestId('redis-right-tab-console').getAttribute('data-active')).toBe('false');
 
     // 继续编辑 ⇒ 留在键详情页签，草稿仍在。
     fireEvent.click(screen.getByTestId('redis-draft-keep'));
     await waitFor(() => expect(leaveDialog()).toBeNull());
-    expect(screen.getByTestId('redis-tab-items').getAttribute('data-active')).toBe('true');
+    expect(screen.getByTestId('redis-right-tab-detail').getAttribute('data-active')).toBe('true');
     expect(editor().getAttribute('data-string-dirty')).toBe('true');
 
-    // 放弃更改 ⇒ 页签切换完成；keep-alive 下编辑面还挂着但已回滚干净。
-    fireEvent.click(screen.getByTestId('redis-tab-console'));
+    // 放弃更改 ⇒ 页签切换完成；detail panel 卸载，console panel 挂载。
+    fireEvent.click(screen.getByTestId('redis-right-tab-console'));
     await screen.findByTestId('redis-draft-discard');
     fireEvent.click(screen.getByTestId('redis-draft-discard'));
     await waitFor(() =>
-      expect(screen.getByTestId('redis-tab-console').getAttribute('data-active')).toBe('true'),
+      expect(screen.getByTestId('redis-right-tab-console').getAttribute('data-active')).toBe(
+        'true',
+      ),
     );
-    expect(screen.getByTestId('redis-tab-items').getAttribute('data-active')).toBe('false');
+    expect(screen.getByTestId('redis-right-tab-detail').getAttribute('data-active')).toBe('false');
     expect(screen.getByTestId('stub-console')).toBeTruthy();
-    expect(editor().getAttribute('data-string-dirty')).toBe('false');
-    expect(draftInput().value).toBe('hello');
+    // detail panel 已卸载，编辑器不在 DOM 中。
+    expect(screen.queryByTestId('redis-string-editor')).toBeNull();
+    expect(screen.queryByTestId('redis-string-dirty-bar')).toBeNull();
   });
 });
 

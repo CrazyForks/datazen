@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { TransferProfile } from '../transfer';
 
 const invokeMock = vi.fn();
 type CapturedTransferRun = {
@@ -100,7 +101,7 @@ describe('transferCommands.inspect', () => {
       options: { batchSize: 500, stopOnError: true, confirmedDestructive: false },
       createdAt: '2026-09-21T00:00:00.000Z',
       updatedAt: '2026-09-21T00:00:00.000Z',
-    } as const;
+    } satisfies TransferProfile;
     await transferCommands.getProfiles();
     await transferCommands.saveProfile(profile);
     await transferCommands.deleteProfile('profile-1');

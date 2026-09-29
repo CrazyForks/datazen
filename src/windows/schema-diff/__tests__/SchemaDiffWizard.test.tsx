@@ -4,6 +4,7 @@ import { SchemaDiffWindow } from '../SchemaDiffWindow';
 import { schemaDiffCommands, type SchemaDiffPlan } from '../../../commands/schemaDiff';
 import { databaseCommands } from '../../../commands/database';
 import { fileCommands } from '../../../commands/file';
+import type { SchemaDiffObjectIdentity } from '../../../commands/schemaDiff';
 import type { DatabaseObject } from '../../../types';
 
 const state = vi.hoisted(() => ({
@@ -92,9 +93,12 @@ const next = () => fireEvent.click(screen.getByTestId('schema-diff-next'));
 const back = () => fireEvent.click(screen.getByRole('button', { name: 'schemaDiff.back' }));
 function suppressClipboardFeedbackTimeout() {
   const realSetTimeout = window.setTimeout.bind(window);
-  vi.spyOn(window, 'setTimeout').mockImplementation((handler, timeout, ...args) =>
-    timeout === 2000 ? 0 : realSetTimeout(handler, timeout, ...args),
-  );
+  vi.spyOn(window, 'setTimeout').mockImplementation((handler, timeout, ...args) => {
+    if (timeout === 2000) {
+      return 0 as unknown as NodeJS.Timeout;
+    }
+    return realSetTimeout(handler, timeout, ...args) as unknown as NodeJS.Timeout;
+  });
 }
 async function reachPlan() {
   next();
@@ -656,11 +660,11 @@ describe('complete schema migration wizard journeys', () => {
       name: 'calculate_total',
       signature: 'integer',
     };
-    const view: DatabaseObject = {
+    const view: SchemaDiffObjectIdentity = {
       kind: 'view',
       schema: 'public',
       name: 'orders_view',
-    } as DatabaseObject;
+    };
     const trigger: DatabaseObject = {
       kind: 'trigger',
       schema: 'public',
@@ -668,11 +672,11 @@ describe('complete schema migration wizard journeys', () => {
       targetSchema: 'public',
       targetName: 'orders',
     };
-    vi.mocked(databaseCommands.getDatabaseObjects).mockImplementation(async (sessionId, kind) =>
-      (sessionId === 'source-session' ? [routine, view] : [trigger]).filter(
-        (object) => object.kind === kind,
-      ),
-    );
+    vi.mocked(databaseCommands.getDatabaseObjects).mockImplementation(async (sessionId, kind) => {
+      const rows = sessionId === 'source-session' ? [routine, view] : [trigger];
+      // Rust's catalog IPC returns a string kind; the hook normalizes it from the queried bucket.
+      return rows.filter((object) => object.kind === kind) as unknown as DatabaseObject[];
+    });
     render(<SchemaDiffWindow />);
     await reachPlan();
 

@@ -176,8 +176,6 @@ export function clearBrowseHistory(connectionId: string, storage?: StorageLike |
   writeAllBuckets(target, buckets);
 }
 
-export type RelativeTimeUnit = 'seconds' | 'minutes' | 'hours' | 'days';
-
 export interface RelativeTimeParts {
   value: number;
   /** `redis.overview.timeAgo.<unit>` — the component renders `t(unitKey, { value })`. */

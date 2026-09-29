@@ -41,7 +41,8 @@ vi.mock('../value-editors/keyEditorsInvokes', async (importOriginal) => ({
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { KeyDetailEditor } from '../value-editors/KeyEditors';
 import { VIEWS } from '../value-editors/valueView/views';
-import { CODECS, bytesToBase64 } from '../value-editors/valueView/codecs';
+import { CODECS } from '../value-editors/valueView/codecs';
+import { bytesToBase64 } from '../__testing__/bytes';
 import { BIG_VALUE_SENTINEL_BYTES } from '../value-editors/redisBigValue';
 
 bindSettingsStore(

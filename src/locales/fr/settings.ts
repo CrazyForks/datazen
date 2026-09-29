@@ -1,12 +1,19 @@
 /** Auto-split domain: settings (fr) */
 const pack = {
+  'settings.editorCompletionIncludeTablePrefix':
+    'Inclure le nom de la table ou l’alias dans la complétion des colonnes',
+  'settings.enableFkPrediction': 'Prédiction intelligente des clés étrangères',
+  'settings.enableFkPredictionHint':
+    'Désactivée par défaut. Lorsqu’elle est activée, elle déduit les clés étrangères de la structure et du nommage des tables là où le schéma n’en déclare aucune, et les utilise pour les suggestions de JOIN, le classement des complétions et le diagramme ER. Les relations prédites sont toujours dessinées dans une couleur distincte et peuvent être supprimées en un clic.',
   'settings.title': 'Paramètres',
   'settings.general': 'Général',
+  'settings.nav.group.app': 'Application',
+  'settings.nav.group.integration': 'IA et intégrations',
   'settings.extensions.title': 'Extensions',
   'settings.extensions.empty': "Aucune extension n'est disponible dans cette version.",
   'settings.theme': 'Thème',
   'settings.theme.pack': 'Pack de thème',
-  'settings.colorScheme': 'Color scheme',
+  'settings.colorScheme': 'Palette de couleurs',
   'settings.theme.packDefault': 'Par défaut intégré',
   'settings.theme.packMissing': 'Pack manquant ({id})',
   'settings.theme.packMissingHint': "Le pack de thème sélectionné n'est plus installé.",
@@ -92,10 +99,10 @@ const pack = {
   'settings.logging': 'Enregistrement',
   'settings.logLevel': 'Niveau de journalisation',
   'settings.logLevel.trace': 'Trace',
-  'settings.logLevel.debug': 'Debug',
+  'settings.logLevel.debug': 'Débogage',
   'settings.logLevel.info': 'Info',
-  'settings.logLevel.warn': 'Warn',
-  'settings.logLevel.error': 'Error',
+  'settings.logLevel.warn': 'Avertissement',
+  'settings.logLevel.error': 'Erreur',
   'settings.logPath': 'Chemin du journal',
   'settings.logPathPlaceholder': 'Laisser vide pour le chemin par défaut',
   'settings.logRestartNote':
@@ -103,10 +110,11 @@ const pack = {
   'settings.confirmDelete': 'Confirmer la suppression',
   'settings.autoCommit': 'Validation automatique',
   'settings.saved': 'Enregistré',
-  'settings.unsavedChangesTitle': 'Unsaved changes',
-  'settings.unsavedChangesMessage': 'You have unsaved changes. Save them before leaving?',
-  'settings.saveChanges': 'Save changes',
-  'settings.discardChanges': 'Discard changes',
+  'settings.unsavedChangesTitle': 'Modifications non enregistrées',
+  'settings.unsavedChangesMessage':
+    'Vous avez des modifications non enregistrées. Voulez-vous les enregistrer avant de quitter ?',
+  'settings.saveChanges': 'Enregistrer les modifications',
+  'settings.discardChanges': 'Abandonner les modifications',
   'settings.limitSelectHint':
     'Ajouter automatiquement une limite de lignes aux instructions SELECT sans LIMIT. Les grands résultats sont toujours transmis en flux ; désactiver cette option ne désactive pas le streaming.',
   'settings.confirmDeleteHint':
@@ -162,9 +170,9 @@ const pack = {
     "Configurer un fournisseur d'IA pour activer NL-to-SQL, le diagnostic d'erreur et d'autres fonctionnalités intelligentes",
   'settings.ai.goToConfigure': 'Allez dans Paramètres',
   'settings.ai.protocol': 'Protocole',
-  'settings.ai.protocolOpenAiChat': 'Achèvements du chat OpenAI',
-  'settings.ai.protocolOpenAiResponses': 'Réponses OpenAI',
-  'settings.ai.protocolAnthropic': 'Messages anthropiques',
+  'settings.ai.protocolOpenAiChat': 'OpenAI Chat Completions',
+  'settings.ai.protocolOpenAiResponses': 'OpenAI Responses',
+  'settings.ai.protocolAnthropic': 'Anthropic Messages',
   'settings.ai.fetchModels': 'Récupérer des modèles',
   'settings.ai.fetchingModels': 'Récupération…',
   'settings.ai.modelManual': "Saisissez manuellement l'ID du modèle",
@@ -254,5 +262,83 @@ const pack = {
     'Les modèles de prompts sont maintenus en anglais pour la précision et la stabilité du raisonnement. La réponse de l’IA s’adaptera automatiquement à votre langue d’affichage.',
   'settings.mcp.title': 'Serveur MCP',
   'settings.mcpClient.title': 'Serveurs MCP externes',
+  'settings.tunnels.title': 'Tunnels',
+  'settings.tunnels.description':
+    'Les tunnels enregistrés sont stockés chiffrés et peuvent être réutilisés par n’importe quelle connexion. Supprimer l’un d’eux détache les connexions qui le référencent.',
+  'settings.tunnels.empty': 'Aucun tunnel enregistré pour l’instant',
+  'settings.tunnels.emptyHint':
+    'Créez un tunnel ici, ou enregistrez une configuration de tunnel intégrée depuis un formulaire de connexion.',
+  'settings.tunnels.create': 'Nouveau tunnel',
+  'settings.tunnels.loadFailed': 'Impossible de charger les tunnels enregistrés.',
+  'settings.tunnels.usageCount': 'Utilisé par {count} connexion(s)',
+  'settings.tunnels.usageNone': 'Non référencé',
+  'settings.tunnels.usagePending': 'Vérification des références…',
+  'settings.tunnels.copySuffix': ' (copie)',
+  'settings.tunnels.copyFailed': 'Impossible de copier le tunnel.',
+  'settings.tunnels.edit': 'Modifier',
+  'settings.tunnels.copy': 'Copier',
+  'settings.tunnels.test': 'Tester',
+  'settings.tunnels.delete': 'Supprimer',
+  'settings.tunnels.kind.ssh': 'SSH',
+  'settings.tunnels.kind.httpProxy': 'Proxy HTTP',
+  'settings.tunnels.kind.websocket': 'WebSocket',
+  'settings.tunnels.editor.createTitle': 'Nouveau tunnel',
+  'settings.tunnels.editor.editTitle': 'Modifier le tunnel',
+  'settings.tunnels.editor.description':
+    'Les identifiants sont stockés chiffrés et ne sont jamais affichés dans la liste des tunnels.',
+  'settings.tunnels.editor.name': 'Nom',
+  'settings.tunnels.editor.namePlaceholder': 'par ex. Bastion (préprod)',
+  'settings.tunnels.editor.kind': 'Type',
+  'settings.tunnels.editor.loadFailed':
+    'Impossible de charger ce tunnel — il a peut-être été supprimé.',
+  'settings.tunnels.editor.saveFailed': 'Impossible d’enregistrer le tunnel.',
+  'settings.tunnels.validation.name': 'Saisissez un nom.',
+  'settings.tunnels.validation.sshHost': 'Saisissez l’hôte SSH.',
+  'settings.tunnels.validation.sshPort': 'Saisissez un port valide (1–65535).',
+  'settings.tunnels.validation.sshUsername': 'Saisissez le nom d’utilisateur SSH.',
+  'settings.tunnels.validation.sshJumpHost': 'Saisissez l’hôte de saut.',
+  'settings.tunnels.validation.sshJumpPort': 'Saisissez un port de saut valide (1–65535).',
+  'settings.tunnels.validation.sshJumpUsername': 'Saisissez le nom d’utilisateur de saut.',
+  'settings.tunnels.validation.httpProxyHost': 'Saisissez l’hôte du proxy.',
+  'settings.tunnels.validation.httpProxyPort': 'Saisissez un port de proxy valide (1–65535).',
+  'settings.tunnels.validation.wsUrl': 'Saisissez l’URL du relais.',
+  'settings.tunnels.delete.title': 'Supprimer le tunnel',
+  'settings.tunnels.delete.description': '« {name} » sera définitivement supprimé.',
+  'settings.tunnels.delete.affected':
+    'Ces connexions le référencent. Elles seront détachées et reviendront à une connexion directe :',
+  'settings.tunnels.delete.noReferences': 'Aucune connexion ne référence ce tunnel.',
+  'settings.tunnels.delete.unbindHint':
+    'Le tunnel n’est supprimé qu’une fois toutes les références effacées. Si le détachement échoue, rien n’est supprimé.',
+  'settings.tunnels.delete.confirm': 'Supprimer et détacher',
+  'settings.tunnels.delete.confirming': 'Suppression…',
+  'settings.tunnels.delete.failed': 'Impossible de supprimer le tunnel.',
+  'settings.tunnels.delete.unbindFailed':
+    'Impossible de détacher une connexion référençante ; rien n’a été supprimé.',
+  'settings.tunnels.delete.rollbackNote':
+    '{restored} connexion(s) restaurée(s) ; toujours liées : {failed}.',
+  'settings.tunnels.delete.deleteFailed':
+    'Toutes les références ont été effacées, mais le tunnel lui-même n’a pas pu être supprimé. Réessayez de le supprimer.',
+  'settings.tunnels.test.title': 'Tester le tunnel',
+  'settings.tunnels.test.description': 'Effectue une sonde réelle via « {name} ».',
+  'settings.tunnels.test.targetHost': 'Hôte cible',
+  'settings.tunnels.test.targetPort': 'Port cible',
+  'settings.tunnels.test.run': 'Lancer le test',
+  'settings.tunnels.test.running': 'Test en cours…',
+  'settings.tunnels.test.success': 'Sonde réussie en {ms} ms.',
+  'settings.tunnels.test.failed': 'Échec de la sonde : {error}',
+  'settings.tunnels.test.hostRequired': 'Saisissez un hôte cible.',
+  'settings.tunnels.test.portRequired': 'Saisissez un port cible valide (1–65535).',
+  'settings.tunnels.test.scope.ssh':
+    'Une sonde SSH prouve uniquement que l’hôte de saut est joignable et que l’authentification réussit — elle ne prouve pas que la cible est joignable à travers celui-ci.',
+  'settings.tunnels.test.scope.httpProxy':
+    'Une sonde de proxy HTTP envoie une poignée de main CONNECT pour la cible via le proxy.',
+  'settings.tunnels.test.scope.websocket':
+    'Une sonde WebSocket vérifie le relais : en mode raw_binary, elle prouve seulement que le relais est joignable, tandis que datazen_v1 ouvre un canal vers la cible.',
+  'settings.tunnels.test.scope.general':
+    'Une sonde réussie ne garantit jamais que votre base de données est joignable via ce tunnel.',
+  'settings.updater.manualDescription':
+    'Cette version ne dispose pas d’un canal de mise à jour signé. Installez une version correspondante depuis GitHub Releases pour la mettre à jour.',
+  'settings.updater.manualVariant': 'Version actuelle : {variant}',
+  'settings.updater.openReleases': 'Ouvrir la page Releases',
 } as const;
 export default pack;

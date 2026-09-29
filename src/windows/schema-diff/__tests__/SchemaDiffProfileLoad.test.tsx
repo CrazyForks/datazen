@@ -23,7 +23,7 @@ const { endpointState, profile, schemaDiffCommands, databaseCommands } = vi.hois
     targetDatabase: 'profile-db',
     sourceSchema: 'public',
     targetSchema: 'public',
-    targetOnlyTables: [],
+    targetOnlyTables: [] as string[],
     tables: ['public.users'],
     sourceObjects: [] as SchemaDiffObjectIdentity[],
     targetObjects: [] as SchemaDiffObjectIdentity[],

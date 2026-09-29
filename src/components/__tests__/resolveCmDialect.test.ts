@@ -24,7 +24,6 @@ vi.mock('../../extensions/generated', () => {
     databaseFieldType: 'name',
     hasMultiDatabase: true,
     connectionForm: 'kiwi',
-    qbTypeCategories: {},
   };
   const postgresql = {
     label: 'PostgreSQL',
@@ -49,7 +48,6 @@ vi.mock('../../extensions/generated', () => {
     connectionForm: 'standard',
     supportsExplain: true,
     hasMultiDatabase: true,
-    qbTypeCategories: {},
   };
   return {
     DRIVER_DB_ENTRIES: { postgresql, kiwi },

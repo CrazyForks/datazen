@@ -20,6 +20,8 @@ import { resolve, dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 
+import { BUILD_PROFILE } from './ci-tauri-build.mjs';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(__dirname, '..');
 
@@ -51,27 +53,33 @@ export function shouldCompressPlatform(platform = process.platform, env = proces
   };
 }
 
-export function findTargetExecutables(root = ROOT, platform = process.platform) {
+export function findTargetExecutables(
+  root = ROOT,
+  platform = process.platform,
+  profile = 'release',
+) {
   const targetDir = resolve(root, 'target');
   if (!existsSync(targetDir)) return [];
 
   const candidates = [];
   const isWindows = platform === 'win32' || process.env.DATAZEN_TARGET_OS === 'windows';
 
-  // Search paths: target/release and target/<target-triple>/release
+  // Search paths: target/<profile> and target/<target-triple>/<profile>.
+  // tauri build always compiles the `release` profile (tauri-cli 2.10.1 has no
+  // `--profile` flag), so that is the default and the normal path.
   const searchDirs = [];
-  const defaultRelease = join(targetDir, 'release');
-  if (existsSync(defaultRelease)) {
-    searchDirs.push(defaultRelease);
+  const hostProfileDir = join(targetDir, profile);
+  if (existsSync(hostProfileDir)) {
+    searchDirs.push(hostProfileDir);
   }
 
   try {
     const entries = readdirSync(targetDir);
     for (const entry of entries) {
       if (entry === 'release' || entry === 'debug') continue;
-      const subRelease = join(targetDir, entry, 'release');
-      if (existsSync(subRelease) && statSync(subRelease).isDirectory()) {
-        searchDirs.push(subRelease);
+      const subProfileDir = join(targetDir, entry, profile);
+      if (existsSync(subProfileDir) && statSync(subProfileDir).isDirectory()) {
+        searchDirs.push(subProfileDir);
       }
     }
   } catch {
@@ -146,7 +154,10 @@ export function runUpxCompression({
     return { skipped: true, reason: 'upx not found in PATH' };
   }
 
-  const executables = findTargetExecutables(root, platform);
+  // Must agree with the profile the build actually used, otherwise the
+  // binary is not where we look and UPX silently does nothing.
+  const profile = BUILD_PROFILE;
+  const executables = findTargetExecutables(root, platform, profile);
   if (executables.length === 0) {
     log('[upx] no target release binaries found to compress.');
     return { skipped: true, reason: 'no executables found' };

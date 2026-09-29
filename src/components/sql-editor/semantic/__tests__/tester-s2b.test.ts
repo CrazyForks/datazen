@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getDialectAdapter } from '../dialectAdapter';
 import { listVisibleRelations, resolveQualifiedColumn, resolveRelation } from '../relationResolver';
-import { buildSemanticModel, findScopeAtCursor } from '../scopeModel';
+import { buildSemanticModel } from '../scopeModel';
 // Pure helper coverage targets added by the independent tester ([tester]).
 import {
   parseQualifiedNameText,

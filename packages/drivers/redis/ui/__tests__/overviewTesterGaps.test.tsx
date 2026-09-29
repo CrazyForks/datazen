@@ -5,7 +5,6 @@ import type { RedisInvokeFn } from '../shared/redisInvoke';
 import { formatSize } from '../shared/formatSize';
 import { BROWSE_HISTORY_STORAGE_KEY, pushBrowseEntry } from '../lib/redisBrowseHistory';
 import { OVERVIEW_COMMANDS, useOverviewData } from '../overview/useOverviewData';
-import { RecentKeysCard } from '../overview/RecentKeysCard';
 import { RedisOverviewHome } from '../overview/RedisOverviewHome';
 
 /**
@@ -19,8 +18,6 @@ import { RedisOverviewHome } from '../overview/RedisOverviewHome';
  *    指引；接线 ⇒ 条目重新置顶并刷新时间戳。
  * 2. **useOverviewData 失败/畸形载荷分支** — dbSizes 独立失败、非字符串 INFO、
  *    `samples` 非数组、`truncated` 非严格 true、非数组 slowlog、非 Error reject。
- * 3. **RecentKeysCard 行内 onJump** — 本轨改动文件中唯一零覆盖函数。
- * 4. **内存条 ≥90% danger 着色**（MemoryCard 高水位分支）。
  *
  * 断言口径与存量 spec 一致：`data-*` / i18n key / 服务端 token，零可见英文文案
  * （PRD §7-6）。
@@ -153,53 +150,23 @@ describe('[tester] 屏 A 跳转不落历史（key 目标补桩）', () => {
     expect(bucket[0]?.visitedAt ?? 0).toBeGreaterThan(1_700_000_000_000);
   });
 
-  it('writing history through the bridge stays limited to key targets (db cell)', async () => {
+  it('writing history through the bridge stays limited to key targets (non-key action)', async () => {
     // `handleJump` 的历史守卫是**双条件**：桥接成功 ∧ 目标是键。
-    // 上一例封「桥接成功」，本例封「目标是键」—— 缺它的话「落地跳转一律入历史」
-    // （db 格子 / 快捷动作也写）这个变异能在整条套件里存活。
+    // 本例封「目标是键」—— 缺它的话「落地跳转一律入历史」
+    // （快捷动作也写）这个变异能在整条套件里存活。
     const onOpenTarget = vi.fn();
     const { container } = render(<RedisOverviewHome {...homeProps({ onOpenTarget })} />);
     await waitFor(() =>
-      expect(container.querySelectorAll('[data-overview-db-cell]').length).toBeGreaterThanOrEqual(
-        1,
-      ),
+      expect(container.querySelectorAll('[data-overview-action]').length).toBeGreaterThanOrEqual(1),
     );
 
-    fireEvent.click(container.querySelector('[data-overview-db-cell="3"]') as Element);
-    expect(onOpenTarget).toHaveBeenCalledWith({ kind: 'database', dbIndex: 3 });
+    // 点一个非键目标（console）验证不写历史
+    fireEvent.click(container.querySelector('[data-overview-action="console"]') as Element);
+    expect(onOpenTarget).toHaveBeenCalledWith({ kind: 'console' });
 
     // 到了屏 B 但不是键 ⇒ 历史里不该出现任何条目。
     expect(readBucket()).toHaveLength(0);
     expect(globalThis.localStorage.getItem(BROWSE_HISTORY_STORAGE_KEY)).toBeNull();
-  });
-});
-
-describe('[tester] RecentKeysCard 行点击发出 key 跳转请求', () => {
-  it('sends the entry db + name through onJump and carries the unwired state', () => {
-    const onJump = vi.fn();
-    const { container } = render(
-      <RecentKeysCard
-        entries={[{ key: 'queue:jobs', dbIndex: 4, keyType: 'list', visitedAt: 1_700_000_000_000 }]}
-        onJump={onJump}
-        onClear={vi.fn()}
-      />,
-    );
-
-    const row = container.querySelector('[data-overview-recent-key="queue:jobs"]') as Element;
-    expect(row.getAttribute('data-overview-key-type')).toBe('list');
-    // BUG-001: the type is now a *visible* badge, not only a data attribute.
-    expect(row.textContent).toContain('list');
-    expect(row.getAttribute('data-overview-jump')).toBe('unwired');
-
-    fireEvent.click(row);
-    // BUG-001: the known type is forwarded on the jump so the host can
-    // pre-colour the 屏 B selection.
-    expect(onJump).toHaveBeenCalledWith({
-      kind: 'key',
-      dbIndex: 4,
-      key: 'queue:jobs',
-      keyType: 'list',
-    });
   });
 });
 
@@ -401,7 +368,7 @@ async function renderBigKeys() {
   stubHome({ [OVERVIEW_COMMANDS.memorySample]: BIG_KEY_SAMPLES });
   const view = render(<RedisOverviewHome {...homeProps()} />);
   await waitFor(() =>
-    expect(view.container.querySelectorAll('[data-overview-bigkey]')).toHaveLength(5),
+    expect(view.container.querySelectorAll('[data-overview-bigkey]')).toHaveLength(3),
   );
   return view.container;
 }
@@ -411,84 +378,52 @@ function ttlCell(container: HTMLElement, rank: number): Element | null {
 }
 
 describe('[tester] 大 key 行 TTL 列的四态互不塌陷', () => {
-  it('renders a distinct cell for no-expiry / remaining / unreadable / gone', async () => {
+  it('renders a distinct cell for no-expiry / remaining / unreadable', async () => {
     const container = await renderBigKeys();
 
     // rank1 PTTL=-1 ⇒ 永不过期；rank2 正数 ⇒ 秒数（8000ms → 8 + 单位 key）。
     expect(ttlCell(container, 1)?.textContent).toBe('redis.noExpiry');
     expect(ttlCell(container, 2)?.textContent).toBe(`8redis.seconds`);
-    // rank3 不可读、rank5 -2 但未标 missing ⇒ 同一个中性破折号，绝不显示负数。
+    // rank3 不可读 ⇒ 中性破折号，绝不显示负数。
     expect(ttlCell(container, 3)?.textContent).toBe('—');
-    expect(ttlCell(container, 5)?.textContent).toBe('—');
-    // rank4 采样后被删 ⇒ 具名「已消失」状态，且**不等于**破折号或永不过期。
-    expect(ttlCell(container, 4)?.textContent).toBe('redis.overview.memory.bigKeyGone');
 
-    const cells = [1, 2, 3, 4].map((rank) => ttlCell(container, rank)?.textContent);
-    expect(new Set(cells).size).toBe(4);
+    const cells = [1, 2, 3].map((rank) => ttlCell(container, rank)?.textContent);
+    expect(new Set(cells).size).toBe(3);
     expect(cells).not.toContain('-1');
     expect(cells).not.toContain('-2');
   });
 
-  it('keeps the gone state tied to the missing flag, not to the -2 sentinel', async () => {
-    // rank4(missing,-2) 与 rank5(未标 missing,-2) 的 ttlMs 相同，只有 missing 位
-    // 决定二者文案 ⇒ 「把 -2 直接当成已消失」这类合并实现会在此红。
+  it('truncates at 3 rows (BIG_KEY_LIMIT) so vanished / edge-case samples beyond the budget are excluded', async () => {
     const container = await renderBigKeys();
-    expect(ttlCell(container, 4)?.textContent).toBe('redis.overview.memory.bigKeyGone');
-    expect(ttlCell(container, 5)?.textContent).toBe('—');
-    expect(
-      container
-        .querySelector('[data-overview-bigkey="5"]')
-        ?.getAttribute('data-overview-bigkey-missing'),
-    ).toBe('false');
+    // rank4 (k:vanished) and rank5 (k:minus-two-unflagged) are beyond the limit.
+    expect(ttlCell(container, 4)).toBeNull();
+    expect(ttlCell(container, 5)).toBeNull();
   });
 
-  it('marks a gone row muted but leaves a live row on the secondary colour', async () => {
+  it('keeps unreadable TTL neutral even when the row is within budget', async () => {
     const container = await renderBigKeys();
-    expect(ttlCell(container, 4)?.className).toContain('text-fg-muted');
-    expect(ttlCell(container, 2)?.className).toContain('text-fg-secondary');
+    expect(ttlCell(container, 3)?.textContent).toBe('—');
   });
 });
 
-describe('[tester] 大 key 行与最近键的类型徽标带上 tone class', () => {
+describe('[tester] 大 key 行的类型徽标带上 tone class', () => {
   it('paints each row badge with its typeTone class, unknown stays neutral', async () => {
     const container = await renderBigKeys();
     const badgeOf = (rank: number) =>
       container.querySelector(`[data-overview-bigkey="${rank}"] .text-success`);
 
-    // hash→success / list→warning / string→accent / set→danger（typeTone 词表）。
+    // hash→success / string→accent / list→warning（typeTone 词表，top-3 only）。
     expect(badgeOf(2)).not.toBeNull();
     expect(container.querySelector(`[data-overview-bigkey="1"] .text-accent`)).not.toBeNull();
     expect(container.querySelector(`[data-overview-bigkey="3"] .text-warning`)).not.toBeNull();
-    expect(container.querySelector(`[data-overview-bigkey="5"] .text-danger`)).not.toBeNull();
-    // 类型读不到 ⇒ 中性色 + 具名 unknown 占位（i18n key，非英文字面量）。
-    const goneRow = container.querySelector('[data-overview-bigkey="4"]') as Element;
-    expect(goneRow.querySelector('.border-edge')).not.toBeNull();
-    expect(goneRow.textContent).toContain('redis.overview.typeUnknown');
-  });
-
-  it('paints the recent-key badge with the same class vocabulary', () => {
-    const { container } = render(
-      <RecentKeysCard
-        entries={[
-          { key: 'user:1', dbIndex: 1, keyType: 'string', visitedAt: 1_700_000_000_000 },
-          { key: 'gone:1', dbIndex: 1, keyType: null, visitedAt: 1_700_000_000_000 },
-        ]}
-        onJump={vi.fn()}
-        onClear={vi.fn()}
-      />,
-    );
-
-    const known = container.querySelector('[data-overview-recent-key="user:1"]') as Element;
-    expect(known.querySelector('.text-accent')).not.toBeNull();
-    expect(known.textContent).toContain('string');
-    const unknown = container.querySelector('[data-overview-recent-key="gone:1"]') as Element;
-    expect(unknown.querySelector('.border-edge')).not.toBeNull();
-    expect(unknown.textContent).toContain('redis.overview.typeUnknown');
+    // rank4/5 beyond BIG_KEY_LIMIT=3 — no rows rendered.
+    expect(container.querySelector('[data-overview-bigkey="4"]')).toBeNull();
+    expect(container.querySelector('[data-overview-bigkey="5"]')).toBeNull();
   });
 });
 
 // ---------------------------------------------------------------------------
-// [tester] 第 2 轮：maxmemory 有人数、无 human 形制时的回退（MemoryCard:139）
+// [tester] 第 2 轮：maxmemory 有人数、无 human 形制时的回退
 //
 // 覆盖率报告里本轨唯一剩下的真实未覆盖分支：托管端 INFO 常只给 `maxmemory`
 // 而漏掉 `maxmemory_human`，此时上限格必须退化成 `formatSize(maxBytes)`，

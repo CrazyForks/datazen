@@ -1,9 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import type { DatabaseTypeMeta } from '@datazen/driver-sdk';
 import { DB_REGISTRY } from '../../../lib/databaseTypes';
 import { PRESET_GROUPS } from '../../../lib/connectionGroups';
 import { buildConnectionConfig } from '../../../lib/connectionFormModel';
 import { useConnectionForm, type ConnectionFormState } from '../useConnectionForm';
+
+/**
+ * `kiwi` ships as an optional (git-contributed) driver, so it is absent from the
+ * generated `DatabaseType` union in most builds. The kiwi cases below stay
+ * guarded and look the driver up through a widened registry key, mirroring how
+ * the production code resolves optional drivers — a build that does ship kiwi
+ * still exercises them.
+ */
+const KIWI = 'kiwi' as ConnectionFormState['databaseType'];
+const kiwiMeta = (): DatabaseTypeMeta | undefined =>
+  (DB_REGISTRY as Record<string, DatabaseTypeMeta | undefined>)[KIWI];
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({
@@ -154,11 +166,12 @@ describe('useConnectionForm', () => {
     expect(result.current.formVariant).toBe('file');
     expect(DB_REGISTRY.sqlite.connectionForm).toBe('file');
 
-    if (DB_REGISTRY.kiwi) {
-      act(() => result.current.handleDatabaseTypeChange('kiwi'));
+    const kiwi = kiwiMeta();
+    if (kiwi) {
+      act(() => result.current.handleDatabaseTypeChange(KIWI));
       rerender();
       expect(result.current.formVariant).toBe('kiwi');
-      expect(DB_REGISTRY.kiwi.connectionForm).toBe('kiwi');
+      expect(kiwi.connectionForm).toBe('kiwi');
     }
   });
 
@@ -236,12 +249,12 @@ describe('useConnectionForm', () => {
   });
 
   it('includes username in kiwi connection config', () => {
-    if (!DB_REGISTRY.kiwi) return;
+    if (!kiwiMeta()) return;
 
     const { result } = renderHook(() => useConnectionForm());
 
     act(() => {
-      result.current.handleDatabaseTypeChange('kiwi');
+      result.current.handleDatabaseTypeChange(KIWI);
       result.current.setHost('https://kiwi.example.com');
       result.current.setUsername('kiwi-user');
       result.current.setPassword('secret');

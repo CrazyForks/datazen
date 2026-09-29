@@ -31,6 +31,37 @@ const CONNECTION_ID = 'e2e_pg_row_limit';
 const CONNECTION_NAME = 'E2E-PG-行数限制';
 const TEST_TABLE = 'e2e_row_limit_test';
 
+/**
+ * Open a query tab after a Settings round-trip.
+ *
+ * openSettingsInMainWindow() navigates with browser.url() — a full page
+ * reload that drops the frontend session, so afterwards the app sits on the
+ * connections list where neither `conn-toolbar-new-query` (connection
+ * workspace toolbar) nor `home-quick-new-query` (connected-home quick action)
+ * exists. openQueryTab() then polls for 30s and dies at its final
+ * waitForDisplayed. Re-run the same connect path the before() hook uses
+ * (fast path when the workspace survived).
+ */
+async function openQueryTabWithConnection(): Promise<void> {
+  try {
+    const toolbarBtn = await $('[data-testid="conn-toolbar-new-query"]');
+    const quickBtn = await $('[data-testid="home-quick-new-query"]');
+    const connected =
+      (await toolbarBtn.isExisting().catch(() => false)) ||
+      (await quickBtn.isExisting().catch(() => false));
+    if (connected) {
+      await openQueryTab();
+      return;
+    }
+  } catch {
+    /* fall through to reconnect */
+  }
+  await openConnectionsWorkspace();
+  await clickCardConnectButton(CONNECTION_NAME);
+  await waitForConnectionToolbar();
+  await openQueryTab();
+}
+
 describe('数据查询行数限制 Journey（QLIMIT-001~QLIMIT-006）', () => {
   let mainWindow: string;
 
@@ -162,7 +193,7 @@ describe('数据查询行数限制 Journey（QLIMIT-001~QLIMIT-006）', () => {
     await browser.pause(500);
 
     // Query a small subset — well within the 1000-row limit
-    await openQueryTab();
+    await openQueryTabWithConnection();
     await executeSQL(`SELECT * FROM ${TEST_TABLE} WHERE id <= 100`);
     await browser.pause(1000);
 
@@ -196,7 +227,7 @@ describe('数据查询行数限制 Journey（QLIMIT-001~QLIMIT-006）', () => {
     });
     await browser.pause(500);
 
-    await openQueryTab();
+    await openQueryTabWithConnection();
     await executeSQL(`SELECT * FROM ${TEST_TABLE}`);
     await browser.pause(2000);
 
@@ -228,7 +259,7 @@ describe('数据查询行数限制 Journey（QLIMIT-001~QLIMIT-006）', () => {
     });
     await browser.pause(500);
 
-    await openQueryTab();
+    await openQueryTabWithConnection();
     // Query all 2000 rows — limit is off so no truncation
     await executeSQL(`SELECT * FROM ${TEST_TABLE}`);
     await browser.pause(2000);

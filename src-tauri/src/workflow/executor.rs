@@ -48,6 +48,21 @@ pub fn enforce_workflow_query_guards(
     Ok(())
 }
 
+/// Decide whether a query step must name a database before it can run.
+///
+/// True only when all three hold: the step (and workflow) resolved nothing,
+/// the connection pins no default of its own, and the driver can address more
+/// than one database. A single-database driver has nothing to disambiguate, so
+/// omitting the value stays legal for it.
+pub(crate) fn database_is_required(
+    resolved_database: Option<&str>,
+    connection_database: Option<&str>,
+    driver_has_multi_database: bool,
+) -> bool {
+    let named = |v: Option<&str>| v.map(str::trim).filter(|s| !s.is_empty()).is_some();
+    !named(resolved_database) && !named(connection_database) && driver_has_multi_database
+}
+
 pub struct WorkflowExecutor;
 
 impl WorkflowExecutor {
@@ -434,13 +449,54 @@ impl WorkflowExecutor {
                     .map(|s| context.resolve_template(s))
                     .transpose()?;
                 let resolved_database = step_database.or(inherited_database);
+                let resolved_step_connection = connection
+                    .as_deref()
+                    .map(|s| context.resolve_template(s))
+                    .transpose()?;
+                // A query step must land on a known database. If the step, the
+                // workflow AND the connection all leave it unset, the driver
+                // quietly falls back to its own default (PostgreSQL hardcodes
+                // `"postgres"` in `resolve_connect_database`) and the user sees
+                // a misleading `relation "..." does not exist` much later.
+                //
+                // Only multi-database drivers are gated: a driver with a single
+                // fixed database has nothing to disambiguate, and erroring
+                // there would break workflows that legitimately omit it.
+                if resolved_database.is_none() {
+                    let effective_connection = resolved_step_connection
+                        .clone()
+                        .or_else(|| workflow_connection.map(str::to_string));
+                    if let Some(connection_id) = effective_connection {
+                        let config = app_state
+                            .connection_manager
+                            .get_session_config(&connection_id)
+                            .await
+                            .ok();
+                        let multi_db = match config.as_ref() {
+                            Some(c) => app_state
+                                .driver_registry
+                                .get_capabilities(&c.database_type)
+                                .await
+                                .map(|caps| caps.has_multi_database)
+                                .unwrap_or(false),
+                            None => false,
+                        };
+                        if database_is_required(
+                            resolved_database.as_deref(),
+                            config.as_ref().and_then(|c| c.database.as_deref()),
+                            multi_db,
+                        ) {
+                            return Err(WorkflowError::MissingDatabase {
+                                step_id: id.clone(),
+                                connection_id,
+                            });
+                        }
+                    }
+                }
                 let command = WorkflowCommandStep::from_legacy_query(
                     id.clone(),
                     context.resolve_template(sql)?,
-                    connection
-                        .as_deref()
-                        .map(|s| context.resolve_template(s))
-                        .transpose()?,
+                    resolved_step_connection,
                     resolved_database,
                     *timeout_secs,
                     on_error.clone(),
@@ -463,11 +519,21 @@ impl WorkflowExecutor {
                 timeout_secs,
                 on_error,
             } => {
-                let resolved_input = resolve_json_templates(input, context)?;
+                let mut resolved_input = resolve_json_templates(input, context)?;
                 let resolved_connection = connection
                     .as_deref()
                     .map(|s| context.resolve_template(s))
                     .transpose()?;
+                // Command steps carry their target in `input.database`, so the
+                // workflow default must be injected explicitly — a query step
+                // gets it for free through `resolved_database` above.
+                if let Some(workflow_database) = workflow_database {
+                    let database = context.resolve_template(workflow_database)?;
+                    resolved_input = crate::workflow::command_runtime::inject_inherited_database(
+                        resolved_input,
+                        &database,
+                    );
+                }
                 let command_step = WorkflowCommandStep {
                     id: id.clone(),
                     command: command.clone(),
@@ -967,5 +1033,40 @@ mod tests {
         let m1 = result.steps[1].result.clone().unwrap();
         assert_eq!(m1["rows_count"], 3);
         assert_eq!(m1["rows"][2]["src"], "LIT");
+    }
+}
+
+#[cfg(test)]
+mod database_required_tests {
+    use super::database_is_required;
+
+    #[test]
+    fn requires_a_database_for_an_unpinned_multi_db_connection() {
+        // The reported failure: a PostgreSQL connection with no database, and a
+        // step that names none. PG would fall back to its hardcoded "postgres".
+        assert!(database_is_required(None, None, true));
+    }
+
+    #[test]
+    fn a_step_database_satisfies_the_rule() {
+        assert!(!database_is_required(Some("datazen_demo"), None, true));
+    }
+
+    #[test]
+    fn a_connection_default_satisfies_the_rule() {
+        assert!(!database_is_required(None, Some("datazen_demo"), true));
+    }
+
+    #[test]
+    fn a_single_database_driver_never_requires_one() {
+        // Keeps existing workflows that legitimately omit the value working.
+        assert!(!database_is_required(None, None, false));
+    }
+
+    #[test]
+    fn blank_values_count_as_unset() {
+        assert!(database_is_required(Some("   "), Some("\t"), true));
+        assert!(!database_is_required(Some(" real_db "), None, true));
+        assert!(!database_is_required(None, Some(" real_db "), true));
     }
 }

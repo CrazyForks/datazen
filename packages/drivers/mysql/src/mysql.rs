@@ -718,6 +718,10 @@ impl MysqlDriver {
 
 #[async_trait]
 impl DatabaseDriver for MysqlDriver {
+    fn has_multi_database(&self) -> bool {
+        true
+    }
+
     fn migration_renderer(
         &self,
     ) -> Option<std::sync::Arc<dyn datazen_driver_api::MigrationRenderer>> {
@@ -789,15 +793,25 @@ impl DatabaseDriver for MysqlDriver {
             }
             Some(super::Value::Integer(i)) => i.to_string(),
             Some(super::Value::Float(f)) => f.to_string(),
-            Some(super::Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
+            Some(super::Value::String(s)) => {
+                let escaped = s.replace('\\', "\\\\");
+                format!("'{}'", escaped.replace('\'', "''"))
+            }
             Some(super::Value::Bytes(b)) => format!(
                 "X'{}'",
                 b.iter()
                     .map(|byte| format!("{byte:02x}"))
                     .collect::<String>()
             ),
-            Some(super::Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
-            Some(super::Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),
+            Some(super::Value::Timestamp(s)) => {
+                let escaped = s.replace('\\', "\\\\");
+                format!("'{}'", escaped.replace('\'', "''"))
+            }
+            Some(super::Value::Json(j)) => {
+                let s = j.to_string();
+                let escaped = s.replace('\\', "\\\\");
+                format!("'{}'", escaped.replace('\'', "''"))
+            }
         }
     }
 

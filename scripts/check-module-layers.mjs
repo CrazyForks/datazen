@@ -1,16 +1,8 @@
 #!/usr/bin/env node
 /**
- * Fail if the SQL editor and the Visual Query Builder start depending on each
- * other, or if the shared relation-metadata layer reaches back up.
- *
- * The two are **peers**: they present different ways to build the same query and
- * both read the same schema data. Sharing that data must go through the layer
- * below them (`src/lib/relationMetadata`, `src/stores/schemaStoreSelectors`), not
- * through one importing the other — a peer import means a change to either one
- * can break the other, and it hides which side actually owns the data.
- *
- * A regression here is easy to introduce by autocomplete, so it is guarded
- * rather than left to review.
+ * Fail if the shared relation-metadata layer reaches back up into its consumers.
+ * Query Builder is owned by the independent SQL Editor Pro repository and no
+ * longer participates in Host source-layer checks.
  */
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { resolve, dirname, relative, posix } from 'path';
@@ -23,16 +15,6 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
  * Paths are POSIX-style, relative to the repo root.
  */
 export const LAYER_RULES = [
-  {
-    name: 'visual-query-builder must not import the SQL editor',
-    from: 'src/components/query-builder',
-    forbidden: ['src/components/sql-editor'],
-  },
-  {
-    name: 'the SQL editor must not import the Visual Query Builder',
-    from: 'src/components/sql-editor',
-    forbidden: ['src/components/query-builder'],
-  },
   {
     name: 'shared relation metadata must not import its consumers',
     from: 'src/lib/relationMetadata',

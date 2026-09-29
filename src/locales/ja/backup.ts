@@ -23,7 +23,7 @@ const pack = {
   'backup.restoreProgress': '{name} を復元中 ({current}/{total})',
   'backup.progressLog': '実行ログ',
   'backup.copyLog': 'ログをコピー',
-  'backup.logCopied': 'Copied',
+  'backup.logCopied': 'コピーしました',
   'backup.logOmitted': '… {count} 行を省略しました（メモリ節約のためログを削減）',
 } as const;
 export default pack;

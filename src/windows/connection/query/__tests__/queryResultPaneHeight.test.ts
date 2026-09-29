@@ -9,7 +9,7 @@ import type { StatementResult } from '../../../../types';
 function selectResult(rowCount: number): StatementResult {
   return {
     sql: 'SELECT 1',
-    columns: [{ name: 'id', dataType: 'int' }],
+    columns: [{ name: 'id', dataType: 'int', nullable: false }],
     rows: Array.from({ length: rowCount }, (_, i) => [i]),
     executionTimeMs: 1,
   };

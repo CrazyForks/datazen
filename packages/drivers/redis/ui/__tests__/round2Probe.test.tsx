@@ -92,8 +92,7 @@ const listChildren = vi.fn();
 const dbSizes = vi.fn();
 vi.mock('../shared/redisInvoke', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../shared/redisInvoke')>()),
-  redisCommandInvoke: (...args: unknown[]) =>
-    commands(args[0] as string, args[1] as string, (args[2] ?? {}) as Record<string, unknown>),
+  redisCommandInvoke: (...args: unknown[]) => commands(args[0] as string, args[1] as string),
   invokeGetKey: (...args: unknown[]) => getKey(...args),
   invokeGetKeyRaw: (...args: unknown[]) => getKeyRaw(...args),
   invokeScanKeys: (...args: unknown[]) => scanKeys(...args),
@@ -132,6 +131,13 @@ bindSchemaStore(
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    // Path-tree surface this suite never drives (Redis reads the flat database
+    // list only); the no-ops keep the fake a complete `SchemaStoreState`.
+    pathItems: {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 

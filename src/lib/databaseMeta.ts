@@ -7,7 +7,6 @@ import type { DatabaseObjectKind, SslMode } from '../types';
 import type { StructureEditorUiConfig } from './structureEditor/types';
 import type { FunctionEntry } from './sqlFunctionTypes';
 import type { SqlDialectStrategy, SqlDialectProfile } from './sqlDialects/types';
-import type { TypeCategory } from '../components/query-builder/typeCategory';
 
 export type ConnectionMode = 'server' | 'file' | 'url';
 
@@ -189,19 +188,6 @@ export interface DatabaseTypeMeta {
   sqlDialectStrategy?: SqlDialectStrategy;
   /** Semantic editor profile for identifier quoting, casing, alias visibility, and parameter policies. */
   sqlDialectProfile?: SqlDialectProfile;
-  /**
-   * Per-driver type-category map for the visual query builder.
-   *
-   * Maps raw database-specific dataType strings (as returned by the driver's
-   * `get_columns` / `get_columns_typed`) to a semantic {@link TypeCategory}
-   * used for operator filtering and value formatting. When omitted, the host
-   * falls back to a generic heuristic in {@link classifyColumnType}.
-   *
-   * Drivers that share a dialect (e.g. PostgreSQL, MySQL, SQLite) can share
-   * the same map; drivers with unusual type systems (Redis, MongoDB) omit it
-   * entirely — their columns are untyped and the fallback handles them.
-   */
-  qbTypeCategories?: Record<string, TypeCategory>;
   /**
    * Custom SQL literal value escaper for "Copy as SQL" / export.
    *

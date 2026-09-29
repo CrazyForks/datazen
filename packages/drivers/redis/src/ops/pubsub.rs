@@ -140,15 +140,6 @@ where
         .map_err(|e| e.to_string())
 }
 
-#[allow(dead_code)]
-pub async fn publish_on_live(
-    live: &mut crate::connect::RedisLiveConn,
-    channel: &str,
-    message: &str,
-) -> Result<u64, String> {
-    crate::with_redis_conn!(live, |conn| publish(conn, channel, message).await)
-}
-
 async fn remove_subscription(subscription_id: &str) {
     let mut reg = registry().lock().await;
     reg.subs.remove(subscription_id);
@@ -162,22 +153,6 @@ pub async fn unsubscribe(subscription_id: &str) -> Result<(), String> {
         .ok_or_else(|| format!("subscription not found: {subscription_id}"))?;
     entry.handle.abort();
     Ok(())
-}
-
-#[allow(dead_code)]
-pub async fn cleanup_connection_subscriptions(connection_id: &str) {
-    let mut reg = registry().lock().await;
-    let ids: Vec<String> = reg
-        .subs
-        .iter()
-        .filter(|(_, e)| e.connection_id == connection_id)
-        .map(|(id, _)| id.clone())
-        .collect();
-    for id in ids {
-        if let Some(entry) = reg.subs.remove(&id) {
-            entry.handle.abort();
-        }
-    }
 }
 
 pub async fn start_subscription(
@@ -357,11 +332,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("subscription not found"));
-    }
-
-    #[tokio::test]
-    async fn cleanup_connection_subscriptions_is_noop_when_empty() {
-        cleanup_connection_subscriptions("conn-does-not-exist").await;
     }
 
     #[tokio::test]

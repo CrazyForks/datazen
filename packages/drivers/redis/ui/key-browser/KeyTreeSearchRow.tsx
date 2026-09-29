@@ -1,27 +1,29 @@
-import { Clock, Search, Sparkles } from 'lucide-react';
-import { Input, Select, cn, useI18n } from '@datazen/ui';
-import { KEY_TYPE_FILTERS } from './keyTree';
+import { Asterisk, Clock, Search } from 'lucide-react';
+import { Button, Input, cn, useI18n } from '@datazen/ui';
 
 /**
  * Row R2 of the key-tree column header (PRD §3.2 屏 B 左列): the pattern input
  * plus the filters that shape what the pattern means.
  *
- * The three chips are toggles over existing scan parameters, not decoration:
+ * The two chips are toggles over existing scan parameters, not decoration:
  *  - `* 模糊` wraps a *literal* input into `*input*` when applying (see
  *    {@link toScanPattern}); a pattern that already carries a glob char is sent
  *    verbatim, so the chip can never silently widen a hand-written glob;
- *  - `仅无过期` maps to `noTtlOnly` (server-side filter, re-scans);
- *  - `类型 ▾` maps to `keyType` — kept from the previous toolbar on purpose: the
- *    reference product has no type filter, so this is a differentiator (PRD §3.2).
+ *  - `仅无过期` maps to `noTtlOnly` (server-side filter, re-scans).
  *
- * Key templates and the per-connection pattern history are P2 and deliberately
- * not here (task book §1 D-2).
+ * 模糊 and 仅无过期 deliberately do *not* behave alike, and the apply button is
+ * what makes that legible: `noTtlOnly` is an argument to the scan that is
+ * re-issued on toggle, so it re-runs by itself, while 模糊 only rewrites the
+ * pattern at apply time — the same moment `Enter` uses. Without a visible way to
+ * apply, clicking 模糊 read as a dead chip next to a live one. The button gives
+ * that moment a target, and it is the one control that makes every combination
+ * of input + both chips reachable without knowing the keyboard.
  */
 
 export interface KeyTreeSearchRowProps {
   pattern: string;
   onPatternChange: (pattern: string) => void;
-  /** `Enter` / search button — resolves the pattern and restarts the scan. */
+  /** `Enter` / the apply button — resolves the pattern and restarts the scan. */
   onApply: () => void;
   /**
    * `Esc` — the row's exit transition: clear the input **and** the applied
@@ -35,8 +37,6 @@ export interface KeyTreeSearchRowProps {
   onFuzzyChange: (fuzzy: boolean) => void;
   noTtlOnly: boolean;
   onNoTtlOnlyChange: (noTtlOnly: boolean) => void;
-  keyType: string;
-  onKeyTypeChange: (keyType: string) => void;
   /** Value / all scope: the input holds a substring query, not a glob. */
   scope: 'key' | 'value' | 'all';
 }
@@ -50,8 +50,6 @@ export function KeyTreeSearchRow({
   onFuzzyChange,
   noTtlOnly,
   onNoTtlOnlyChange,
-  keyType,
-  onKeyTypeChange,
   scope,
 }: KeyTreeSearchRowProps) {
   const { t } = useI18n();
@@ -68,6 +66,13 @@ export function KeyTreeSearchRow({
             if (e.key === 'Escape') onClearFilter();
           }}
           placeholder={scope === 'key' ? t('redis.searchKeys') : t('redis.search.valuePlaceholder')}
+          /*
+           * Key scope only: the value / all scopes take a substring the backend
+           * matches anywhere, so telling those users about key prefixes would be
+           * the wrong instruction. The placeholder already says "prefix"; this is
+           * where the two opt-outs live.
+           */
+          title={scope === 'key' ? t('redis.search.keyPatternHint') : undefined}
           className="h-7 pl-7 text-xs"
           data-testid="redis-search-input"
           data-scope={scope}
@@ -79,7 +84,15 @@ export function KeyTreeSearchRow({
         active={fuzzy}
         activeValue={fuzzy ? 'on' : 'off'}
         title={t('redis.tree.fuzzyHint')}
-        Icon={Sparkles}
+        /*
+         * `Asterisk`, not the `Sparkles` this used to wear. Sparkles read as
+         * "something clever happens here", which is the wrong promise: fuzzy is
+         * a plain substring match, and a user who believes it is magic will not
+         * form the mental model they need. The asterisk is the wildcard they can
+         * also type by hand, so the chip and the `*` label beside it name the
+         * same thing the pattern field does.
+         */
+        Icon={Asterisk}
         label="*"
         onClick={() => onFuzzyChange(!fuzzy)}
       />
@@ -92,20 +105,21 @@ export function KeyTreeSearchRow({
         label={t('redis.noTtlOnly')}
         onClick={() => onNoTtlOnlyChange(!noTtlOnly)}
       />
-      <div className="shrink-0" data-testid="redis-tree-chip-type" data-key-type={keyType}>
-        <Select
-          value={keyType}
-          onChange={(value) => onKeyTypeChange(value)}
-          options={KEY_TYPE_FILTERS.map((item) => ({
-            value: item.value,
-            label: t(item.labelKey as 'redis.type'),
-          }))}
-          className="h-7 min-w-24 text-xs"
-          title={t('redis.filterByType')}
-          aria-label={t('redis.filterByType')}
-          triggerDataAttrs={{ 'data-testid': 'redis-tree-type-filter' }}
-        />
-      </div>
+      {/*
+        The explicit apply. Same call as `Enter`, same destination — this exists
+        so the 模糊 modifier has a visible moment of effect, not so the keyboard
+        shortcut stops working.
+      */}
+      <Button
+        variant="ghost"
+        className="h-7 w-7 shrink-0 p-0"
+        title={t('redis.search.apply')}
+        aria-label={t('redis.search.apply')}
+        data-testid="redis-search-apply"
+        onClick={onApply}
+      >
+        <Search className="h-3.5 w-3.5" />
+      </Button>
     </div>
   );
 }

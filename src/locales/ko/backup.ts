@@ -23,7 +23,7 @@ const pack = {
   'backup.restoreProgress': '{name} 복원 중 ({current}/{total})',
   'backup.progressLog': '실행 로그',
   'backup.copyLog': '로그 복사',
-  'backup.logCopied': 'Copied',
+  'backup.logCopied': '복사됨',
   'backup.logOmitted': '… {count}줄 생략됨(메모리 절약을 위해 로그 축소)',
 } as const;
 export default pack;

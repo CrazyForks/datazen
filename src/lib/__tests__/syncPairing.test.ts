@@ -225,7 +225,9 @@ describe('[tester] useSyncPairingState', () => {
     const { result, rerender } = renderHook(
       ({ source, target }: { source?: string; target: string }) =>
         useSyncPairingState(source, connections, target),
-      { initialProps: { source: 'mysql', target: 't1' } },
+      // `source` is explicitly optional on the hook props, so the initial props
+      // must be typed that way for the `source: undefined` rerender below.
+      { initialProps: { source: 'mysql' as string | undefined, target: 't1' } },
     );
 
     await waitFor(() =>

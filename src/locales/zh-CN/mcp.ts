@@ -74,5 +74,6 @@ const pack = {
   'mcpClient.addEnv': '添加变量',
   'mcpClient.removeEnv': '删除变量',
   'mcpClient.noEnvVars': '未配置环境变量。',
+  'mcp.saved': '已保存',
 } as const;
 export default pack;

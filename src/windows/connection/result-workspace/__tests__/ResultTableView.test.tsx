@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { StatementResult } from '../../../types';
-import type { DataExportCapability } from '../../../lib/exportCapability';
+import type { StatementResult } from '../../../../types';
+import type { DataExportCapability } from '../../../../lib/exportCapability';
 import { ResultTableView } from '../ResultTableView';
 
 const dataTableMock = vi.hoisted(() => ({

@@ -85,6 +85,22 @@ describe('ContentStatusBar', () => {
       selectKey: vi.fn(),
       getDirty: () => false,
       setDirty: vi.fn(),
+      // W3-A widened relay members: this case only pins the frozen KV props, so
+      // the rest of the atom stays at its documented neutral values.
+      getLoadedCount: () => 0,
+      setLoadedCount: vi.fn(),
+      getScanCursor: () => '0',
+      setScanCursor: vi.fn(),
+      isScanning: () => false,
+      setScanning: vi.fn(),
+      getScanBudgetUsed: () => 0,
+      getScanBudgetTotal: () => 0,
+      setScanBudget: vi.fn(),
+      getSelectionCount: () => 0,
+      setSelectionCount: vi.fn(),
+      getLastWriteCommand: () => null,
+      getLastWriteDurationMs: () => null,
+      recordWrite: vi.fn(),
     };
     const statusBarSlot: KvStatusBarBinding = {
       Component: FixtureStatusBar,

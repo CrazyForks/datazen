@@ -178,6 +178,9 @@ export async function expandAllGroups() {
 /** Seeded by wdio.conf.ts — locked to E2E_PG_DB so StandardSchemaTree is used. */
 export const E2E_PG_CONN_NAME = '本地 PostgreSQL';
 
+/** Persisted config id of the seeded PG connection (see testDataLifecycle). */
+const E2E_PG_CONNECTION_ID = 'conn_e2e_pg';
+
 /**
  * Double-click a connection item in the new grouped list to open it.
  * Prefers the seeded Host PG connection so leftover MultiDb cards are not opened.
@@ -289,7 +292,7 @@ export async function waitForNewQueryButton(timeout = 20000) {
 export async function expandConnectedConnectionInNavigator(nameFragment?: string) {
   await browser.waitUntil(
     async () =>
-      browser.execute((frag: string) => {
+      browser.execute((frag: string | undefined) => {
         const items = Array.from(document.querySelectorAll('[data-conn-item]'));
         const matching = frag
           ? items.find((el) => (el.textContent || '').includes(frag))
@@ -300,7 +303,7 @@ export async function expandConnectedConnectionInNavigator(nameFragment?: string
       }, nameFragment),
     { timeout: 15000, timeoutMsg: '等待连接就绪以展开 schema 树' },
   );
-  await browser.execute((frag: string) => {
+  await browser.execute((frag: string | undefined) => {
     const items = Array.from(document.querySelectorAll('[data-conn-item]'));
     const matching = frag ? items.find((el) => (el.textContent || '').includes(frag)) : undefined;
     const connected = items.find((el) => !!el.querySelector('button[aria-expanded]'));
@@ -313,11 +316,60 @@ export async function expandConnectedConnectionInNavigator(nameFragment?: string
   await browser.pause(800);
 }
 
+/**
+ * Guard against a stale backend session for the seeded PG connection.
+ *
+ * The whole E2E run reuses ONE Tauri process — and therefore one backend
+ * ConnectionManager — across every spec file, while `wdio.conf.ts` replaces
+ * the worker database behind `conn_e2e_pg` before each file. Backend `connect`
+ * has reuse semantics: while an earlier spec's session is still alive it is
+ * handed back as-is, still bound to the old (or a foreign) database. Raw SQL
+ * then executes on that stale home database while schema metadata calls hit
+ * the freshly seeded one, so DDL never lands where the navigator looks and
+ * every `waitForTableInSidebar` / `waitForSchemaTreeLoaded` downstream times
+ * out.
+ *
+ * Probe `current_database()` on the live session against the connection
+ * config's `database` field (re-seeded per spec file); on mismatch — or when
+ * the session cannot execute at all — disconnect it and reload the page so
+ * the subsequent UI connect performs a real `connect` bound to the current
+ * config. The healthy path costs two IPC round-trips and touches nothing.
+ */
+async function ensureSeededPgSessionFresh(): Promise<void> {
+  try {
+    const conns = await invokeBackend<Array<{ id: string; database?: string }>>('get_connections');
+    const cfg = conns.find((c) => c.id === E2E_PG_CONNECTION_ID);
+    if (!cfg?.database) return;
+    const sessionId = await connectConfig(cfg.id);
+    let actual = '';
+    try {
+      const rows = parseQueryRows(await executeQuery(sessionId, 'SELECT current_database()'));
+      actual = String(rows[0]?.[0] ?? '');
+    } catch {
+      // The session cannot run anything (its home database was dropped) — stale.
+      actual = '';
+    }
+    if (actual === cfg.database) return;
+    console.warn(
+      `[e2e] stale session for ${cfg.id}: current_database()=${actual || '<broken>'}` +
+        ` vs config database=${cfg.database}; forcing reconnect`,
+    );
+    await disconnectBackend(sessionId);
+    // The frontend still holds the dead session id — reload so the connect
+    // click below issues a fresh `connect` against the current config.
+    await browser.url('tauri://localhost');
+    await browser.pause(1500);
+  } catch (err) {
+    console.warn('[e2e] stale-session probe skipped:', err);
+  }
+}
+
 /** Double-click seeded PG connection and wait for toolbar in the unified main window. */
 export async function connectSeededPgInWorkspace() {
+  await ensureSeededPgSessionFresh();
   await openConnectionsWorkspace();
   await expandAllGroups();
-  await browser.waitUntil(async () => (await $$('[data-conn-item]')).length > 0, {
+  await browser.waitUntil(async () => (await $$('[data-conn-item]').length) > 0, {
     timeout: 15000,
     timeoutMsg: '等待连接项加载超时',
   });
@@ -339,6 +391,9 @@ export async function openConnectionWindow() {
 /** @deprecated Use {@link openConnectionWindow}; kept for contract matrix imports. */
 export async function openSeededPgConnectionWindow(mainWindow: string) {
   await browser.switchToWindow(mainWindow);
+  // A toolbar left over from an earlier spec may belong to a stale session
+  // bound to a replaced worker database — probe first, then decide.
+  await ensureSeededPgSessionFresh();
   // The home page also exposes a "New Query" quick action. Use the
   // connection toolbar test id instead of body text so an unconnected home
   // view is not mistaken for an active database workspace.
@@ -1159,7 +1214,12 @@ export function isSchemaSectionLabel(text: string): boolean {
 }
 
 /** Connection navigator sidebar (not the 40px workspace mode rail). */
-export async function connectionNavigatorAside() {
+// The inferred return would be a `ChainablePromiseElement | Element` union
+// (selector lookup vs. array iteration yield different wdio types), and a
+// union breaks every consumer calling element methods. Normalise on
+// `ChainablePromiseElement` — both flavours expose the same chainable API at
+// runtime; the casts are type-level only.
+export async function connectionNavigatorAside(): Promise<ChainablePromiseElement> {
   const byTestId = await $('[data-testid="connection-navigator-aside"]');
   if (await byTestId.isExisting()) {
     return byTestId;
@@ -1167,19 +1227,19 @@ export async function connectionNavigatorAside() {
   const asides = await $$('aside');
   for (const aside of asides) {
     if (await aside.$('[data-conn-item]').isExisting()) {
-      return aside;
+      return aside as unknown as ChainablePromiseElement;
     }
   }
   for (const aside of asides) {
     const text = await aside.getText();
     if (asideHasSchemaSections(text)) {
-      return aside;
+      return aside as unknown as ChainablePromiseElement;
     }
   }
   for (const aside of asides) {
     const { width } = await aside.getSize();
     if (width > 200) {
-      return aside;
+      return aside as unknown as ChainablePromiseElement;
     }
   }
   throw new Error('connection navigator aside not found');
@@ -1254,12 +1314,27 @@ export async function waitForSchemaTreeLoaded(timeout = 20000) {
   // Expand once before polling for the actual table row; repeatedly clicking
   // the connection card can only re-select it and makes the race worse.
   await expandConnectedConnectionInNavigator();
+  let pass = 0;
   await browser.waitUntil(
     async () => {
-      if (await navigatorHasTableButtons()) return true;
-      await expandSchemaTableCategory();
-      await browser.pause(500);
-      return false;
+      try {
+        if (await navigatorHasTableButtons()) return true;
+        // The tree may be showing a stale pre-DDL snapshot (or an empty
+        // fetch). Periodically force a navigator refresh so the poll
+        // converges even when nothing else would change the DOM; transient
+        // DOM errors are retried instead of aborting the whole wait.
+        if (pass > 0 && pass % 3 === 0) {
+          await clickNavigatorRefresh(5000).catch(() => {});
+          await expandConnectedConnectionInNavigator().catch(() => {});
+        }
+        await expandSchemaTableCategory();
+        await browser.pause(500);
+        pass++;
+        return false;
+      } catch {
+        pass++;
+        return false;
+      }
     },
     {
       timeout,
@@ -1419,14 +1494,27 @@ export async function waitForTableInSidebar(
   try {
     await browser.waitUntil(
       async () => {
-        if (await tableNodeExistsInNavigator(tableName)) return true;
-        await setNavigatorSearch('');
-        await expandConnectedConnectionInNavigator();
-        await expandSchemaTableCategory(schemaName);
-        await setNavigatorSearch(tableName);
-        await scrollSchemaTree(scrollPass);
-        scrollPass++;
-        return false;
+        try {
+          if (await tableNodeExistsInNavigator(tableName)) return true;
+          await setNavigatorSearch('');
+          // Every few failed passes force a navigator refresh: the tree
+          // snapshot may predate the CREATE TABLE the caller just ran, and
+          // expansion alone would keep serving the stale snapshot forever.
+          if (scrollPass > 0 && scrollPass % 3 === 0) {
+            await clickNavigatorRefresh(5000).catch(() => {});
+          }
+          await expandConnectedConnectionInNavigator();
+          await expandSchemaTableCategory(schemaName);
+          await setNavigatorSearch(tableName);
+          await scrollSchemaTree(scrollPass);
+          scrollPass++;
+          return false;
+        } catch {
+          // Transient DOM/navigation errors must not abort the wait —
+          // retry until the timeout so the failure message stays accurate.
+          scrollPass++;
+          return false;
+        }
       },
       { timeout, timeoutMsg: `等待表 "${tableName}" 出现在 schema 树` },
     );
@@ -2411,10 +2499,19 @@ export async function deploySchemaDiffPlan(opts: { assertSuccess?: boolean } = {
         text.includes(t('schemaDiff.deployStatus')) && !text.includes(t('schemaDiff.deploying'));
       if (hasStatus) return true;
       // Also detect errors shown in the page (deploy failure or IPC error).
-      const errorEl = await $('.error-message').catch(() => null);
-      if (errorEl && (await errorEl.isDisplayed().catch(() => false))) {
-        const errText = await errorEl.getText();
-        throw new Error(`schema diff deploy error: ${errText}`);
+      // try/catch instead of `.catch` on the chainable selector: the wdio
+      // typings expose no `catch` on ChainablePromiseElement.
+      let errorText = '';
+      try {
+        const errorEl = await $('.error-message');
+        if (await errorEl.isDisplayed()) {
+          errorText = await errorEl.getText();
+        }
+      } catch {
+        // selector/display probe failed — treat as "no error element"
+      }
+      if (errorText) {
+        throw new Error(`schema diff deploy error: ${errorText}`);
       }
       return false;
     },

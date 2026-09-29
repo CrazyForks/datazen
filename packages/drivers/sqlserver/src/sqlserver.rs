@@ -404,6 +404,10 @@ impl DatabaseDriver for SqlServerDriver {
         true
     }
 
+    fn has_multi_database(&self) -> bool {
+        true
+    }
+
     /// SQL Server resolves unqualified names in the user's default schema,
     /// which is `dbo` unless the login was created with another one.
     fn default_schema(&self) -> Option<&'static str> {

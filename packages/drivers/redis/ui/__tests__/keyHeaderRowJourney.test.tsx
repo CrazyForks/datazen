@@ -42,7 +42,7 @@ vi.mock('../value-editors/keyEditorsInvokes', async (importOriginal) => ({
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { KeyDetailEditor } from '../value-editors/KeyEditors';
 import { KeyHeaderRow } from '../value-editors/KeyHeaderRow';
-import { bytesToBase64 } from '../value-editors/valueView/codecs';
+import { bytesToBase64 } from '../__testing__/bytes';
 
 bindSettingsStore(
   create<SettingsBridgeState>(() => ({

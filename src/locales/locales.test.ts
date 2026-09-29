@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach, beforeAll } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { relative, resolve } from 'node:path';
 import en from './en';
 import {
   BUILTIN_LOCALES,
@@ -98,6 +100,31 @@ describe('locales', () => {
   it('falls back to en for unsupported locale codes', () => {
     expect(getTranslation('xx-XX', 'common.ok')).toBe(en['common.ok']);
     expect(getAllTranslations('invalid-locale')).toEqual(getAllTranslations('en'));
+  });
+
+  it('resolves every literal t() key used in host source (en dictionary)', () => {
+    // A key missing from en renders as its own name at runtime, in every
+    // locale, and no other test can see it: the dictionaries only prove that
+    // what IS in en is translated. Scan the call sites instead.
+    const srcDir = resolve(__dirname, '..');
+    const missing: Record<string, string[]> = {};
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = resolve(dir, entry.name);
+        if (entry.isDirectory()) {
+          // Skip the dictionaries themselves and every test tree.
+          if (entry.name !== 'locales' && entry.name !== '__tests__') walk(full);
+          continue;
+        }
+        if (!/\.tsx?$/.test(entry.name) || entry.name.includes('.test.')) continue;
+        for (const [, key] of readFileSync(full, 'utf8').matchAll(/\bt\(\s*'([\w.]+)'/g)) {
+          if (key in en) continue;
+          (missing[key] ??= []).push(relative(srcDir, full));
+        }
+      }
+    };
+    walk(srcDir);
+    expect(missing).toEqual({});
   });
 
   it('sees driver packs that registered themselves in the shared registry', async () => {

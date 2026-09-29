@@ -62,6 +62,8 @@ export interface OverviewData {
   slowlog: OverviewSource<OverviewSlowlogEntry[]>;
   /** Re-issue all four commands (the header's refresh affordance). */
   refresh: () => void;
+  /** Re-issue only the memory sample command. */
+  refreshMemory: () => void;
 }
 
 export interface UseOverviewDataArgs {
@@ -184,6 +186,40 @@ export function useOverviewData({
     })();
   }, [dbSessionId, dbIndex, invoke]);
 
+  /** Refresh only the memory sample data (used by the MEMORY card's Refresh button). */
+  const refreshMemory = useCallback(() => {
+    if (!dbSessionId) {
+      setMemory(failed(new Error('missing dbSessionId')));
+      return;
+    }
+    const token = tokenRef.current + 1;
+    tokenRef.current = token;
+    const stale = () => tokenRef.current !== token;
+
+    setMemory(loading());
+    void (async () => {
+      try {
+        const result = (await invoke('redis', OVERVIEW_COMMANDS.memorySample, {
+          dbSessionId,
+          dbIndex,
+          limit: BIG_KEY_LIMIT,
+        })) as OverviewMemorySampleResult | null | undefined;
+        if (stale()) return;
+        setMemory({
+          status: 'ready',
+          data: {
+            samples: Array.isArray(result?.samples) ? result.samples : [],
+            truncated: result?.truncated === true,
+          },
+          message: null,
+        });
+      } catch (error) {
+        if (stale()) return;
+        setMemory(failed(error));
+      }
+    })();
+  }, [dbSessionId, dbIndex, invoke]);
+
   useEffect(() => {
     load();
     return () => {
@@ -193,7 +229,7 @@ export function useOverviewData({
   }, [load]);
 
   return useMemo(
-    () => ({ info, dbSizes, memory, slowlog, refresh: load }),
-    [info, dbSizes, memory, slowlog, load],
+    () => ({ info, dbSizes, memory, slowlog, refresh: load, refreshMemory }),
+    [info, dbSizes, memory, slowlog, load, refreshMemory],
   );
 }

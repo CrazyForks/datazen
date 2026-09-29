@@ -4,7 +4,6 @@ import {
   FRAGMENTATION_WARN_RATIO,
   buildBannerPills,
   buildBigKeyRows,
-  buildKeySpaceModel,
   buildMemoryModel,
   buildServerRows,
   buildSlowlogRows,
@@ -14,7 +13,6 @@ import {
   parseInfoFieldsFromRaw,
   summariseSlowlogCommand,
   SLOWLOG_COMMAND_SUMMARY_MAX,
-  DEFAULT_DATABASE_COUNT,
   type ServerRowId,
 } from '../overview/overviewModel';
 import { parseInfoSections } from '../observe/infoParse';
@@ -127,6 +125,75 @@ describe('buildServerRows — PRD 卡 1', () => {
   });
 });
 
+describe('buildServerRows — 模式感知行集', () => {
+  it('standalone: 输出 10 行含 blockedClients / totalCommands / expiredKeys', () => {
+    const rows = buildServerRows(fields('# Replication\r\nmode:standalone'));
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain('blockedClients');
+    expect(ids).toContain('totalCommands');
+    expect(ids).toContain('expiredKeys');
+    expect(ids).not.toContain('clusterSlotsOk');
+    expect(ids).not.toContain('sentinelMasters');
+    expect(rows).toHaveLength(10);
+  });
+
+  it('cluster: 输出 10 行含 clusterSlotsOk / clusterKnownNodes / clusterSize', () => {
+    const rows = buildServerRows(fields('# Replication\r\nmode:cluster'));
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain('clusterSlotsOk');
+    expect(ids).toContain('clusterKnownNodes');
+    expect(ids).toContain('clusterSize');
+    expect(ids).not.toContain('blockedClients');
+    expect(ids).not.toContain('expiredKeys');
+    expect(rows).toHaveLength(10);
+  });
+
+  it('sentinel: 输出 10 行含 sentinelMasters / sentinelSlaves / sentinelSentinels', () => {
+    const rows = buildServerRows(fields('# Replication\r\nmode:sentinel'));
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain('sentinelMasters');
+    expect(ids).toContain('sentinelSlaves');
+    expect(ids).toContain('sentinelSentinels');
+    expect(ids).not.toContain('blockedClients');
+    expect(ids).not.toContain('expiredKeys');
+    expect(rows).toHaveLength(10);
+  });
+
+  it('cluster: 读取 cluster_slots_ok 等字段值', () => {
+    const rows = buildServerRows(
+      fields(
+        '# Replication\r\nmode:cluster\r\n# Cluster\r\ncluster_slots_ok:16384\r\ncluster_known_nodes:6\r\ncluster_size:3',
+      ),
+    );
+    expect(rows.find((r) => r.id === 'clusterSlotsOk')?.value).toBe('16384');
+    expect(rows.find((r) => r.id === 'clusterKnownNodes')?.value).toBe('6');
+    expect(rows.find((r) => r.id === 'clusterSize')?.value).toBe('3');
+  });
+
+  it('sentinel: 读取 sentinel_masters 等字段值', () => {
+    const rows = buildServerRows(
+      fields(
+        '# Replication\r\nmode:sentinel\r\n# Sentinel\r\nsentinel_masters:2\r\nsentinel_slaves:4\r\nsentinel_sentinels:3',
+      ),
+    );
+    expect(rows.find((r) => r.id === 'sentinelMasters')?.value).toBe('2');
+    expect(rows.find((r) => r.id === 'sentinelSlaves')?.value).toBe('4');
+    expect(rows.find((r) => r.id === 'sentinelSentinels')?.value).toBe('3');
+  });
+
+  it('未知 mode 退化为 standalone 行集', () => {
+    const rows = buildServerRows(fields('# Replication\r\nmode:unknown'));
+    expect(rows).toHaveLength(10);
+    expect(rows.map((r) => r.id)).toContain('blockedClients');
+  });
+
+  it('三种模式都恰好 10 行，适配双列 2×5 网格', () => {
+    expect(buildServerRows(fields('# Replication\r\nmode:standalone'))).toHaveLength(10);
+    expect(buildServerRows(fields('# Replication\r\nmode:cluster'))).toHaveLength(10);
+    expect(buildServerRows(fields('# Replication\r\nmode:sentinel'))).toHaveLength(10);
+  });
+});
+
 describe('buildMemoryModel — PRD 卡 2 gauge', () => {
   it('computes the used/max percentage from the raw byte fields', () => {
     const model = buildMemoryModel(fields());
@@ -185,55 +252,8 @@ describe('buildMemoryModel — PRD 卡 2 gauge', () => {
   });
 });
 
-describe('buildKeySpaceModel — PRD 卡 3', () => {
-  it('renders 16 cells with db0 first and share percentages summing to 100', () => {
-    const model = buildKeySpaceModel([
-      { db: 0, keys: 75 },
-      { db: 1, keys: 25 },
-    ]);
-    expect(model.dbCount).toBe(DEFAULT_DATABASE_COUNT);
-    expect(model.cells).toHaveLength(16);
-    expect(model.cells[0]).toMatchObject({ dbIndex: 0, name: 'db0', keys: 75, empty: false });
-    expect(model.cells[1]?.sharePercent).toBeCloseTo(25, 5);
-    expect(model.totalKeys).toBe(100);
-    expect(model.nonEmptyCount).toBe(2);
-  });
-
-  it('greys out empty databases and keeps them addressable', () => {
-    const model = buildKeySpaceModel([{ db: 0, keys: 1 }]);
-    const empty = model.cells.filter((cell) => cell.empty);
-    expect(empty).toHaveLength(15);
-    expect(empty.every((cell) => cell.keys === 0 && cell.sharePercent === 0)).toBe(true);
-    expect(model.cells[3]?.name).toBe('db3');
-  });
-
-  it('grows past 16 when the server reports more databases', () => {
-    const model = buildKeySpaceModel([
-      { db: 0, keys: 1 },
-      { db: 31, keys: 2 },
-    ]);
-    expect(model.dbCount).toBe(32);
-    expect(model.cells).toHaveLength(32);
-  });
-
-  it('survives a missing or malformed db_sizes reply', () => {
-    for (const input of [
-      null,
-      undefined,
-      [],
-      [{ db: -1, keys: 5 }],
-      [{ db: 0, keys: Number.NaN }],
-    ]) {
-      const model = buildKeySpaceModel(input as never);
-      expect(model.cells).toHaveLength(DEFAULT_DATABASE_COUNT);
-      expect(model.totalKeys).toBe(0);
-      expect(model.nonEmptyCount).toBe(0);
-    }
-  });
-});
-
-describe('buildBigKeyRows — PRD 卡 2 Top5', () => {
-  it('sorts by bytes descending and caps at five rows', () => {
+describe('buildBigKeyRows — PRD 卡 2 Top3', () => {
+  it('sorts by bytes descending and caps at three rows', () => {
     const rows = buildBigKeyRows({
       samples: [
         { key: 'small', bytes: 10 },
@@ -244,13 +264,13 @@ describe('buildBigKeyRows — PRD 卡 2 Top5', () => {
         { key: 'a6', bytes: 60 },
       ],
     });
-    expect(rows.map((row) => row.key)).toEqual(['huge', 'mid', 'a6', 'a5', 'a4']);
-    expect(rows.map((row) => row.rank)).toEqual([1, 2, 3, 4, 5]);
+    expect(rows.map((row) => row.key)).toEqual(['huge', 'mid', 'a6']);
+    expect(rows.map((row) => row.rank)).toEqual([1, 2, 3]);
     expect(rows[0]?.bytes).toBe(5000);
   });
 
   it('honours the shared Top-N budget', () => {
-    expect(BIG_KEY_LIMIT).toBe(5);
+    expect(BIG_KEY_LIMIT).toBe(3);
     expect(buildBigKeyRows({ samples: [{ key: 'a', bytes: 1 }] }, 1)).toHaveLength(1);
   });
 
@@ -284,7 +304,8 @@ describe('buildBigKeyRows — PRD 卡 2 Top5', () => {
           bytes: 5,
           type: '',
           ttlMs: Number.NaN,
-          missing: 'yes',
+          // Deliberately off-contract: the normaliser must not treat it as true.
+          missing: 'yes' as unknown as boolean,
         },
       ],
     });
@@ -319,7 +340,7 @@ describe('buildSlowlogRows — PRD 卡 4', () => {
     expect(rows[1]?.client).toBeNull();
   });
 
-  it('orders by slowlog id descending so the Top5 is stable across proxies', () => {
+  it('orders by slowlog id descending so the Top3 is stable across proxies', () => {
     const rows = buildSlowlogRows([
       { id: 1, timestamp: 1, durationUs: 10, command: ['A'] },
       { id: 7, timestamp: 2, durationUs: 20, command: ['B'] },

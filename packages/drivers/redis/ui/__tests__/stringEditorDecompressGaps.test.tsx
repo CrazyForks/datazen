@@ -45,7 +45,7 @@ vi.mock('../value-editors/stringKeyValue', async (importOriginal) => ({
 import type { DecompressResult } from '../value-editors/stringKeyValue';
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { KeyDetailEditor } from '../value-editors/KeyEditors';
-import { bytesToBase64 } from '../value-editors/valueView/codecs';
+import { bytesToBase64 } from '../__testing__/bytes';
 
 bindSettingsStore(
   create<SettingsBridgeState>(() => ({

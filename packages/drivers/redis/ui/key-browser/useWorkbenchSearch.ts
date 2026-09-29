@@ -97,13 +97,26 @@ export function patternHasGlob(pattern: string): boolean {
 /**
  * Resolve the raw input of the search row into the SCAN pattern:
  *  - blank ⇒ match everything (`*`), which is the pre-filter state of the tree;
- *  - fuzzy ⇒ a literal substring is wrapped in `*…*` so "user" finds `app:user:1`;
  *  - an input that already carries a glob char is sent verbatim — wrapping it
- *    would silently widen a pattern the user wrote on purpose.
+ *    would silently widen a pattern the user wrote on purpose, and it is also
+ *    the only way to ask for something the two defaults below cannot express;
+ *  - fuzzy ⇒ a literal substring is wrapped in `*…*`, so "user" finds
+ *    `app:user:1` *and* `xuser`;
+ *  - otherwise the literal is a **prefix**: `app` ⇒ `app*`, so it finds
+ *    `app:cache`, `app:user:1` and a key named exactly `app`.
+ *
+ * Prefix is the default because the input is a key *browser*, not a key
+ * resolver: the pattern goes straight to `SCAN … MATCH` as a glob, where a bare
+ * `app` admits only the one key spelled `app` and silently returns nothing for
+ * every key under the `app` namespace — the common case, and the one that reads
+ * as "the filter is broken". Any key whose name starts with the typed text is
+ * what a user typing `app` is looking for. A trailing `*` is exactly what
+ * `patternToTreePrefix` already narrows on, so the tree walk follows the typed
+ * prefix rather than falling back to the whole keyspace.
  */
 export function toScanPattern(rawPattern: string, fuzzy: boolean): string {
   const trimmed = rawPattern.trim();
   if (!trimmed) return '*';
-  if (!fuzzy || patternHasGlob(trimmed)) return trimmed;
-  return `*${trimmed}*`;
+  if (patternHasGlob(trimmed)) return trimmed;
+  return fuzzy ? `*${trimmed}*` : `${trimmed}*`;
 }

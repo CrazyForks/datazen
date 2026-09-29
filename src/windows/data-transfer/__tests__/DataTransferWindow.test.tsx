@@ -138,7 +138,7 @@ const unsupportedTgt: ConnectionConfig = {
   ...pgTgt,
   id: 'unsupported-tgt',
   name: 'Unsupported Tgt',
-  databaseType: 'kiwi',
+  databaseType: 'kiwi' as unknown as ConnectionConfig['databaseType'],
 };
 
 const inspectRows: TransferTableResult[] = [

@@ -184,6 +184,8 @@ describe('[tester] QueryPanel ResultMessageDialog', () => {
           connectionName: 'Test connection',
           databaseType: 'postgresql',
           title: 'Test query',
+          database: 'app',
+          schema: null,
         } satisfies QueryPanelState,
       ],
       queryExec: new Map([
@@ -196,7 +198,7 @@ describe('[tester] QueryPanel ResultMessageDialog', () => {
             results: [
               {
                 sql: 'SELECT 1',
-                columns: [{ name: 'c', dataType: 'integer' }],
+                columns: [{ name: 'c', dataType: 'integer', nullable: false }],
                 rows: [[1]],
                 executionTimeMs: 1,
               },
@@ -222,6 +224,11 @@ describe('[tester] QueryPanel ResultMessageDialog', () => {
         dbSessionId="sess-conn-1"
         connectionId="cfg-1"
         databaseType={databaseType}
+        // Matches the mocked session's `currentDatabase`/`currentSchema`, so the
+        // panel resolves the same selected database/schema it did before these
+        // became required props.
+        database="app"
+        schema={null}
       />,
     );
   }

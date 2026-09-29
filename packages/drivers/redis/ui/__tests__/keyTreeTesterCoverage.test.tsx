@@ -101,7 +101,7 @@ import { keyUnderFolder, type KeyTreeRow } from '../key-browser/keyTree';
 import { parentIndexOf } from '../key-browser/treeRowSpec';
 import { useKeyTree } from '../key-browser/useKeyTree';
 import { EMPTY_LEVEL } from '../key-browser/treeLevels';
-import { invokeBatchRenamePrefix, invokeCountMatching } from '../key-browser/batchInvokes';
+import { invokeCountMatching } from '../key-browser/batchInvokes';
 import {
   DEFAULT_TREE_WIDTH,
   MAX_TREE_WIDTH,
@@ -120,9 +120,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -135,6 +140,22 @@ function folder(prefix: string, count: number): ChildEntry {
 }
 
 /** A `KeyEntry` for the row-shape unit assertions below. */
+/**
+ * The leaf keys whose checkbox is currently ticked.
+ *
+ * The header's selection-count badge left with the batch action group, so the
+ * selection is read off the checkboxes directly — the same set the badge used to
+ * summarise, minus the summary. State comes from the input's `checked` property
+ * rather than the row's optional `data-checked` mirror.
+ */
+function tickedKeys(): string[] {
+  return Array.from(
+    document.querySelectorAll<HTMLInputElement>('[data-testid^="redis-tree-key-check-"]'),
+  )
+    .filter((el) => el.checked)
+    .map((el) => (el.getAttribute('data-testid') ?? '').replace('redis-tree-key-check-', ''));
+}
+
 function entryOf(key: string): KeyEntry {
   return { key, keyType: 'string', ttl: -1, size: 0, preview: '' };
 }
@@ -306,13 +327,11 @@ describe('[tester] row affordances: leaf checkbox, Enter on folder, pinned heade
     expect(screen.getByTestId('redis-tree-key-check-app:user:2').getAttribute('data-checked')).toBe(
       'false',
     );
-    expect(screen.getByTestId('redis-tree-batch-delete-count').getAttribute('data-count')).toBe(
-      '1',
-    );
+    expect(tickedKeys()).toEqual(['app:user:1']);
 
-    // Unticking is the exit; the badge disappears with the empty selection.
+    // Unticking is the exit; the selection empties with it.
     fireEvent.click(screen.getByTestId('redis-tree-key-check-app:user:1'));
-    await waitFor(() => expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(true));
+    await waitFor(() => expect(tickedKeys()).toEqual([]));
   });
 
   it('a leaf row click selects the key, not the checkbox', async () => {
@@ -321,7 +340,7 @@ describe('[tester] row affordances: leaf checkbox, Enter on folder, pinned heade
     fireEvent.click(row);
     await waitFor(() => expect(row.getAttribute('data-selected')).toBe('true'));
     // Opening the detail must not be counted as a checkbox selection (I-8 feed).
-    expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(true);
+    expect(tickedKeys()).toEqual([]);
     expect(getKey.mock.calls.some((c) => String((c as unknown[])[2]) === 'app:user:1')).toBe(true);
   });
 
@@ -578,70 +597,9 @@ describe('[tester] KeyTreeColumn swaps the tree for the value-hit list by scope 
   });
 });
 
-/* ── 9. the pattern strip is the second trigger surface of the same controller ─ */
-
-describe('[tester] BatchPatternBar triggers the shared controller (D-1 两触发面)', () => {
-  it('opens the pattern and rename dialogs from the strip', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-batch-bar');
-    expect(screen.getByTestId('redis-batch-bar').getAttribute('data-selection-count')).toBe('0');
-
-    // `useBatchActions` documents the header and the strip as two surfaces over
-    // one controller; the coder's suite never clicked the strip, so its wiring
-    // (`request('pattern')` / `request('rename')`) was untested.
-    fireEvent.click(screen.getByTestId('redis-batch-pattern'));
-    expect(await screen.findByTestId('redis-batch-pattern-confirm')).toBeTruthy();
-    // The pattern dialog seeds itself from the current filter.
-    expect(screen.getByTestId('redis-batch-pattern-input')).toHaveValue('*');
-    fireEvent.click(screen.getByTestId('redis-batch-pattern-cancel'));
-    await waitFor(() => expect(screen.queryByTestId('redis-batch-pattern-confirm')).toBeNull());
-
-    fireEvent.click(screen.getByTestId('redis-batch-rename'));
-    expect(await screen.findByTestId('redis-batch-rename-confirm')).toBeTruthy();
-    // Enter guard: confirm stays disabled without an old prefix, so the dialog
-    // cannot be submitted as a no-op rename.
-    expect((screen.getByTestId('redis-batch-rename-confirm') as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    fireEvent.click(screen.getByTestId('redis-batch-rename-cancel'));
-    await waitFor(() => expect(screen.queryByTestId('redis-batch-rename-confirm')).toBeNull());
-  });
-});
-
-/* ── 10. the batch invoke seam speaks camelCase to the host (I-8 feed) ─────── */
+/* ── 9. the batch invoke seam speaks camelCase to the host (I-8 feed) ─────── */
 
 describe('[tester] batchInvokes payload contract (D-6 seam)', () => {
-  it('names every rename argument in camelCase for the Tauri snake_case mapping', async () => {
-    const invoke = vi.fn(async (..._args: unknown[]) => ({ renamed: 1, errors: [] }));
-    await invokeBatchRenamePrefix('sess-1', 3, 'app:', 'cache:', ['a', 'b'], invoke);
-    const [driver, command, payload] = invoke.mock.calls[0] as unknown as [
-      string,
-      string,
-      Record<string, unknown>,
-    ];
-    expect(driver).toBe('redis');
-    expect(command).toBe('batch_rename_prefix');
-    // A `db_index` here would arrive as `undefined` and rename against db 0.
-    expect(Object.keys(payload).sort()).toEqual([
-      'dbIndex',
-      'dbSessionId',
-      'keys',
-      'newPrefix',
-      'oldPrefix',
-    ]);
-  });
-
-  it('sends null (not an absent key) for the whole-keyspace rename scope', async () => {
-    const invoke = vi.fn(async (..._args: unknown[]) => ({ renamed: 0, errors: [] }));
-    await invokeBatchRenamePrefix('sess-1', 0, 'a', 'b', undefined, invoke);
-    const payload = (
-      invoke.mock.calls[0] as unknown as [string, string, Record<string, unknown>]
-    )[2];
-    // `null` means "whole keyspace"; an omitted key lets the Rust default and the
-    // UI's intent diverge silently.
-    expect(payload.keys).toBeNull();
-  });
-
   it('passes the count_matching pattern through as the preview it is (not a write)', async () => {
     const invoke = vi.fn(async (..._args: unknown[]) => 7);
     await expect(invokeCountMatching('sess-1', 2, 'app:*', invoke)).resolves.toBe(7);
@@ -656,7 +614,7 @@ describe('[tester] batchInvokes payload contract (D-6 seam)', () => {
   });
 });
 
-/* ── 11. split clamp (the pure, UI-free half of useWorkbenchSplit) ────────── */
+/* ── 10. split clamp (the pure, UI-free half of useWorkbenchSplit) ────────── */
 
 describe('[tester] clampTreeWidth keeps the split inside its bounds', () => {
   it('clamps both ends, rounds, and refuses non-finite widths', () => {

@@ -15,7 +15,6 @@
 | Query Recovery | 查询失败 → 复制错误 → 修正 SQL → 成功结果 | `query-recovery-journey.ts` |
 | Query → Chart | 查询 → 表格结果 → 图表 → 返回表格 → 导出对话框 | `query-result-chart-journey.ts` |
 | Query Toolbar | 缩窄窗口 → compact 工具栏 → 查询/历史 → 恢复窗口 | `query-toolbar-responsive-journey.ts` |
-| Visual Query Builder | More 菜单打开 → 拖表入画布 → 选列 → WHERE → ORDER BY → DISTINCT → LIMIT/OFFSET → 条件组(嵌套 AND/OR) → 应用执行 → 外键自动 JOIN → 移除 JOIN → 列到列点击建手动 JOIN（含 Esc 取消/去重）→ 重置 → 关闭 | `visual-query-builder-journey.ts` |
 | Schema Diff | PG→PG、PG→MySQL、MySQL→PG | `schema-diff-*-journey.ts` |
 | Data Sync | PG、MySQL 的比较→Review→执行闭环 | `data-sync-journey.ts` |
 | Data Transfer | PG→PG、PG→MySQL、MySQL→PG | `data-transfer-*-journey.ts` |
@@ -51,3 +50,8 @@ pnpm e2e:connection:edge
 ```
 
 这组测试需要 WebDriver 构建和 PostgreSQL；Schema Diff、Data Sync、Data Transfer 还需要各自的夹具数据库。尚未实现的示例 SQLite 向导、真实 LLM 修复闭环不在这里伪造测试。
+
+Query Builder 属于 SQL Editor Pro，四条专属旅程已移到
+`packages/pro-extensions/sql-editor-pro/e2e/specs/journeys/`，由
+`pnpm e2e:qb` 使用 Pro WebDriver build 运行。Community 的默认 Journey suite
+不包含该功能；社区版 Query tab 仍可正常编辑和执行 SQL。

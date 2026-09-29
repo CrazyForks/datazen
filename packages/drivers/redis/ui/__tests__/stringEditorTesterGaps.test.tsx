@@ -45,7 +45,7 @@ vi.mock('../value-editors/keyEditorsInvokes', async (importOriginal) => ({
 
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { KeyDetailEditor } from '../value-editors/KeyEditors';
-import { bytesToBase64 } from '../value-editors/valueView/codecs';
+import { bytesToBase64 } from '../__testing__/bytes';
 import { isDraftDirty } from '../shared/draftGuard';
 
 const SAFE_MODE = { current: false };

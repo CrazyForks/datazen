@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, screen, fireEvent } from '@testing-library/react';
 import { ConnectionPage } from '../ConnectionPage';
 import { tauriWindowTestState } from '../../../test/mocks/tauriWindow';
+import type { Dashboard } from '../../../types/dashboard';
 
 const {
   connectMock,
@@ -34,14 +35,19 @@ const {
   loadAiConfigMock: vi.fn().mockResolvedValue(undefined),
   setupAiListenersMock: vi.fn().mockResolvedValue(() => {}),
   emitCrossWindowMock: vi.fn().mockResolvedValue(undefined),
-  listenCrossWindowMock: vi.fn((event: string, handler: (payload?: unknown) => void) => {
+  listenCrossWindowMock: vi.fn((...args: unknown[]) => {
+    const event = args[0] as string;
+    const handler = args[1] as (payload?: unknown) => void;
     if (event === 'menu:open-settings') {
       menuOpenSettingsHandler.current = handler;
     }
     return Promise.resolve(() => {});
   }),
   getActiveConnectionState: vi.fn(() => ({
-    connections: {} as Record<string, { status: string; connectionId?: string }>,
+    connections: {} as Record<
+      string,
+      { status: string; connectionId?: string; dbSessionId?: string }
+    >,
   })),
   webviewGetAllMock: vi.fn().mockResolvedValue([{ label: 'main' }]),
   hasOpenChildWindowsMock: vi.fn().mockResolvedValue(false),
@@ -71,8 +77,9 @@ vi.mock('../../../hooks/useConfirmDialog', () => ({
 }));
 
 vi.mock('../../../stores/settingsStore', () => ({
-  useSettingsStore: (sel: (s: { loadSettings: () => Promise<void> }) => unknown) =>
-    sel({ loadSettings: loadSettingsMock, settings: { theme: { mode: 'dark' } } }),
+  useSettingsStore: (
+    sel: (s: { loadSettings: () => Promise<void>; settings: unknown }) => unknown,
+  ) => sel({ loadSettings: loadSettingsMock, settings: { theme: { mode: 'dark' } } }),
 }));
 
 vi.mock('../../../stores/aiStore', () => ({
@@ -279,7 +286,7 @@ vi.mock('../../settings/SettingsContent', () => ({
 
 vi.mock('../../../stores/dashboardStore', () => {
   const state = {
-    list: [] as Array<{ id: string; name: string }>,
+    list: [] as Dashboard[],
     fetchDashboards: fetchDashboardsMock,
   };
   const store = (sel: (s: typeof state) => unknown) => sel(state);
@@ -287,6 +294,19 @@ vi.mock('../../../stores/dashboardStore', () => {
   store.setState = (partial: Partial<typeof state>) => Object.assign(state, partial);
   return { useDashboardStore: store };
 });
+
+/** Only `id`/`name` are read here; the rest keeps the object a real `Dashboard`. */
+function makeDashboard(id: string, name: string): Dashboard {
+  return {
+    id,
+    name,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    layout: { cols: 12, rowHeight: 1 },
+    widgets: [],
+    enabled: true,
+  };
+}
 
 vi.mock('../../../lib/databaseTypes', async () => {
   const actual = await vi.importActual<typeof import('../../../lib/databaseTypes')>(
@@ -461,7 +481,7 @@ describe('ConnectionPage', () => {
   it('TC-window: switches workspace via icon rail', async () => {
     const { useDashboardStore } = await import('../../../stores/dashboardStore');
     useDashboardStore.setState({
-      list: [{ id: 'dash-1', name: 'Ops Board' }],
+      list: [makeDashboard('dash-1', 'Ops Board')],
     });
 
     render(<ConnectionPage />);
@@ -493,7 +513,7 @@ describe('ConnectionPage', () => {
   it('unmounts inactive mode panels (conditional render) and remounts on return', async () => {
     const { useDashboardStore } = await import('../../../stores/dashboardStore');
     useDashboardStore.setState({
-      list: [{ id: 'dash-1', name: 'Ops Board' }],
+      list: [makeDashboard('dash-1', 'Ops Board')],
     });
     render(<ConnectionPage />);
 

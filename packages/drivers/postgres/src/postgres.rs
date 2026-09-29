@@ -200,6 +200,10 @@ impl DatabaseDriver for PostgresDriver {
         true
     }
 
+    fn has_multi_database(&self) -> bool {
+        true
+    }
+
     /// PostgreSQL resolves unqualified names in the first schema of
     /// `search_path`, which defaults to `public`.
     fn default_schema(&self) -> Option<&'static str> {
@@ -300,12 +304,41 @@ impl DatabaseDriver for PostgresDriver {
         limit: Option<u32>,
         on_event: QueryStreamCallback,
     ) -> Result<(), DriverError> {
-        let statements = sql_dump::split_sql_statements(sql);
+        self.query_stream_with_execution_at(
+            handle,
+            execution_id,
+            sql,
+            limit,
+            SqlTarget::new(None, None),
+            on_event,
+        )
+        .await
+    }
+
+    async fn query_stream_with_execution_at(
+        &self,
+        handle: &ConnectionHandle,
+        execution_id: &QueryExecutionId,
+        sql: &str,
+        limit: Option<u32>,
+        target: SqlTarget<'_>,
+        on_event: QueryStreamCallback,
+    ) -> Result<(), DriverError> {
+        // A transaction holds one connection bound to its own database, so
+        // refuse a foreign target instead of silently reading another catalog.
+        self.ensure_transaction_reaches(handle, target).await?;
+        let sql = self.qualified_sql(sql, target);
+        let pool = self.resolve_statement_pool(handle, target).await?;
+        let statements = sql_dump::split_sql_statements(&sql);
         if statements.is_empty() {
+            self.pin_query_execution_pool(handle, execution_id, pool)
+                .await?;
             self.finish_query_execution(handle, execution_id).await?;
             on_event(QueryStreamEvent::Done { total_time_ms: 0 });
             return Ok(());
         }
+        self.pin_query_execution_pool(handle, execution_id, pool)
+            .await?;
         self.stream_registered_execution(handle, execution_id, &statements, limit, &on_event)
             .await
     }

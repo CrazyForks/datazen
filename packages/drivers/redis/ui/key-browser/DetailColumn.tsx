@@ -17,7 +17,7 @@
  * which branch rendered without pinning any translated copy (the guard deleted
  * in W1-C means copy is a human-review concern, not an assertion target).
  */
-import { Loader2, X } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useI18n } from '@datazen/ui';
 import type { KeyDetail } from '../shared/types';
 import { KeyDetailEditor } from '../value-editors/KeyEditors';
@@ -32,7 +32,6 @@ export interface DetailColumnProps {
   modules: string[] | null;
   onRefresh: () => void;
   onRenamed: (newKey: string) => void;
-  onClose: () => void;
   /** Unsaved-draft flag of the mounted editor (the workbench relays it to the host). */
   onDirtyChange?: (dirty: boolean) => void;
 }
@@ -46,7 +45,6 @@ export function DetailColumn({
   modules,
   onRefresh,
   onRenamed,
-  onClose,
   onDirtyChange,
 }: DetailColumnProps) {
   const { t } = useI18n();
@@ -73,19 +71,6 @@ export function DetailColumn({
       data-selected-key={selectedKey}
       data-detail-state={state}
     >
-      <div className="flex items-center justify-between border-b border-edge bg-surface-alt px-3 py-2">
-        <span className="truncate text-xs font-medium text-fg" title={selectedKey}>
-          {selectedKey}
-        </span>
-        <button
-          type="button"
-          className="rounded p-1 text-fg-muted hover:bg-surface-raised hover:text-fg"
-          data-testid="redis-detail-close"
-          onClick={onClose}
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
       <div className="flex-1 overflow-auto p-3">
         {detailLoading ? (
           <div

@@ -6,11 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { ValueFrame } from '../shared/types';
-import {
-  BIG_VALUE_SENTINEL_BYTES,
-  formatElementCount,
-  judgeBigValue,
-} from '../value-editors/redisBigValue';
+import { BIG_VALUE_SENTINEL_BYTES, judgeBigValue } from '../value-editors/redisBigValue';
 
 function frame(over: Partial<ValueFrame> = {}): ValueFrame {
   return {
@@ -80,17 +76,5 @@ describe('judgeBigValue', () => {
     );
     expect(verdict.big).toBe(false);
     expect(verdict.bytes).toBeNull();
-  });
-});
-
-describe('formatElementCount', () => {
-  it('prints counts as bare numbers (they are not bytes)', () => {
-    expect(formatElementCount(0)).toBe('0');
-    expect(formatElementCount(1234)).toBe('1234');
-  });
-
-  it('names an unusable count instead of inventing one', () => {
-    expect(formatElementCount(-1)).toBe('—');
-    expect(formatElementCount(Number.NaN)).toBe('—');
   });
 });

@@ -104,6 +104,16 @@ pub trait DatabaseDriver: Send + Sync {
         false
     }
 
+    /// Whether one connection can address more than one `database`.
+    ///
+    /// Engines that resolve a relation against whatever database the session
+    /// landed on (PostgreSQL silently defaults to `postgres`) need the target
+    /// stated explicitly, because a missing value cannot be told apart from a
+    /// deliberate one. Drivers with a single fixed database return `false`.
+    fn has_multi_database(&self) -> bool {
+        false
+    }
+
     /// Conventional schema this driver resolves unqualified relations in.
     ///
     /// Used only as the last resort when a caller has **no** schema to offer
@@ -139,7 +149,10 @@ pub trait DatabaseDriver: Send + Sync {
             }
             Some(Value::Integer(i)) => i.to_string(),
             Some(Value::Float(f)) => f.to_string(),
-            Some(Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
+            Some(Value::String(s)) => {
+                let escaped = s.replace('\\', "\\\\");
+                format!("'{}'", escaped.replace('\'', "''"))
+            }
             Some(Value::Bytes(b)) => {
                 // Keep the default dialect conservative and lossless. Drivers
                 // with a stricter binary-literal grammar should override this
@@ -147,8 +160,15 @@ pub trait DatabaseDriver: Send + Sync {
                 // X'...'). Never turn arbitrary bytes into replacement UTF-8.
                 format!("X'{}'", bytes_to_hex(b))
             }
-            Some(Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
-            Some(Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),
+            Some(Value::Timestamp(s)) => {
+                let escaped = s.replace('\\', "\\\\");
+                format!("'{}'", escaped.replace('\'', "''"))
+            }
+            Some(Value::Json(j)) => {
+                let s = j.to_string();
+                let escaped = s.replace('\\', "\\\\");
+                format!("'{}'", escaped.replace('\'', "''"))
+            }
         }
     }
 
@@ -369,6 +389,27 @@ pub trait DatabaseDriver: Send + Sync {
         on_event: QueryStreamCallback,
     ) -> Result<(), DriverError> {
         self.query_stream(handle, sql, limit, on_event).await
+    }
+
+    /// [`Self::query_stream_with_execution`] against an explicit target.
+    /// See [`Self::query_at`].
+    ///
+    /// The compatibility default drops `target` entirely. Drivers that route
+    /// statements to a per-database pool must override this, otherwise a
+    /// database chosen in the query panel is silently discarded and the
+    /// statement runs on the session's default pool.
+    async fn query_stream_with_execution_at(
+        &self,
+        handle: &ConnectionHandle,
+        execution_id: &QueryExecutionId,
+        sql: &str,
+        limit: Option<u32>,
+        target: SqlTarget<'_>,
+        on_event: QueryStreamCallback,
+    ) -> Result<(), DriverError> {
+        let _ = target;
+        self.query_stream_with_execution(handle, execution_id, sql, limit, on_event)
+            .await
     }
 
     async fn query_with_params(

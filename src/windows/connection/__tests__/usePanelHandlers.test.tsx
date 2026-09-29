@@ -7,6 +7,15 @@ import { DB_REGISTRY } from '../../../lib/databaseTypes';
 import type { DatabaseType } from '../../../types';
 import type { ConnectionContext } from '../../../stores/panelStore';
 
+/**
+ * `DatabaseType` is codegen'd from the drivers resolved into this SKU, so a
+ * driver a case pins (and registers a meta for itself) may be missing from the
+ * current union.
+ */
+function driverType(id: string): DatabaseType {
+  return id as DatabaseType;
+}
+
 function renderHandler(databaseType: DatabaseType, currentDatabase: string | null) {
   const connCtx: ConnectionContext = {
     connectionId: 'conn-1',
@@ -110,7 +119,7 @@ describe('usePanelHandlers.handleNewQuery binds a database to the query tab', ()
 
     // The store currentDatabase is a pin that already encodes the full path:
     // <root>/<catalog>/<schema>.
-    const { result } = renderHandler('superset', '558:hive/snap');
+    const { result } = renderHandler(driverType('superset'), '558:hive/snap');
 
     await act(async () => {
       result.current.handleNewQuery();

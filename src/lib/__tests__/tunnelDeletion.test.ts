@@ -1,6 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
-import { deleteTunnelAndUnbind, unbindConnectionPatch } from '../tunnelDeletion';
+import { describe, expect, it, vi, type Mock } from 'vitest';
+import {
+  deleteTunnelAndUnbind,
+  unbindConnectionPatch,
+  type DeleteTunnelDeps,
+} from '../tunnelDeletion';
 import type { ConnectionConfig } from '../../types';
+
+/** The `deps()` harness keeps every seam a spy so ordering and stubs stay assertable. */
+type DepMocks = { [K in keyof DeleteTunnelDeps]: Mock<DeleteTunnelDeps[K]> };
 
 function connection(id: string, tunnelId?: string): ConnectionConfig {
   return {
@@ -16,14 +23,14 @@ function connection(id: string, tunnelId?: string): ConnectionConfig {
 
 function deps(
   connections: ConnectionConfig[],
-  overrides: Partial<Parameters<typeof deleteTunnelAndUnbind>[1]> = {},
-) {
-  return {
+  overrides: Partial<DeleteTunnelDeps> = {},
+): DepMocks {
+  const base: DepMocks = {
     getConnections: vi.fn().mockResolvedValue(connections),
     saveConnection: vi.fn().mockResolvedValue(undefined),
     deleteTunnel: vi.fn().mockResolvedValue(undefined),
-    ...overrides,
   };
+  return Object.assign(base, overrides);
 }
 
 describe('deleteTunnelAndUnbind', () => {

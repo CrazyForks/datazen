@@ -12,24 +12,40 @@ export function draftToYamlObject(d: WorkflowDraft): Record<string, unknown> {
       description: v.description,
       required: v.required,
     })),
-    steps: d.steps.map((s) => ({
-      type: s.type,
-      id: s.id,
-      ...(s.type === 'migration'
-        ? {
-            operation: s.operation ?? 'dataSync',
-            profileId: s.profileId ?? '',
-            profileRevision: s.profileRevision,
-            destructivePolicy: s.destructivePolicy ?? 'reject',
-            sqlFileTokenVariable: s.sqlFileTokenVariable,
-          }
-        : {
-            sql: s.sql,
-            prompt: s.prompt,
-            connection: s.connection,
-            database: s.database,
-          }),
-    })),
+    steps: d.steps.map((s) => {
+      if (s.type === 'migration') {
+        return {
+          type: s.type,
+          id: s.id,
+          operation: s.operation ?? 'dataSync',
+          profileId: s.profileId ?? '',
+          profileRevision: s.profileRevision,
+          destructivePolicy: s.destructivePolicy ?? 'reject',
+          sqlFileTokenVariable: s.sqlFileTokenVariable,
+        };
+      }
+      if (s.type === 'command') {
+        const input: Record<string, unknown> = { ...(s.input ?? {}) };
+        if (s.database) input.database = s.database;
+        return {
+          type: s.type,
+          id: s.id,
+          command: s.command ?? '',
+          connection: s.connection,
+          input,
+        };
+      }
+      return {
+        type: s.type,
+        id: s.id,
+        sql: s.sql,
+        prompt: s.prompt,
+        connection: s.connection,
+        database: s.database,
+      };
+    }),
+    connection: d.connection,
+    database: d.database,
     schedule: d.scheduleEnabled
       ? { enabled: true, interval_secs: Math.max(30, d.scheduleIntervalSecs ?? 3600) }
       : { enabled: false },
@@ -47,31 +63,46 @@ export function yamlObjectToDraft(obj: Record<string, unknown>): WorkflowDraft {
       }))
     : [];
   const steps = Array.isArray(obj.steps)
-    ? (obj.steps as Array<Record<string, unknown>>).map((s) => ({
-        type: String(s.type ?? 'query') as WorkflowStepType,
-        id: String(s.id ?? ''),
-        sql: String(s.sql ?? ''),
-        prompt: String(s.prompt ?? ''),
-        connection: s.connection != null ? String(s.connection) : undefined,
-        database: s.database != null ? String(s.database) : undefined,
-        operation:
-          s.type === 'migration'
-            ? (String(s.operation ?? 'dataSync') as WorkflowStepDraft['operation'])
-            : undefined,
-        profileId: s.type === 'migration' ? String(s.profileId ?? '') : undefined,
-        profileRevision: s.type === 'migration' ? String(s.profileRevision ?? '') || undefined : undefined,
-        destructivePolicy:
-          s.type === 'migration'
-            ? (String(s.destructivePolicy ?? 'reject') as WorkflowStepDraft['destructivePolicy'])
-            : undefined,
-        sqlFileTokenVariable:
-          s.type === 'migration' ? String(s.sqlFileTokenVariable ?? '') || undefined : undefined,
-      }))
+    ? (obj.steps as Array<Record<string, unknown>>).map((s) => {
+        // Command-step databases are persisted inside input.database.
+        const input = (s.input ?? {}) as Record<string, unknown>;
+        const database =
+          s.database != null
+            ? String(s.database)
+            : input.database != null
+              ? String(input.database)
+              : undefined;
+        return {
+          type: String(s.type ?? 'query') as WorkflowStepType,
+          id: String(s.id ?? ''),
+          sql: String(s.sql ?? ''),
+          prompt: String(s.prompt ?? ''),
+          command: s.command != null ? String(s.command) : '',
+          input,
+          connection: s.connection != null ? String(s.connection) : undefined,
+          database,
+          operation:
+            s.type === 'migration'
+              ? (String(s.operation ?? 'dataSync') as WorkflowStepDraft['operation'])
+              : undefined,
+          profileId: s.type === 'migration' ? String(s.profileId ?? '') : undefined,
+          profileRevision:
+            s.type === 'migration' ? String(s.profileRevision ?? '') || undefined : undefined,
+          destructivePolicy:
+            s.type === 'migration'
+              ? (String(s.destructivePolicy ?? 'reject') as WorkflowStepDraft['destructivePolicy'])
+              : undefined,
+          sqlFileTokenVariable:
+            s.type === 'migration' ? String(s.sqlFileTokenVariable ?? '') || undefined : undefined,
+        };
+      })
     : [];
   return {
     id: String(obj.id ?? ''),
     name: String(obj.name ?? ''),
     description: String(obj.description ?? ''),
+    connection: obj.connection != null ? String(obj.connection) : undefined,
+    database: obj.database != null ? String(obj.database) : undefined,
     variables,
     steps,
     scheduleEnabled: schedule?.enabled ?? false,

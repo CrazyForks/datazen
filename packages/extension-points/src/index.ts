@@ -25,6 +25,12 @@ export type {
   ExtensionSettingsContribution,
 } from './sqlEditorEnhancedEP';
 export { sqlEditorEnhancedEP, sqlEditorProEP } from './sqlEditorEnhancedEP';
+export type {
+  QueryBuilderCatalog,
+  QueryBuilderContribution,
+  QueryBuilderPanelProps,
+  QueryBuilderRelationCandidate,
+} from './queryBuilder';
 
 // SQL Editor Contracts & Semantics
 export * from './sql-editor';

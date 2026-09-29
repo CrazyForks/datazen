@@ -573,6 +573,7 @@ mod tests {
                 "postgres",
                 test.mock.clone(),
                 DriverCapabilities {
+                    has_multi_database: false,
                     supports_cancel_query: true,
                     supports_query_execution_cancel: true,
                     supports_explain: true,
@@ -637,6 +638,7 @@ mod tests {
                 "postgres",
                 test.mock.clone(),
                 DriverCapabilities {
+                    has_multi_database: false,
                     supports_cancel_query: false,
                     supports_query_execution_cancel: false,
                     supports_explain: true,
@@ -677,6 +679,7 @@ mod tests {
                 "postgres",
                 test.mock.clone(),
                 DriverCapabilities {
+                    has_multi_database: false,
                     // The legacy session-wide capability is deliberately
                     // independent; precise cancellation must not be gated by
                     // or fall back to that old API.

@@ -9,13 +9,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   base64ToBytes,
-  bytesToBase64,
   applyBrowserCodec,
   CODECS,
-  BROWSER_CODECS,
   BACKEND_CODECS,
   isBackendCodec,
 } from '../value-editors/valueView/codecs';
+import { bytesToBase64 } from '../__testing__/bytes';
 import { renderView, renderHex, type HexRow } from '../value-editors/valueView/views';
 
 function text(s: string): Uint8Array {
@@ -23,8 +22,12 @@ function text(s: string): Uint8Array {
 }
 
 describe('codecs', () => {
-  it('declares disjoint browser / backend codec sets', () => {
-    expect([...BROWSER_CODECS, ...BACKEND_CODECS].sort()).toEqual([...CODECS].sort());
+  it('sends exactly the tail of CODECS to the backend', () => {
+    // The browser decodes the leading codecs itself; everything from `msgpack`
+    // on has no safe JS deserialiser, so the boundary is the whole invariant —
+    // a codec added to CODECS must be classified, or it silently has no decoder.
+    expect([...CODECS.slice(0, CODECS.length - BACKEND_CODECS.length)]).not.toContain('msgpack');
+    expect(BACKEND_CODECS).toEqual([...CODECS].slice(-BACKEND_CODECS.length));
     expect(isBackendCodec('msgpack')).toBe(true);
     expect(isBackendCodec('gzip')).toBe(false);
   });

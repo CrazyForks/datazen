@@ -172,7 +172,14 @@ pub(crate) async fn execute_driver_command_stream_impl(
     });
 
     let stream_result = driver
-        .query_stream_with_execution(&handle, &execution_id, &sql, limit, wrapped)
+        .query_stream_with_execution_at(
+            &handle,
+            &execution_id,
+            &sql,
+            limit,
+            crate::db::SqlTarget::new(target_database.as_deref(), target_schema.as_deref()),
+            wrapped,
+        )
         .await;
     if let Err(error) = driver.cleanup_query_execution(&handle, &execution_id).await {
         tracing::warn!(

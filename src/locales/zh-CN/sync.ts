@@ -261,6 +261,7 @@ const pack = {
   'schemaDiff.crossDialectNote': '跨方言计划经同步 IR 映射类型；不支持的类型会跳过并警告。',
   'schemaDiff.warnings': '警告',
   'schemaDiff.statements': '语句',
+  'schemaDiff.schemaIdentical': '两端的结构完全一致',
   'schemaDiff.emptyPlan': '未生成可执行的计划语句',
   'schemaDiff.emptyPlanNoDiff': '未生成可执行语句：按当前计划选项，所选结构已经一致。',
   'schemaDiff.emptyPlanSkipped':

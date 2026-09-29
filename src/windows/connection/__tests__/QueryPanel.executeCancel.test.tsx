@@ -4,6 +4,7 @@ import { QueryPanel } from '../QueryPanel';
 import { usePanelStore, type QueryPanel as QueryPanelState } from '../../../stores/panelStore';
 import { EMPTY_QUERY_EXEC } from '../../../stores/queryExecActions';
 import { extensionRegistry, sqlEditorEnhancedEP } from '@datazen/extension-points';
+import type { SqlEditorEnhancedOptions } from '@datazen/extension-points';
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -155,13 +156,13 @@ extensionRegistry.register(sqlEditorEnhancedEP, {
       getHistory: () => [],
     };
   },
-  renderBindParamPanel: ({
-    params,
-    onChange,
-  }: {
-    params: Array<{ name: string }>;
-    onChange: (name: string, value: string) => void;
-  }) => {
+  renderBindParamPanel: (props: SqlEditorEnhancedOptions) => {
+    // The EP contract is intentionally loose (`Record<string, any>`); this
+    // renderer only consumes the bind-parameter slice the host passes.
+    const { params, onChange } = props as {
+      params: Array<{ name: string }>;
+      onChange: (name: string, value: string) => void;
+    };
     const name = params[0]?.name;
     if (!name) return null;
     return (
@@ -216,6 +217,20 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 const PANEL_ID = 'panel-test';
 
+/**
+ * `QueryPanelProps` / `QueryPanelState` declare `database: string` and
+ * `schema: string | null`, but this suite deliberately runs with the panel
+ * *unpinned*: every `??` fallback in `buildQueryPanelDiagnosisContext` /
+ * `readCurrentQueryPanelRetryValidationInput` must keep falling through to the
+ * schema store — the "blocks Retry when the schema context changes" case sets
+ * both `schemaStore.currentDatabase` and the active connection's to `null` and
+ * expects that to be observable. `undefined` is the only value that leaves
+ * those chains untouched (an empty string would short-circuit them), so the
+ * fixture and the props carry it explicitly rather than a real database name.
+ */
+const UNPINNED_DATABASE = undefined as unknown as string;
+const NO_SCHEMA = null;
+
 afterEach(cleanup);
 
 describe('QueryPanel execute/cancel button', () => {
@@ -255,6 +270,8 @@ describe('QueryPanel execute/cancel button', () => {
           connectionName: 'Test connection',
           databaseType: 'postgresql',
           title: 'Test query',
+          database: UNPINNED_DATABASE,
+          schema: NO_SCHEMA,
         } satisfies QueryPanelState,
       ],
       queryExec: new Map([
@@ -298,6 +315,8 @@ describe('QueryPanel execute/cancel button', () => {
         dbSessionId="sess-conn-1"
         connectionId="cfg-1"
         databaseType="postgresql"
+        database={UNPINNED_DATABASE}
+        schema={NO_SCHEMA}
       />,
     );
   }
@@ -387,6 +406,8 @@ describe('QueryPanel execute/cancel button', () => {
         dbSessionId="sess-conn-1"
         connectionId="cfg-1"
         databaseType="postgresql"
+        database={UNPINNED_DATABASE}
+        schema={NO_SCHEMA}
       />,
     );
     expect(screen.getByRole('button', { name: 'query.execute' })).not.toBeDisabled();

@@ -1,12 +1,19 @@
 /** Auto-split domain: settings (ru) */
 const pack = {
+  'settings.editorCompletionIncludeTablePrefix':
+    'Включать имя таблицы или псевдоним в подсказки для столбцов',
+  'settings.enableFkPrediction': 'Умное предсказание внешних ключей',
+  'settings.enableFkPredictionHint':
+    'По умолчанию выключено. Когда включено, выводит внешние ключи из структуры таблиц и их именования там, где схема их не объявляет, и использует их для подсказок JOIN, ранжирования подсказок и ER-диаграммы. Предсказанные связи всегда выделяются особым цветом и удаляются одним щелчком.',
   'settings.title': 'Настройки',
   'settings.general': 'Общий',
+  'settings.nav.group.app': 'Приложение',
+  'settings.nav.group.integration': 'ИИ и интеграции',
   'settings.extensions.title': 'Расширения',
   'settings.extensions.empty': 'В этой сборке нет доступных расширений.',
   'settings.theme': 'Тема',
   'settings.theme.pack': 'Пакет тем',
-  'settings.colorScheme': 'Color scheme',
+  'settings.colorScheme': 'Цветовая схема',
   'settings.theme.packDefault': 'Встроенная по умолчанию',
   'settings.theme.packMissing': 'Отсутствующий пакет ({id})',
   'settings.theme.packMissingHint': 'Выбранный пакет тем больше не установлен.',
@@ -103,10 +110,10 @@ const pack = {
   'settings.confirmDelete': 'Подтвердить удаление',
   'settings.autoCommit': 'Автоматическая фиксация',
   'settings.saved': 'Сохранено',
-  'settings.unsavedChangesTitle': 'Unsaved changes',
-  'settings.unsavedChangesMessage': 'You have unsaved changes. Save them before leaving?',
-  'settings.saveChanges': 'Save changes',
-  'settings.discardChanges': 'Discard changes',
+  'settings.unsavedChangesTitle': 'Несохранённые изменения',
+  'settings.unsavedChangesMessage': 'Есть несохранённые изменения. Сохранить их перед выходом?',
+  'settings.saveChanges': 'Сохранить изменения',
+  'settings.discardChanges': 'Отклонить изменения',
   'settings.limitSelectHint':
     'Автоматически добавлять ограничение на количество строк в инструкции SELECT без LIMIT. Большие результаты всегда передаются потоком; выключение этого параметра не отключает потоковую передачу.',
   'settings.confirmDeleteHint': 'Показывать диалоговое окно подтверждения при удалении строк',
@@ -118,14 +125,14 @@ const pack = {
     'Фоновое обновление дашбордов, системный трей, оповещения и хранение истории запусков.',
   'settings.monitor.trayEnabled': 'Показывать значок в системном трее',
   'settings.monitor.trayEnabledHint':
-    'Трей появляется, когда хотя бы один виджет дашборда активно отслеживается.',
+    'Трей появляется, когда активно отслеживается хотя бы один отчёт дашборда.',
   'settings.monitor.closeToTray': 'Свернуть в трей',
   'settings.monitor.closeToTrayHint':
     'При активном мониторинге закрытие окна скрывает приложение вместо завершения работы.',
   'settings.monitor.defaultWebhookUrl': 'URL webhook по умолчанию',
   'settings.monitor.maxConcurrentQueries': 'Макс. одновременных запросов мониторинга',
-  'settings.monitor.runRetentionCount': 'Количество записей истории (на виджет)',
-  'settings.monitor.runRetentionDays': 'Дни хранения истории (на виджет)',
+  'settings.monitor.runRetentionCount': 'Количество записей истории (на отчёт)',
+  'settings.monitor.runRetentionDays': 'Дни хранения истории (на отчёт)',
   'settings.monitor.exportIncludeDashboardRuns': 'Включить историю запусков в экспорт данных',
   'settings.monitor.exportIncludeDashboardRunsHint':
     'При выключении ZIP-экспорт данных пропускает dashboard-runs/.',
@@ -156,9 +163,9 @@ const pack = {
     'Настройте поставщика искусственного интеллекта для включения NL-to-SQL, диагностики ошибок и других интеллектуальных функций.',
   'settings.ai.goToConfigure': 'Зайдите в настройки',
   'settings.ai.protocol': 'Протокол',
-  'settings.ai.protocolOpenAiChat': 'Завершения чата OpenAI',
-  'settings.ai.protocolOpenAiResponses': 'Ответы OpenAI',
-  'settings.ai.protocolAnthropic': 'Антропные сообщения',
+  'settings.ai.protocolOpenAiChat': 'OpenAI Chat Completions',
+  'settings.ai.protocolOpenAiResponses': 'OpenAI Responses',
+  'settings.ai.protocolAnthropic': 'Anthropic Messages',
   'settings.ai.fetchModels': 'Получить модели',
   'settings.ai.fetchingModels': 'Получение…',
   'settings.ai.modelManual': 'Введите идентификатор модели вручную',
@@ -246,5 +253,84 @@ const pack = {
     'Шаблоны промптов ведутся на английском языке для точности и стабильности рассуждений. Ответ ИИ автоматически подстроится под язык приложения.',
   'settings.mcp.title': 'MCP-сервер',
   'settings.mcpClient.title': 'Внешние серверы MCP',
+  // ── Туннели ──────────────────────────────────────────────────
+  'settings.tunnels.title': 'Туннели',
+  'settings.tunnels.description':
+    'Сохранённые туннели хранятся в зашифрованном виде, и их может использовать любое подключение. Удаление туннеля отвязывает подключения, которые на него ссылаются.',
+  'settings.tunnels.empty': 'Сохранённых туннелей пока нет',
+  'settings.tunnels.emptyHint':
+    'Создайте туннель здесь или сохраните встроенную конфигурацию туннеля из формы подключения.',
+  'settings.tunnels.create': 'Новый туннель',
+  'settings.tunnels.loadFailed': 'Не удалось загрузить сохранённые туннели.',
+  'settings.tunnels.usageCount': 'Используется подключениями: {count}',
+  'settings.tunnels.usageNone': 'Не используется',
+  'settings.tunnels.usagePending': 'Проверка ссылок…',
+  'settings.tunnels.copySuffix': ' (копия)',
+  'settings.tunnels.copyFailed': 'Не удалось скопировать туннель.',
+  'settings.tunnels.edit': 'Изменить',
+  'settings.tunnels.copy': 'Копировать',
+  'settings.tunnels.test': 'Проверить',
+  'settings.tunnels.delete': 'Удалить',
+  'settings.tunnels.kind.ssh': 'SSH',
+  'settings.tunnels.kind.httpProxy': 'HTTP-прокси',
+  'settings.tunnels.kind.websocket': 'WebSocket',
+  'settings.tunnels.editor.createTitle': 'Новый туннель',
+  'settings.tunnels.editor.editTitle': 'Изменение туннеля',
+  'settings.tunnels.editor.description':
+    'Учётные данные хранятся в зашифрованном виде и никогда не показываются в списке туннелей.',
+  'settings.tunnels.editor.name': 'Название',
+  'settings.tunnels.editor.namePlaceholder': 'например Бастион (staging)',
+  'settings.tunnels.editor.kind': 'Тип',
+  'settings.tunnels.editor.loadFailed':
+    'Не удалось загрузить этот туннель — возможно, он был удалён.',
+  'settings.tunnels.editor.saveFailed': 'Не удалось сохранить туннель.',
+  'settings.tunnels.validation.name': 'Введите название.',
+  'settings.tunnels.validation.sshHost': 'Введите SSH-хост.',
+  'settings.tunnels.validation.sshPort': 'Введите допустимый порт (1–65535).',
+  'settings.tunnels.validation.sshUsername': 'Введите имя пользователя SSH.',
+  'settings.tunnels.validation.sshJumpHost': 'Введите транзитный хост.',
+  'settings.tunnels.validation.sshJumpPort': 'Введите допустимый порт транзитного узла (1–65535).',
+  'settings.tunnels.validation.sshJumpUsername': 'Введите имя пользователя транзитного узла.',
+  'settings.tunnels.validation.httpProxyHost': 'Введите хост прокси.',
+  'settings.tunnels.validation.httpProxyPort': 'Введите допустимый порт прокси (1–65535).',
+  'settings.tunnels.validation.wsUrl': 'Введите URL ретранслятора.',
+  'settings.tunnels.delete.title': 'Удаление туннеля',
+  'settings.tunnels.delete.description': '«{name}» будет удалён безвозвратно.',
+  'settings.tunnels.delete.affected':
+    'На него ссылаются эти подключения. Они будут отвязаны и переключены на прямое подключение:',
+  'settings.tunnels.delete.noReferences': 'Ни одно подключение не ссылается на этот туннель.',
+  'settings.tunnels.delete.unbindHint':
+    'Туннель будет удалён только после снятия всех ссылок. Если отвязка не удастся, ничего не будет удалено.',
+  'settings.tunnels.delete.confirm': 'Удалить и отвязать',
+  'settings.tunnels.delete.confirming': 'Удаление…',
+  'settings.tunnels.delete.failed': 'Не удалось удалить туннель.',
+  'settings.tunnels.delete.unbindFailed':
+    'Не удалось отвязать подключение, поэтому ничего не удалено.',
+  'settings.tunnels.delete.rollbackNote':
+    'Восстановлено подключений: {restored}; всё ещё привязано: {failed}.',
+  'settings.tunnels.delete.deleteFailed':
+    'Все ссылки сняты, но сам туннель удалить не удалось. Попробуйте удалить его снова.',
+  'settings.tunnels.test.title': 'Проверка туннеля',
+  'settings.tunnels.test.description': 'Выполняет активную проверку через «{name}».',
+  'settings.tunnels.test.targetHost': 'Целевой хост',
+  'settings.tunnels.test.targetPort': 'Целевой порт',
+  'settings.tunnels.test.run': 'Запустить проверку',
+  'settings.tunnels.test.running': 'Проверка…',
+  'settings.tunnels.test.success': 'Проверка успешно пройдена за {ms} мс.',
+  'settings.tunnels.test.failed': 'Проверка не пройдена: {error}',
+  'settings.tunnels.test.hostRequired': 'Введите целевой хост.',
+  'settings.tunnels.test.portRequired': 'Введите допустимый целевой порт (1–65535).',
+  'settings.tunnels.test.scope.ssh':
+    'Проверка SSH подтверждает только достижимость транзитного узла и успешную аутентификацию — она не доказывает, что через него достижим целевой узел.',
+  'settings.tunnels.test.scope.httpProxy':
+    'Проверка HTTP-прокси отправляет через прокси рукопожатие CONNECT для целевого узла.',
+  'settings.tunnels.test.scope.websocket':
+    'Проверка WebSocket тестирует ретранслятор: в режиме raw_binary она подтверждает только его достижимость, а datazen_v1 открывает канал к целевому узлу.',
+  'settings.tunnels.test.scope.general':
+    'Успешная проверка не гарантирует, что ваша база данных достижима через этот туннель.',
+  'settings.updater.manualDescription':
+    'В этой сборке нет канала подписанных обновлений. Для обновления установите подходящий выпуск со страницы GitHub Releases.',
+  'settings.updater.manualVariant': 'Текущая сборка: {variant}',
+  'settings.updater.openReleases': 'Открыть страницу Releases',
 } as const;
 export default pack;

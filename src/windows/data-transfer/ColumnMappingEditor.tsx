@@ -176,7 +176,7 @@ function RecordsetEditor({
   const tupleRange = recordset?.tupleRange;
   const orderBy = recordset?.orderBy ?? defaultOrder ?? '';
   const orderOptions = [
-    { value: '', label: t('transfer.mapping.recordset.orderRequired') },
+    { value: '', label: t('transfer.mapping.recordsetOrderRequired') },
     ...columns.map((column) => ({
       value: column,
       label: table.sourceColumnTypes?.[column]

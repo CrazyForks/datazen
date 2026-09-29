@@ -41,27 +41,12 @@ export function useKvLoadedCount(state: KvSlotState): number {
  * Last SCAN cursor the tree reported; `'0'` means it wrapped.
  *
  * Reading `'0'` **alone does not mean the scan finished** (F-1): a fresh panel
- * also reports `'0'`. Renderers must pair it with {@link useKvLoadedCount} /
- * {@link useKvScanBudgetUsed} before claiming completion — see
- * `contextBarModel.deriveScanReadout` for the pair used by the context bar.
+ * also reports `'0'`. Renderers must pair it with {@link useKvLoadedCount} before
+ * claiming completion — see `scanStateOf` in `KvStatusBar.tsx` for the pair this
+ * driver's own renderer uses.
  */
 export function useKvScanCursor(state: KvSlotState): string {
   return useSyncExternalStore(state.subscribe, state.getScanCursor);
-}
-
-/** Whether a scan is in flight right now (drives the progress cluster). */
-export function useKvScanning(state: KvSlotState): boolean {
-  return useSyncExternalStore(state.subscribe, state.isScanning);
-}
-
-/** `COUNT` already consumed by the current user action; `0` = not in play. */
-export function useKvScanBudgetUsed(state: KvSlotState): number {
-  return useSyncExternalStore(state.subscribe, state.getScanBudgetUsed);
-}
-
-/** Budget ceiling for the current action; `0` = unknown (F-1). Never rendered as a fraction. */
-export function useKvScanBudgetTotal(state: KvSlotState): number {
-  return useSyncExternalStore(state.subscribe, state.getScanBudgetTotal);
 }
 
 /** Multi-selection size. The keys themselves stay in the workbench (PRD I-8). */

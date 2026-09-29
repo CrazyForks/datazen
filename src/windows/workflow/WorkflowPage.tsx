@@ -32,7 +32,6 @@ import type { ColumnDef } from '../../components/DataTable/TableHeader';
 import { ChartView } from '../../components/chart/ChartView';
 import { WorkflowChatPanel } from '../../components/ai/WorkflowChatPanel';
 import { isChartableResult } from '../../lib/chart/fieldInference';
-import { DB_REGISTRY } from '../../lib/databaseTypes';
 import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { LocaleDomainLoading } from '../../components/LocaleDomainLoading';
@@ -55,7 +54,7 @@ import { openDocsWindow } from '../../lib/windowManager';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { createEmptyDashboard } from '../dashboard/DashboardPanel';
 import { AddToDashboardDialog } from '../dashboard/AddToDashboardDialog';
-import { WorkflowForm, emptyDraft } from './WorkflowForm';
+import { WorkflowForm, emptyDraft, connectionAllowsMultiDb } from './WorkflowForm';
 import type { WorkflowDraft } from './WorkflowForm';
 import { WorkflowYamlEditor } from './WorkflowYamlEditor';
 import { WorkflowEditorActionBar } from './WorkflowEditorActionBar';
@@ -121,13 +120,7 @@ function stepNeedsDatabase(
     if (s.type !== 'query' && s.type !== 'command') return false;
     const connId = s.connection || draftConnection;
     const conn = connId ? connections.find((c) => c.id === connId) : undefined;
-    if (!conn) return false;
-    const meta = DB_REGISTRY[conn.databaseType as keyof typeof DB_REGISTRY];
-    if (!meta?.hasMultiDatabase) return false;
-    // Domain-type drivers (e.g. Kiwi) keep a configured instance domain
-    // separate and never lock the connection to a single database.
-    const lockedToSingle = Boolean(conn.database) && meta.databaseFieldType !== 'domain';
-    if (lockedToSingle) return false;
+    if (!connectionAllowsMultiDb(conn)) return false;
     const effectiveDatabase = s.database || draftDatabase;
     return !effectiveDatabase;
   });
@@ -182,6 +175,16 @@ export function WorkflowPage({
   const [savedConnections, setSavedConnections] = useState<
     { id: string; name: string; databaseType: string; database?: string }[]
   >([]);
+  // Same multi-db rule the visual form uses, handed to `validateWorkflowFields`
+  // so YAML-mode saves are held to the identical standard.
+  const validationConnections = useMemo(
+    () =>
+      savedConnections.map((c) => ({
+        id: c.id,
+        requiresExplicitDatabase: connectionAllowsMultiDb(c),
+      })),
+    [savedConnections],
+  );
   const [sideTab, setSideTab] = useState<'workflows' | 'history'>(
     () => savedSnapshot?.sideTab ?? 'workflows',
   );
@@ -365,7 +368,7 @@ export function WorkflowPage({
 
           try {
             const parsed = parseWorkflowYaml(p.yamlText);
-            const missing = validateWorkflowFields(parsed);
+            const missing = validateWorkflowFields(parsed, validationConnections);
             if (missing) {
               setOperationError(t('workflows.editor.invalidYamlField', { field: missing }));
               return p;
@@ -547,14 +550,14 @@ export function WorkflowPage({
         setFeedback(String(e));
       }
     },
-    [closePanel, t, loadWorkflows],
+    [closePanel, t, loadWorkflows, validationConnections],
   );
 
   const handleSaveYaml = useCallback(
     async (panelId: string, yamlText: string) => {
       try {
         const parsed = parseWorkflowYaml(yamlText);
-        const missing = validateWorkflowFields(parsed);
+        const missing = validateWorkflowFields(parsed, validationConnections);
         if (missing) {
           setFeedback(t('workflows.yaml.missingField', { field: missing }));
           return;
@@ -568,7 +571,7 @@ export function WorkflowPage({
         setFeedback(String(e));
       }
     },
-    [closePanel, t, loadWorkflows],
+    [closePanel, t, loadWorkflows, validationConnections],
   );
 
   const handleClearHistory = async () => {
@@ -933,6 +936,7 @@ export function WorkflowPage({
               <Button
                 variant="run"
                 className="h-8 text-xs"
+                data-testid="workflow-execute-button"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => void handleExecute()}
                 disabled={isExecuting}
@@ -961,6 +965,8 @@ export function WorkflowPage({
           {currentResult && (
             <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge bg-surface-alt px-3 py-1">
               <span
+                data-testid="workflow-run-status"
+                data-success={currentResult.success ? 'true' : 'false'}
                 className={cn(
                   'text-xs font-medium whitespace-nowrap',
                   currentResult.success ? 'text-green-500' : 'text-red-400',

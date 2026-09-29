@@ -14,6 +14,10 @@ const supported: DriverCapabilities = {
   supportsQueryExecutionCancel: true,
   supportsExplain: true,
   supportsStreamingResults: true,
+  // Not read by the view model (it only branches on the cancel pair above);
+  // carried so the fixture satisfies the whole capability contract.
+  supportsOffset: true,
+  hasSchemaLevel: false,
 };
 
 const unsupported: DriverCapabilities = {
@@ -105,9 +109,7 @@ describe('queryExecutionViewModel', () => {
     );
     expect(getCancelActionState(requested)).toBe('requested');
     expect(
-      getCancelActionState(
-        toQueryExecutionViewModel(exec({ running: true }), unsupported),
-      ),
+      getCancelActionState(toQueryExecutionViewModel(exec({ running: true }), unsupported)),
     ).toBe('unavailable');
   });
 

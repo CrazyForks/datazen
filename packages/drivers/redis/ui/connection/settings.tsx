@@ -1,4 +1,4 @@
-import { Select } from '@datazen/ui';
+import { Select, useI18n } from '@datazen/ui';
 
 export const redisSettingsSchema = {
   type: 'object',
@@ -31,6 +31,7 @@ export function RedisSettingsSection({
   value: unknown;
   onChange: (next: unknown) => void;
 }) {
+  const { t } = useI18n();
   const v = (value && typeof value === 'object' ? value : {}) as RedisPluginSettings;
   const clusterRouting = v.clusterRouting === 'pinnedNode' ? 'pinnedNode' : 'auto';
 
@@ -42,11 +43,11 @@ export function RedisSettingsSection({
           checked={v.allowFlush === true}
           onChange={(e) => onChange({ ...v, allowFlush: e.target.checked })}
         />
-        <span>Allow FLUSHDB / FLUSHALL</span>
+        <span>{t('redis.settings.allowFlush')}</span>
       </label>
 
       <div>
-        <div className="mb-1 font-medium">Cluster routing</div>
+        <div className="mb-1 font-medium">{t('redis.settings.clusterRouting')}</div>
         <Select
           value={clusterRouting}
           onChange={(val) =>
@@ -57,8 +58,8 @@ export function RedisSettingsSection({
           }
           className="h-8 w-full text-xs"
           options={[
-            { value: 'auto', label: 'Auto — follow MOVED / ASK' },
-            { value: 'pinnedNode', label: 'Pinned node — target one cluster node' },
+            { value: 'auto', label: t('redis.settings.clusterRoutingAuto') },
+            { value: 'pinnedNode', label: t('redis.settings.clusterRoutingPinned') },
           ]}
         />
       </div>

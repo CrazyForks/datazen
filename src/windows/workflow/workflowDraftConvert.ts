@@ -50,11 +50,19 @@ export function workflowDraftToDefinition(draft: WorkflowDraft): WorkflowDefinit
     })),
     steps: draft.steps.map((s) => {
       if (s.type === 'command') {
+        // `WorkflowStep::Command` has no `database` field on the Rust side —
+        // its target lives in `input.database`. The form still offers a
+        // step-level database dropdown for command steps, so carry the choice
+        // across here instead of dropping it on the floor.
+        const input: Record<string, unknown> = { ...(s.input ?? {}) };
+        if (s.database && input.database == null) {
+          input.database = s.database;
+        }
         return {
           type: 'command' as const,
           id: s.id,
           command: s.command ?? '',
-          input: s.input ?? {},
+          input,
           connection: s.connection,
         };
       }

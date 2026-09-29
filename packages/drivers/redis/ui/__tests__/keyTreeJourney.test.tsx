@@ -73,7 +73,6 @@ vi.mock('../shared/redisInvoke', async (importOriginal) => ({
 
 import { RedisWorkbench } from '../key-browser/RedisWorkbench';
 import { toScanPattern } from '../key-browser/useWorkbenchSearch';
-import { KEY_TYPE_FILTERS } from '../key-browser/keyTree';
 
 bindSettingsStore(
   create<SettingsBridgeState>(() => ({
@@ -84,9 +83,14 @@ bindConnectionStore(create<ConnectionBridgeState>(() => ({ connections: [] })));
 bindConfirmDialog(() => [async () => true, null]);
 bindSchemaStore(
   create<SchemaStoreState>(() => ({
+    pathItems: {},
     databases: ['db0', 'db1'],
     loading: false,
     loadForConnection: async () => {},
+    setLoadedTables: () => {},
+    mergeNamespace: () => {},
+    registerPathAliases: () => {},
+    cachePathItems: () => {},
   })),
 );
 
@@ -162,44 +166,13 @@ describe('R1 column header (D-1)', () => {
     expect(screen.queryByTestId('redis-db-sidebar')).toBeNull();
   });
 
-  it('marks the counter partial while the cursor is open and exact once drained', async () => {
+  it('marks the counter partial while the scan cursor is still open', async () => {
     renderWorkbench();
     const counter = await screen.findByTestId('redis-tree-count');
     await waitFor(() => expect(counter.getAttribute('data-loaded')).toBe('2'));
     // First page answered with cursor 7 ⇒ the loaded set is not the total.
     expect(counter.getAttribute('data-partial')).toBe('true');
     expect(counter.getAttribute('data-total')).toBe('2');
-
-    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(false);
-    fireEvent.click(screen.getByTestId('redis-tree-clear-selection'));
-    expect(screen.getByTestId('redis-tree-clear-selection').disabled).toBe(true);
-  });
-
-  it('counts the selection into the batch-delete badge and disables it when empty', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-count');
-    expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(true);
-
-    fireEvent.click(screen.getByTestId('redis-tree-select-all'));
-    const badge = await screen.findByTestId('redis-tree-batch-delete-count');
-    expect(badge.getAttribute('data-count')).toBe('2');
-    expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(false);
-
-    // Enter → the dialog opens; cancel is the exit transition and must leave the
-    // selection untouched (a cancelled write never eats the user's checklist).
-    fireEvent.click(screen.getByTestId('redis-tree-batch-delete'));
-    expect(await screen.findByTestId('redis-batch-delete-confirm')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('redis-batch-delete-cancel'));
-    await waitFor(() => expect(screen.queryByTestId('redis-batch-delete-confirm')).toBeNull());
-    expect(
-      (screen.getByTestId('redis-tree-batch-delete-count') as HTMLElement).getAttribute(
-        'data-count',
-      ),
-    ).toBe('2');
-
-    fireEvent.click(screen.getByTestId('redis-tree-clear-selection'));
-    expect(screen.getByTestId('redis-tree-batch-delete').disabled).toBe(true);
   });
 });
 
@@ -207,18 +180,23 @@ describe('R2 search row (D-2)', () => {
   it('toScanPattern resolves literal, glob, blank and fuzzy states', () => {
     expect(toScanPattern('', false)).toBe('*');
     expect(toScanPattern('   ', true)).toBe('*');
-    expect(toScanPattern('user', false)).toBe('user');
+    // A literal is a PREFIX, not an exact key: `app` has to reach `app:cache`.
+    expect(toScanPattern('app', false)).toBe('app*');
+    expect(toScanPattern('user', false)).toBe('user*');
     expect(toScanPattern('user', true)).toBe('*user*');
-    // an explicit glob is never widened
+    // an explicit glob is never widened, in either chip state
     expect(toScanPattern('user:*', true)).toBe('user:*');
+    expect(toScanPattern('user:*', false)).toBe('user:*');
     expect(toScanPattern('[a-z]bc', true)).toBe('[a-z]bc');
     // whitespace around a literal is not part of the key, and trimming happens
-    // *before* fuzzy wrapping so the star hugs the pattern
-    expect(toScanPattern('  user:1  ', false)).toBe('user:1');
+    // *before* wrapping so the star hugs the pattern
+    expect(toScanPattern('  user:1  ', false)).toBe('user:1*');
     expect(toScanPattern('  user  ', true)).toBe('*user*');
-    // a literal is never widened by itself
+    // fuzzy still widens a literal that has no glob char
     expect(toScanPattern('user:1', true)).toBe('*user:1*');
-    expect(toScanPattern('user:1', false)).toBe('user:1');
+    // …and a hand-written trailing star is not doubled
+    expect(toScanPattern('app*', false)).toBe('app*');
+    expect(toScanPattern('app*', true)).toBe('app*');
   });
 
   it('walks the whole typing journey without ever losing the applied pattern', async () => {
@@ -230,7 +208,7 @@ describe('R2 search row (D-2)', () => {
     fireEvent.change(input, { target: { value: 'us' } });
     fireEvent.change(input, { target: { value: 'user' } });
     expect(input).toHaveValue('user');
-    expect(scanKeys.mock.calls.filter((c) => c[2] === 'user')).toHaveLength(0);
+    expect(scanKeys.mock.calls.filter((c) => c[2] === 'user*')).toHaveLength(0);
 
     // Fuzzy chip on → Enter: literal becomes a substring glob.
     fireEvent.click(screen.getByTestId('redis-tree-chip-fuzzy'));
@@ -238,10 +216,11 @@ describe('R2 search row (D-2)', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(lastScan().pattern).toBe('*user*'));
 
-    // Chip back off → same input is now a literal exact-match search.
+    // Chip back off → the same input narrows to a key prefix (not a bare `user`,
+    // which would admit only the one key spelled `user`).
     fireEvent.click(screen.getByTestId('redis-tree-chip-fuzzy'));
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(lastScan().pattern).toBe('user'));
+    await waitFor(() => expect(lastScan().pattern).toBe('user*'));
 
     // Esc clears the input (exit transition of the row, no scan left running).
     fireEvent.keyDown(input, { key: 'Escape' });
@@ -262,28 +241,6 @@ describe('R2 search row (D-2)', () => {
     fireEvent.click(screen.getByTestId('redis-tree-load-more'));
     await waitFor(() => expect(lastScan().pattern).toBe('user:*'));
     expect(lastScan().cursor).toBe(7);
-  });
-
-  it('keeps the type filter (our edge over the reference product) on the row', async () => {
-    renderWorkbench();
-    await screen.findByTestId('redis-tree-search-row');
-    const chip = screen.getByTestId('redis-tree-chip-type');
-    expect(chip.getAttribute('data-key-type')).toBe('all');
-
-    // The design-system Select is a listbox that commits on mousedown, so the
-    // journey walks the real pointer order: open → pick → state leaves the chip.
-    fireEvent.click(screen.getByTestId('redis-tree-type-filter'));
-    const options = await screen.findAllByTestId('select-option');
-    fireEvent.mouseDown(options[KEY_TYPE_FILTERS.findIndex((item) => item.value === 'hash')]);
-
-    await waitFor(() => expect(lastScan().opts.keyType).toBe('hash'));
-    await waitFor(() => expect(chip.getAttribute('data-key-type')).toBe('hash'));
-
-    // Back to "all" is a filter change, not a no-op: the scan restarts unfiltered.
-    fireEvent.click(screen.getByTestId('redis-tree-type-filter'));
-    const reopened = await screen.findAllByTestId('select-option');
-    fireEvent.mouseDown(reopened[KEY_TYPE_FILTERS.findIndex((item) => item.value === 'all')]);
-    await waitFor(() => expect(lastScan().opts.keyType).toBe('all'));
   });
 
   it('toggles the no-expiry filter into the scan request', async () => {

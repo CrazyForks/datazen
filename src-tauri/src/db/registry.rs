@@ -29,6 +29,10 @@ pub struct DriverCapabilities {
     /// whole namespace in `database`, so sending it a schema is an error rather
     /// than a hint.
     pub has_schema_level: bool,
+    /// Whether one connection can address more than one `database`. Drives
+    /// the "you must name a database" rule for workflows, whose steps carry
+    /// no session of their own to inherit a default from.
+    pub has_multi_database: bool,
 }
 
 impl DriverCapabilities {
@@ -41,6 +45,7 @@ impl DriverCapabilities {
             supports_streaming_results: factory.supports_streaming_results(),
             supports_offset: driver.supports_offset(),
             has_schema_level: driver.has_schema_level(),
+            has_multi_database: driver.has_multi_database(),
         }
     }
 }
@@ -278,6 +283,7 @@ mod tests {
         DriverCapabilities {
             supports_offset: true,
             has_schema_level: false,
+            has_multi_database: false,
             supports_cancel_query,
             supports_query_execution_cancel: supports_cancel_query,
             supports_explain: true,

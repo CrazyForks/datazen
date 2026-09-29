@@ -2,8 +2,10 @@ import { TOOLBAR_GAP, TOOLBAR_HORIZONTAL_PADDING } from '../../hooks/useCompactT
 import { pathHierarchySelectorSegmentsForUi } from '../../lib/queryContextPath';
 import type { SqlNamespace } from '../../lib/sqlNamespace';
 
-/** Slightly under measured width so expanded labels show when space is adequate. */
-const QUERY_TOOLBAR_BUTTON_WIDTH = 84;
+/** Icon-only toolbar button (h-7 square) plus a small allowance. */
+const QUERY_TOOLBAR_ICON_BUTTON_WIDTH = 32;
+/** Shortcut hint + row/affected/time texts rendered on the right-hand side. */
+const QUERY_TOOLBAR_STATUS_WIDTH = 236;
 const PATH_HIERARCHY_SELECT_MAX = 88;
 const PATH_HIERARCHY_SELECT_MIN = 40;
 const PATH_HIERARCHY_LABEL_MAX = 72;
@@ -41,10 +43,14 @@ export function queryToolbarExpandedMinWidth(options: {
   databases: readonly string[];
   contextPath: readonly string[];
   currentDatabase?: string | null;
-  /** @deprecated Explain moved to overflow menu; kept for call-site compatibility. */
+  /** Explain is a direct toolbar button now; counted for the width budget. */
   supportsExplain?: boolean;
 }): number {
-  const buttonCount = 7 + (options.inTransaction ? 2 : 0);
+  // execute / strategy / save / nl2sql / format / snippets / refresh / begin-tx
+  // / history / favorites, plus Explain when the driver supports it, one slot
+  // reserved for the Pro visual-builder button, and the commit/rollback pair
+  // that replaces begin-tx while a transaction is open.
+  const buttonCount = 10 + (options.supportsExplain ? 1 : 0) + 1 + (options.inTransaction ? 1 : 0);
 
   let contextWidth = 0;
   if (options.hasContextSelectors) {
@@ -77,8 +83,9 @@ export function queryToolbarExpandedMinWidth(options: {
 
   return (
     TOOLBAR_HORIZONTAL_PADDING +
-    buttonCount * QUERY_TOOLBAR_BUTTON_WIDTH +
+    buttonCount * QUERY_TOOLBAR_ICON_BUTTON_WIDTH +
     Math.max(0, buttonCount - 1) * TOOLBAR_GAP +
+    QUERY_TOOLBAR_STATUS_WIDTH +
     contextWidth +
     8
   );
