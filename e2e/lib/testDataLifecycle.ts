@@ -242,7 +242,17 @@ export async function seedDefaultPgConnection(browser: Browser, workerDb?: strin
   const pgUser = process.env.E2E_PG_USER || process.env.PG_USER || 'postgres';
   const pgPassword = process.env.E2E_PG_PASSWORD || process.env.PG_PASSWORD || '';
   const pgDatabase = workerDb || process.env.E2E_PG_DB || process.env.PG_DATABASE || 'postgres';
-  const pgSchema = process.env.E2E_WORKER_SCHEMA || undefined;
+  // Deliberately no connection-level `schema`. Every DB spec creates its fixture
+  // objects unqualified, so they all live in the connection's default schema
+  // (`public` for PostgreSQL) and that is what the table panel reports as its
+  // change context. Binding the connection to E2E_WORKER_SCHEMA — a schema no
+  // spec writes to — made the backend's schema guard in `commit_pending_changes`
+  // answer "Schema context changed" for every staged row commit, and the store
+  // then cleared the pending map as if it had succeeded, so the write was
+  // silently dropped (detail-panel DP-004). Worker isolation already comes from
+  // the per-worker database above; `E2E_WORKER_SCHEMA` stays a navigator hint
+  // for `expandSchemaCategory`, which never reads the connection config.
+  const pgSchema: string | undefined = undefined;
 
   await browser.executeAsync(
     (

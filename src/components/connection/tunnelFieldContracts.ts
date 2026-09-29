@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from 'react';
+import type { PathPicker } from '@datazen/ui';
 import type { SshAuthMethod } from '../../types';
 
 /**
@@ -51,6 +52,11 @@ export interface SshTunnelFieldsValue {
   setSshJumpPassphrase: (value: string) => void;
   /** Tab-to-fill factory; consumers without clipboard fill pass a no-op. */
   tabFill: (setter: (value: string) => void) => (e: KeyboardEvent<HTMLInputElement>) => void;
+  /**
+   * Opens the host's native path picker for the key-path fields. `PathInput`
+   * is a pure view, so every host of these fields must supply one.
+   */
+  pickPath: PathPicker;
 }
 
 export interface HttpProxyTunnelFieldsValue {

@@ -116,9 +116,10 @@ describe('Dialog', () => {
 
   it('takes the close button label from i18n, not from the library default', () => {
     // The two locators above read `common.close` back from the dictionary, which
-    // is copy-change-proof but *not* wiring-proof: the shipped en wording and
-    // `@datazen/ui`'s non-i18n `closeLabel = 'Close'` default are the same
-    // string, so dropping the wrapper's `t()` injection would leave them green.
+    // is copy-change-proof but *not* wiring-proof: the shipped en wording and the
+    // pre-i18n `closeLabel = 'Close'` literal that `@datazen/ui`'s `Dialog` still
+    // falls back to for an unregistered `common.close` are the same string, so
+    // dropping the wrapper's `t()` injection would leave them green.
     // This case closes that hole with a wording only this test owns (原则六 第 2
     // 类：测试自造数据): if the host wrapper ever stopped feeding
     // `t('common.close')` into `closeLabel`, the probe name never renders.

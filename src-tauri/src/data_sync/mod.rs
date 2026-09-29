@@ -40,6 +40,7 @@ pub use gate::{check_table_gate, CompatCode, CompatIssue, GateVerdict};
 pub use keyset::{
     build_keyset_select_sql, build_keyset_select_sql_with_order,
     build_keyset_select_sql_with_order_and_filter,
+    build_keyset_select_sql_with_order_filter_and_pagination,
 };
 pub use legacy::{
     is_overwrite_copy_retired_message, refuse_overwrite_copy, OVERWRITE_COPY_RETIRED,

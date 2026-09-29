@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Loader2 } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { cn } from './cn';
+import { Spinner } from './Spinner';
 
 export interface SelectOption {
   readonly value: string;
@@ -443,7 +444,7 @@ export function Select({
             onClick={() => (open ? handleClose() : handleOpen())}
           >
             {loading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-fg-muted" />
+              <Spinner size="md" tone="muted" />
             ) : (
               <ChevronDown
                 className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')}
@@ -507,7 +508,7 @@ export function Select({
           {selectedOption?.label ?? placeholder ?? ''}
         </span>
         {loading ? (
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-fg-muted" />
+          <Spinner size="md" tone="muted" className="shrink-0" />
         ) : (
           <ChevronDown
             className={cn(

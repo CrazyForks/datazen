@@ -6,6 +6,7 @@ import type { I18nKey } from '../locales';
 import { Select } from './ui/Select';
 import { Input } from './ui/Input';
 import { Button } from './ui/Button';
+import { ErrorBanner } from './ui/ErrorBanner';
 import { cn } from '../lib/cn';
 import { filterDraftEqualsApplied, isCompleteFilter } from '../stores/tableData/filterUtils';
 import { formatCell } from '../lib/formatters';
@@ -503,13 +504,9 @@ export function FilterEditor({
             )}
           >
             {applyError && (
-              <div
-                className="basis-full px-1 py-1 text-xs text-red-400"
-                role="alert"
-                data-testid="filter-error"
-              >
+              <ErrorBanner className="basis-full px-1 py-1" data-testid="filter-error">
                 {applyError}
-              </div>
+              </ErrorBanner>
             )}
             {draftFilters.length === 0 ? (
               <div className="px-1 py-1 text-xs text-fg-muted">{t('filter.noActive')}</div>

@@ -2,7 +2,7 @@
 
 > DataZen 架构设计系列第 1 篇。本文先建立全局视角：DataZen 为什么选择 Tauri、Rust 与 React，它怎样把数据库驱动、AI、Workflow 和 MCP 组织在同一套架构中，以及一条 SQL 从编辑器出发后究竟经历了什么。
 
-![DataZen](../promotion/assets/datazen-toutiao-cover.png)
+![DataZen](https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/screenshots/01-main-window.png)
 
 数据库客户端看起来很像一种“已经被解决”的软件：左边放一棵数据库对象树，中间放一个 SQL 编辑器，下面再放一张结果表格。
 

@@ -94,6 +94,7 @@ const locale = {
   'redis.json.mode.pretty': 'Formatted',
   'redis.json.mode.minify': 'Minified',
   'redis.json.saveDocument': 'Save document',
+  'redis.keyBrowser.tree': 'Key browser',
   'redis.keyName': 'Key name',
   'redis.loadMore': 'Load more',
   'redis.loadedCount': '{count} loaded',

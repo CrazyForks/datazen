@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Play, RefreshCw } from 'lucide-react';
+import { Play, RefreshCw } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { SqlEditor, type SqlEditorHandle } from '../../components/SqlEditor';
 import { useI18n } from '../../hooks/useI18n';
@@ -16,6 +16,7 @@ import { formatSql } from '../../lib/sqlFormat';
 import { copyToClipboard } from '../../lib/fetchRelationDdl';
 import { databaseObjectIdentityKey } from '../../lib/databaseObjectIdentity';
 import type { DatabaseObject, DatabaseObjectKind } from '../../types';
+import { Spinner } from '../../components/ui/Spinner';
 
 const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger', 'sequence', 'type'];
 
@@ -230,7 +231,7 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
         <div className="min-h-0 flex-1 overflow-y-auto">
           {loading && (
             <div className="flex items-center gap-2 px-3 py-2 text-xs text-fg-muted">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Spinner size="md" />
               {t('common.loading')}
             </div>
           )}

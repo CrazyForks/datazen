@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Radio, Search, Send, X } from 'lucide-react';
+import { Radio, Search, Send, X } from 'lucide-react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { Button, cn } from '@datazen/ui';
+import { Button, cn, Spinner } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import { redisCommandInvoke } from '../shared/redisInvoke';
 import { useRedisGate } from '../shared/useRedisGate';
@@ -249,11 +249,7 @@ export function PubSubPanel({ dbSessionId }: PubSubPanelProps) {
             onClick={() => void handleSubscribe()}
             disabled={subscribing}
           >
-            {subscribing ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Radio className="h-3.5 w-3.5" />
-            )}
+            {subscribing ? <Spinner size="md" /> : <Radio className="h-3.5 w-3.5" />}
             {t('redis.pubsubSubscribeAction')}
           </Button>
         </div>
@@ -283,11 +279,7 @@ export function PubSubPanel({ dbSessionId }: PubSubPanelProps) {
               onClick={() => void handlePublish()}
               disabled={publishing}
             >
-              {publishing ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Send className="h-3.5 w-3.5" />
-              )}
+              {publishing ? <Spinner size="md" /> : <Send className="h-3.5 w-3.5" />}
               {t('redis.pubsubPublishAction')}
             </Button>
             {lastReceivers !== null && (

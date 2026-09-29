@@ -107,13 +107,34 @@ impl SqliteDriver {
     /// `temp`, or an `ATTACH` alias. The explicit `database` argument is
     /// authoritative; a blank argument keeps the previous behavior and falls
     /// back to `main` (a plain single-file connection's only database).
+    ///
+    /// The one exception is a *filesystem path*. For SQLite a connection
+    /// config's `database` field is a file path, and hosts do pass it through as
+    /// if it were a catalog name; forwarding it produced
+    /// `SELECT name FROM "<path>/test.db".sqlite_master`, which fails with
+    /// "no such table" and leaves the schema tree unloadable. A path can never
+    /// be an attached alias, so it is rejected here rather than interpolated.
     fn effective_database(database: &str) -> &str {
         let database = database.trim();
-        if database.is_empty() {
+        if database.is_empty() || Self::looks_like_filesystem_path(database) {
             "main"
         } else {
             database
         }
+    }
+
+    /// Whether a metadata target is a file path rather than an attached alias.
+    fn looks_like_filesystem_path(name: &str) -> bool {
+        if name.contains('/') || name.contains('\\') {
+            return true;
+        }
+        // A bare relative filename (`test.db`) has no separator, so fall back to
+        // the conventional SQLite file suffixes. An `ATTACH` alias is an
+        // identifier and does not end in one of these.
+        const SUFFIXES: [&str; 5] = [".db", ".sqlite", ".sqlite3", ".db3", ".s3db"];
+        SUFFIXES
+            .iter()
+            .any(|s| name.len() > s.len() && name.to_ascii_lowercase().ends_with(s))
     }
 
     /// Quote an attached-database name so it can be used as a SQLite schema
@@ -1103,6 +1124,33 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn effective_database_rejects_file_paths_but_keeps_attached_aliases() {
+        // A connection config's `database` is a path for SQLite; hosts forward
+        // it, and interpolating it as a catalog produced
+        // `no such table: <path>.sqlite_master`.
+        for path in [
+            "/Users/e2e/fixtures/test.db",
+            "/Users/e2e/fixtures/test.sqlite",
+            "relative/test.db3",
+            "test.db",
+            "C:\\tmp\\test.s3db",
+        ] {
+            assert_eq!(
+                SqliteDriver::effective_database(path),
+                "main",
+                "file path must fall back to main: {path}"
+            );
+        }
+        // Real attached aliases stay authoritative, as do the builtin catalogs.
+        assert_eq!(SqliteDriver::effective_database("aux"), "aux");
+        assert_eq!(SqliteDriver::effective_database("warehouse"), "warehouse");
+        assert_eq!(SqliteDriver::effective_database("main"), "main");
+        assert_eq!(SqliteDriver::effective_database("temp"), "temp");
+        assert_eq!(SqliteDriver::effective_database(""), "main");
+        assert_eq!(SqliteDriver::effective_database("   "), "main");
     }
 
     #[tokio::test]

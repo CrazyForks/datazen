@@ -1,9 +1,35 @@
+import { effectiveExpanded, searchedRowLevels } from '@datazen/ui';
 import { isLeaf, pathKey, type SqlNamespace } from '../../../lib/sqlNamespace';
 import { escapeIdent } from '../../../lib/databaseTypes';
 import { databaseObjectIdentityKey } from '../../../lib/databaseObjectIdentity';
 import type { DatabaseTypeMeta } from '../../../lib/databaseMeta';
 import type { ConnectionConfig, TableInfo } from '../../../types';
 import type { UnifiedRow } from './types';
+
+/**
+ * The depth every child of a connection is painted at — databases, namespace
+ * branches, and their loading placeholders alike.
+ *
+ * A connection is emitted at depth 1 beneath its section/group header, or at
+ * depth 0 when a search suppresses that header. Its children do not move with
+ * it: they always start here, so a search removes exactly one level of parent
+ * between a connection and its databases.
+ *
+ * It lives here rather than in `buildFlatRows` because `flattenNamespaceTree`
+ * builds rows of the same ladder and would otherwise have to import from a
+ * module that already imports it.
+ */
+export const CONNECTION_CHILD_DEPTH = 2;
+
+/**
+ * The depth a database's children are painted at — its schema row, and the
+ * placeholders shown while it loads.
+ *
+ * Derived rather than declared, so the ladder has a single root: move
+ * `CONNECTION_CHILD_DEPTH` and every level below it follows. A database with
+ * no schemas puts its categories here instead of one level deeper.
+ */
+export const DATABASE_CHILD_DEPTH = CONNECTION_CHILD_DEPTH + 1;
 
 /**
  * Multi-DB tree when the driver supports it, unless connection.database is a
@@ -124,6 +150,8 @@ export function flattenNamespaceTree(
 ): void {
   if (isLeaf(tree)) return;
 
+  const searching = query !== '';
+  const levels = (depth: number) => searchedRowLevels(depth, CONNECTION_CHILD_DEPTH, searching);
   const entries = Object.entries(tree).sort(([a], [b]) => a.localeCompare(b));
   for (const [name, child] of entries) {
     if (query && !name.toLowerCase().includes(query)) {
@@ -139,7 +167,7 @@ export function flattenNamespaceTree(
       rows.push({
         type: 'namespace-node',
         name,
-        depth: baseDepth,
+        ...levels(baseDepth),
         expanded: false,
         isLeaf: true,
         leafKind: tableTypeMap.get(name) ?? 'table',
@@ -149,11 +177,11 @@ export function flattenNamespaceTree(
         dbSessionId,
       });
     } else {
-      const expanded = expandedDbs.has(nodeKey) || !!query;
+      const expanded = effectiveExpanded(expandedDbs.has(nodeKey), searching);
       rows.push({
         type: 'namespace-node',
         name,
-        depth: baseDepth,
+        ...levels(baseDepth),
         expanded,
         isLeaf: false,
         segments,
@@ -165,7 +193,13 @@ export function flattenNamespaceTree(
         const childEntries = Object.entries(child);
         const pathLoaded = loadedPaths.has(pathKey(segments));
         if (childEntries.length === 0 && !pathLoaded && !query) {
-          rows.push({ type: 'db-loading', depth: baseDepth + 1 });
+          // This spinner stands in for the namespace path still being ensured,
+          // so it is owned by that path — not by where it happens to sit.
+          rows.push({
+            type: 'db-loading',
+            ...levels(baseDepth + 1),
+            ownerKey: `ns:${pathKey(segments)}`,
+          });
         } else {
           flattenNamespaceTree(
             child,
@@ -185,7 +219,32 @@ export function flattenNamespaceTree(
   }
 }
 
-export function getUnifiedRowKey(row: UnifiedRow, index: number): string {
+/**
+ * Stable identity of a navigator row, for use as a React `<key>`.
+ *
+ * **No index parameter, on purpose.** A virtualizer only ever hands a renderer
+ * positions, and a position is not an identity: scroll one row out of the
+ * window and every row after it changes index. An index-derived key therefore
+ * remounts a suffix of the list on every scroll frame — losing focus,
+ * scroll-into-view and in-flight transitions — and, worse, *two different rows
+ * can share a key* whenever the list is filtered. Two of the cases below did
+ * exactly that:
+ *
+ * - `db-loading` keyed off its own list position, so the spinner that was
+ *   waiting for database A became the spinner for database B as soon as A's
+ *   row scrolled out of the window. It now names the row it stands in for
+ *   (`ownerKey`).
+ * - `empty-group` fell back to `index` whenever `groupName` was missing, which
+ *   made the hint row under a group rename itself whenever anything above it
+ *   appeared or disappeared. `groupName` is required now.
+ * - `object` rows keyed off `(catId, name)` alone, so two connections that each
+ *   hold a function called `fn_calc` produced one duplicate key. The row now
+ *   carries its owner tuple, the same as the `table` variant.
+ *
+ * Every branch is built from fields that identify *which object the row is*,
+ * so the key survives re-sorts, re-filters and window changes.
+ */
+export function getUnifiedRowKey(row: UnifiedRow): string {
   switch (row.type) {
     case 'section':
       return `sec:${row.section}`;
@@ -202,15 +261,15 @@ export function getUnifiedRowKey(row: UnifiedRow, index: number): string {
     case 'table':
       return `tbl:${row.connectionId}:${row.dbName}:${row.item.schema ?? ''}:${row.item.name}`;
     case 'object':
-      return `obj:${row.catId}:${databaseObjectIdentityKey(row.obj)}`;
+      return `obj:${row.connectionId}:${row.dbName}:${row.schemaName ?? ''}:${row.catId}:${databaseObjectIdentityKey(row.obj)}`;
     case 'kv-db':
       return `kv:${row.connectionId}:${row.dbName}`;
     case 'db-loading':
-      return `loading:${index}`;
+      return `loading:${row.ownerKey}`;
     case 'namespace-node':
       return `ns:${row.key}`;
     case 'empty-group':
-      return `empty:${row.groupName ?? index}`;
+      return `empty:${row.groupName}`;
     case 'no-connections':
       return 'no-connections';
   }

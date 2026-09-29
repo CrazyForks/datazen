@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Download, Loader2, Play, Plus, Search, X } from 'lucide-react';
+import { Download, Play, Plus, Search, X } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import { DbTypeBadge } from '../../../components/DbTypeBadge';
 import { ThemedIcon } from '../../../components/ThemedIcon';
@@ -8,6 +8,7 @@ import { cn } from '../../../lib/cn';
 import { getDbLabel } from '../../../lib/databaseTypes';
 import type { ConnectionEntry } from '../../../stores/activeConnectionStore';
 import type { ConnectionConfig } from '../../../types';
+import { Spinner } from '../../../components/ui/Spinner';
 
 /** Number of connections rendered before expanding the list. */
 const COLLAPSED_COUNT = 6;
@@ -193,7 +194,7 @@ export function ConnectionCardList({
 
                 {isConnLoading ? (
                   <Button size="sm" disabled aria-label={t('conn.connecting')}>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Spinner size="md" />
                   </Button>
                 ) : (
                   <Button

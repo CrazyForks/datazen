@@ -238,6 +238,46 @@ export function seedTableName(fixture: DriverFixtureDefinition, suffix: string):
   return `${fixture.dialect.tablePrefix}${safe}`;
 }
 
+/**
+ * `CREATE TABLE IF NOT EXISTS` for one of the seven `e2e_contract_*` tables.
+ *
+ * `e2e/setup-e2e-env.sh` creates these and `e2e/teardown-e2e-env.sh` drops
+ * every object whose name contains `e2e`, so the tables are normally there
+ * when a run starts. They can still be missing *mid-run* when a second
+ * `e2e/run.mjs` process (another worktree or checkout) shares the same MySQL /
+ * PostgreSQL server and its teardown lands while this matrix is still seeding —
+ * the seed then fails with `1146 Table ... doesn't exist`. Recreating the one
+ * missing table is safe: it existed in the schema snapshot the app already
+ * loaded, so no schema refresh is needed for it to resolve again.
+ *
+ * The column shapes mirror the setup script (and `e2e/fixtures/test.db` for
+ * SQLite) so a recreated table is indistinguishable from a seeded one.
+ */
+export function contractTableDdl(fixture: DriverFixtureDefinition, table: string): string {
+  const q = fixture.dialect.quoteIdent(table);
+  switch (fixture.id) {
+    case 'postgres':
+      return `CREATE TABLE IF NOT EXISTS ${q} (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL
+      )`;
+    case 'mysql':
+      return `CREATE TABLE IF NOT EXISTS ${q} (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        status VARCHAR(30) NOT NULL
+      )`;
+    case 'sqlite':
+      return `CREATE TABLE IF NOT EXISTS ${q} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT,
+        age INTEGER
+      )`;
+  }
+}
+
 export function filterSeedSql(fixture: DriverFixtureDefinition, table: string): string[] {
   return [
     fixture.dialect.dropTable(table),

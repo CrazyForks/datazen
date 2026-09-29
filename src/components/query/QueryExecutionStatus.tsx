@@ -1,7 +1,8 @@
-import { Loader2, Square } from 'lucide-react';
+import { Square } from 'lucide-react';
 import { useI18n } from '../../hooks/useI18n';
 import { tid } from '../../lib/tid';
 import type { QueryExecutionViewModel } from '../../lib/queryExecutionViewModel';
+import { Spinner } from '../ui/Spinner';
 
 export interface QueryExecutionStatusProps {
   viewModel: QueryExecutionViewModel;
@@ -36,7 +37,7 @@ export function QueryExecutionStatus({
       aria-live="polite"
       {...tid('query-execution-status')}
     >
-      {active && <Loader2 className="h-3 w-3 animate-spin" />}
+      {active && <Spinner size="sm" />}
       <span>{phaseLabel}</span>
       {viewModel.elapsedMs != null && <span>{viewModel.elapsedMs} ms</span>}
       {viewModel.rowCount != null && (

@@ -36,10 +36,18 @@ import { deinjectManagedContent } from './driver-deinject.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(__dirname, '..');
 
-/** Tracked files that resolve-drivers injects. Codegen files are gitignored. */
+/**
+ * Tracked files that resolve-drivers injects. Codegen files are gitignored.
+ *
+ * `Cargo.lock` is included because enabling the injected driver features makes
+ * cargo rewrite the workspace lockfile during the build. It carries no
+ * injection markers, so it is restored wholesale from the stash rather than
+ * deinjected in place — see `deinjectManagedContent`.
+ */
 export const MANAGED_FILES = [
   'Cargo.toml',
   'src-tauri/Cargo.toml',
+  'Cargo.lock',
 ];
 
 /**

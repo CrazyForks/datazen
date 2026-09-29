@@ -6,12 +6,12 @@ import {
   ChevronRight,
   Copy,
   FileCode,
-  Loader2,
   Save,
   Sparkles,
   Settings,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { useCopyFeedback } from '../ui/useCopyFeedback';
 import { AiInput } from './AiInput';
 import { AiEgressNotice } from './AiEgressNotice';
 import { Select } from '../ui/Select';
@@ -31,12 +31,16 @@ import {
 import { splitContextItems } from '../../lib/contextItems';
 import type { AiChatMessage, ContextItem } from '../../types';
 import { QuestionBlock } from './AiChatPanel';
+import { Spinner } from '../ui/Spinner';
 
 interface WorkflowChatPanelProps {
   connections: { id: string; name: string; databaseType: string; database?: string }[];
   onSaved?: () => void;
   onBack?: () => void;
 }
+
+/** How long a copied YAML block keeps its check icon before reverting. */
+const COPIED_FEEDBACK_MS = 1500;
 
 export function WorkflowChatPanel({ connections, onSaved, onBack }: WorkflowChatPanelProps) {
   const { t } = useI18n();
@@ -140,6 +144,21 @@ export function WorkflowChatPanel({ connections, onSaved, onBack }: WorkflowChat
     [t, onSaved],
   );
 
+  // Hold AI-generated workflows to the same multi-db rule the form enforces:
+  // a step on a multi-db connection with no default must name a database.
+  // Declared above the `!isConfigured` early return on purpose: a hook placed
+  // after an early return makes this component call one extra hook as soon as
+  // the AI store hydrates and `isConfigured` flips true, which React rejects
+  // with "Rendered more hooks than during the previous render" (#310).
+  const validationConnections = useMemo(
+    () =>
+      connections.map((c) => ({
+        id: c.id,
+        requiresExplicitDatabase: connectionAllowsMultiDb(c),
+      })),
+    [connections],
+  );
+
   if (!isConfigured) {
     return (
       <div className="flex h-full items-center justify-center p-4">
@@ -158,17 +177,6 @@ export function WorkflowChatPanel({ connections, onSaved, onBack }: WorkflowChat
       </div>
     );
   }
-
-  // Hold AI-generated workflows to the same multi-db rule the form enforces:
-  // a step on a multi-db connection with no default must name a database.
-  const validationConnections = useMemo(
-    () =>
-      connections.map((c) => ({
-        id: c.id,
-        requiresExplicitDatabase: connectionAllowsMultiDb(c),
-      })),
-    [connections],
-  );
 
   const connectionOptions = [
     { value: '', label: t('workflows.aiCreate.noConnection') },
@@ -265,7 +273,7 @@ export function WorkflowChatPanel({ connections, onSaved, onBack }: WorkflowChat
           !workflowChat.streamContent &&
           !workflowChat.streamReasoning && (
             <div className="flex items-center gap-2 py-2 text-xs text-fg-muted">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Spinner size="md" />
               {t('chat.thinking')}
             </div>
           )}
@@ -319,16 +327,26 @@ function WorkflowChatBubble({
 }) {
   const isUser = message.role === 'user';
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [previewYaml, setPreviewYaml] = useState<string | null>(null);
 
   const yamlBlocks = !isUser && !isStreaming ? extractWorkflowYaml(message.content) : [];
 
-  const handleCopy = useCallback((code: string, idx: number) => {
-    void navigator.clipboard.writeText(code);
-    setCopiedIdx(idx);
-    setTimeout(() => setCopiedIdx(null), 1500);
-  }, []);
+  const handleCopy = useCallback(
+    (code: string, idx: number) => {
+      copy(code);
+      setCopiedIdx(idx);
+    },
+    [copy],
+  );
+
+  /**
+   * `copied` is the shared, request-bound flag and `copiedIdx` names the block
+   * it belongs to; gating on both keeps a rolled-back write from leaving a
+   * stale "copied" marker on the last attempted block.
+   */
+  const copiedBlockIdx = copied ? copiedIdx : null;
 
   return (
     <div className={cn('mb-3', isUser ? 'flex justify-end' : '')}>
@@ -371,7 +389,7 @@ function WorkflowChatBubble({
 
         {!message.content && isStreaming && message.reasoning && (
           <div className="flex items-center gap-1 text-[10px] text-fg-muted mt-1">
-            <Loader2 className="h-3 w-3 animate-spin" />
+            <Spinner size="sm" />
           </div>
         )}
 
@@ -393,7 +411,7 @@ function WorkflowChatBubble({
                     className="rounded bg-surface px-1.5 py-0.5 text-[10px] text-fg-muted hover:text-fg"
                     onClick={() => handleCopy(yaml, idx)}
                   >
-                    {copiedIdx === idx ? (
+                    {copiedBlockIdx === idx ? (
                       <Check className="inline h-2.5 w-2.5" />
                     ) : (
                       <Copy className="inline h-2.5 w-2.5" />
@@ -419,7 +437,7 @@ function WorkflowChatBubble({
                       disabled={saving}
                     >
                       {saving ? (
-                        <Loader2 className="inline h-2.5 w-2.5 animate-spin" />
+                        <Spinner size="xs" className="inline" />
                       ) : saveOk ? (
                         <Check className="inline h-2.5 w-2.5" />
                       ) : (

@@ -80,9 +80,10 @@ where
     )
 }
 
-/// Build a keyset page with an additional server-generated, parameterized
-/// predicate. The filter placeholders must already use indexes after the
-/// seek-key placeholders, and its parameters are appended after the seek key.
+/// Build a keyset page with a driver-owned pagination clause and an additional
+/// server-generated, parameterized predicate. The filter placeholders must
+/// already use indexes after the seek-key placeholders, and its parameters are
+/// appended after the seek key.
 pub fn build_keyset_select_sql_with_order_and_filter<P>(
     table: &str,
     database: Option<&str>,
@@ -100,6 +101,40 @@ pub fn build_keyset_select_sql_with_order_and_filter<P>(
 where
     P: Fn(usize) -> String,
 {
+    let pagination_clause = format!("LIMIT {}", limit.max(1));
+    build_keyset_select_sql_with_order_filter_and_pagination(
+        table,
+        database,
+        schema,
+        family,
+        columns,
+        pk_columns,
+        key_order_expressions,
+        after_key,
+        &pagination_clause,
+        quote,
+        placeholder,
+        filter,
+    )
+}
+
+pub fn build_keyset_select_sql_with_order_filter_and_pagination<P>(
+    table: &str,
+    database: Option<&str>,
+    schema: Option<&str>,
+    family: &str,
+    columns: &[String],
+    pk_columns: &[String],
+    key_order_expressions: &[String],
+    after_key: Option<&[Value]>,
+    pagination_clause: &str,
+    quote: char,
+    placeholder: P,
+    filter: Option<(&str, &[Value])>,
+) -> Result<(String, Vec<Value>), DataSyncError>
+where
+    P: Fn(usize) -> String,
+{
     if pk_columns.is_empty() {
         return Err(DataSyncError::validation(
             "keyset paging requires at least one primary key column",
@@ -108,6 +143,11 @@ where
     if columns.is_empty() {
         return Err(DataSyncError::validation(
             "keyset paging requires at least one selected column",
+        ));
+    }
+    if pagination_clause.trim().is_empty() {
+        return Err(DataSyncError::validation(
+            "keyset paging requires a pagination clause from the driver",
         ));
     }
     if key_order_expressions.len() != pk_columns.len() {
@@ -169,8 +209,7 @@ where
 
     let qualified = super::sql::qualify_relation_sql(family, database, schema, table, quote);
     let sql = format!(
-        "SELECT {select_cols} FROM {qualified}{where_clause} ORDER BY {order_cols} LIMIT {limit}",
-        limit = limit.max(1),
+        "SELECT {select_cols} FROM {qualified}{where_clause} ORDER BY {order_cols} {pagination_clause}"
     );
     Ok((sql, params))
 }
@@ -397,6 +436,30 @@ mod tests {
         assert_eq!(
             sql,
             r#"SELECT "tenant", "id", "value" FROM "public"."events" WHERE ("tenant" COLLATE "C", "id") > ($1, $2) AND (("tenant" COLLATE "C", "id") >= ($3::text, $4::integer)) ORDER BY "tenant" COLLATE "C" ASC, "id" ASC LIMIT 25"#
+        );
+    }
+
+    #[test]
+    fn driver_pagination_clause_is_rendered_after_ordering() {
+        let (sql, params) = build_keyset_select_sql_with_order_filter_and_pagination(
+            "users",
+            None,
+            Some("dbo"),
+            "sqlserver",
+            &cols(),
+            &pk1(),
+            &["[id]".into()],
+            Some(&[Value::Integer(9)]),
+            "OFFSET 0 ROWS FETCH NEXT 25 ROWS ONLY",
+            '[',
+            |index| format!("@p{index}"),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(params.as_slice(), [Value::Integer(9)]));
+        assert_eq!(
+            sql,
+            "SELECT [id], [name], [age] FROM [dbo].[users] WHERE ([id]) > (@p1) ORDER BY [id] ASC OFFSET 0 ROWS FETCH NEXT 25 ROWS ONLY"
         );
     }
 

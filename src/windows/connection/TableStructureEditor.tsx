@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Download, Loader2, Plus } from 'lucide-react';
+import { ArrowLeft, Download, Plus } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { getCachedTableSchema, invalidateSchemaCache } from '../../lib/schemaCache';
@@ -37,6 +37,7 @@ import type { DatabaseType } from '../../types';
 import { StructureColumnTable } from './structure/StructureColumnTable';
 import { StructureIndexTable, suggestedIndexName } from './structure/StructureIndexTable';
 import { StructurePlanPreview } from './structure/StructurePlanPreview';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface TableStructureEditorProps {
   dbSessionId: string;
@@ -433,7 +434,7 @@ export function TableStructureEditor({
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-        <Loader2 className="h-5 w-5 animate-spin" />
+        <Spinner size="xl" />
         {t('common.loadingTableStructure')}
       </div>
     );
@@ -478,11 +479,7 @@ export function TableStructureEditor({
             onClick={() => void handleExportStructure()}
             disabled={exportingStructure}
           >
-            {exportingStructure ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Download className="h-3.5 w-3.5" />
-            )}
+            {exportingStructure ? <Spinner size="md" /> : <Download className="h-3.5 w-3.5" />}
             {exportingStructure
               ? t('structEditor.exportingStructure')
               : t('structEditor.exportStructure')}

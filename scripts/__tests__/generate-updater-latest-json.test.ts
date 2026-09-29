@@ -59,7 +59,9 @@ describe('generate-updater-latest-json per SKU', () => {
       artifact(dir, `DataZen-${VERSION}-windows-x64${suffix}.exe`);
     }
     for (const suffix of ['', '-all']) {
-      artifact(dir, `DataZen-${VERSION}-linux-x64${suffix}.AppImage`);
+      // No "linux" segment: the AppImage catalog rejects it in the file name,
+      // so the rename step emits the arch (x86_64) alone.
+      artifact(dir, `DataZen-${VERSION}-x86_64${suffix}.AppImage`);
     }
     // Non-updater files that share the naming scheme must be ignored.
     writeFileSync(join(dir, `DataZen-${VERSION}-macos-arm64.dmg`), 'dmg');
@@ -88,7 +90,7 @@ describe('generate-updater-latest-json per SKU', () => {
           'darwin-aarch64': `DataZen-${VERSION}-macos-arm64.tar.gz`,
           'darwin-x86_64': `DataZen-${VERSION}-macos-x64.tar.gz`,
           'windows-x86_64': `DataZen-${VERSION}-windows-x64.exe`,
-          'linux-x86_64': `DataZen-${VERSION}-linux-x64.AppImage`,
+          'linux-x86_64': `DataZen-${VERSION}-x86_64.AppImage`,
         },
       ],
       [
@@ -97,7 +99,7 @@ describe('generate-updater-latest-json per SKU', () => {
           'darwin-aarch64': `DataZen-${VERSION}-macos-arm64-all.tar.gz`,
           'darwin-x86_64': `DataZen-${VERSION}-macos-x64-all.tar.gz`,
           'windows-x86_64': `DataZen-${VERSION}-windows-x64-all.exe`,
-          'linux-x86_64': `DataZen-${VERSION}-linux-x64-all.AppImage`,
+          'linux-x86_64': `DataZen-${VERSION}-x86_64-all.AppImage`,
         },
       ],
       [
@@ -140,7 +142,7 @@ describe('generate-updater-latest-json per SKU', () => {
         [`DataZen-${VERSION}-macos-arm64`, 'tar.gz'],
         [`DataZen-${VERSION}-macos-x64`, 'tar.gz'],
         [`DataZen-${VERSION}-windows-x64`, 'exe'],
-        [`DataZen-${VERSION}-linux-x64`, 'AppImage'],
+        [`DataZen-${VERSION}-x86_64`, 'AppImage'],
       ]) {
         artifact(basicOnly, `${name}.${ext}`);
       }
@@ -162,7 +164,7 @@ describe('generate-updater-latest-json per SKU', () => {
     try {
       for (const [name, ext] of [
         [`DataZen-${VERSION}-windows-x64-all`, 'exe'],
-        [`DataZen-${VERSION}-linux-x64-all`, 'AppImage'],
+        [`DataZen-${VERSION}-x86_64-all`, 'AppImage'],
       ]) {
         artifact(noMac, `${name}.${ext}`);
       }

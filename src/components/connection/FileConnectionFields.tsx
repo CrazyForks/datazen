@@ -109,6 +109,7 @@ export function FileConnectionFields({ form }: { form: ConnectionFormState }) {
         <PathInput
           value={form.database}
           onChange={form.setDatabase}
+          onBrowse={form.pickPath}
           placeholder="/path/to/db.sqlite"
           error={!!form.validationErrors.database}
           dialogOptions={{

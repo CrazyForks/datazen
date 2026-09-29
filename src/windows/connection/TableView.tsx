@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Columns3, Filter, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
+import { Columns3, Filter, RefreshCw, ShieldAlert } from 'lucide-react';
 import { DataTable } from '../../components/DataTable/DataTable';
 import type { ColumnDef } from '../../components/DataTable/TableHeader';
 import { NlFilterInput } from '../../components/ai/NlFilterInput';
@@ -11,6 +11,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { cn } from '../../lib/cn';
 import { CopyableError } from '../../components/ui/CopyableError';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
 import { tableChangeContextKey } from '../../lib/tableChanges';
 import type { RowChangePlan, TableChangeContext } from '../../lib/tableChanges';
 import {
@@ -22,6 +23,7 @@ import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
 import type { DatabaseType, FilterCondition, SortCondition } from '../../types';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface TableViewProps {
   /** Table/view panel this grid belongs to; its data slice is keyed by this id. */
@@ -343,7 +345,7 @@ export function TableView({
   if (loading && columns.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-        <Loader2 className="h-5 w-5 animate-spin" />
+        <Spinner size="xl" />
         {t('tableView.loadingData')}
       </div>
     );
@@ -445,12 +447,9 @@ export function TableView({
         </div>
       </div>
       {quickFilterError && (
-        <div
-          className="border-b border-red-500/30 bg-red-500/10 px-3 py-1 text-xs text-red-400"
-          role="alert"
-        >
+        <ErrorBanner variant="strip" className="border-danger/30 py-1">
           {quickFilterError}
-        </div>
+        </ErrorBanner>
       )}
       {readOnlyTipVisible && (
         <div

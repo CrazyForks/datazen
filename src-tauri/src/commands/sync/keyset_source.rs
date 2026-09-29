@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use datazen_driver_api::{SyncKeyContract, SyncKeyValue, SyncSourceAdapter, Value};
 
 use crate::data_sync::{
-    build_keyset_select_sql_with_order_and_filter, quote_ident_sql, DataSyncError, Row,
+    build_keyset_select_sql_with_order_filter_and_pagination, quote_ident_sql, DataSyncError, Row,
     RowPageSource, SyncSourceFilter,
 };
 use crate::db::{ConnectionHandle, DatabaseDriver, SqlTarget};
@@ -144,7 +144,13 @@ impl RowPageSource for DriverKeysetSource {
                 .map_err(|error| DataSyncError::validation(error.to_string()))?,
             None => (None, Vec::new()),
         };
-        let (sql, params) = build_keyset_select_sql_with_order_and_filter(
+        // Pagination syntax belongs to the driver (for example SQL Server
+        // requires OFFSET/FETCH while PostgreSQL and MySQL use LIMIT).
+        let pagination_clause = self
+            .driver
+            .pagination_syntax(u64::from(page_limit.max(1)), 0)
+            .clause;
+        let (sql, params) = build_keyset_select_sql_with_order_filter_and_pagination(
             &self.table,
             self.database.as_deref(),
             self.schema.as_deref(),
@@ -153,7 +159,7 @@ impl RowPageSource for DriverKeysetSource {
             &self.pk_columns,
             &self.key_order_expressions,
             seek_key.as_deref(),
-            page_limit,
+            &pagination_clause,
             quote,
             |i| {
                 self.driver

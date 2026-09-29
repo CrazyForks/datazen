@@ -23,6 +23,7 @@ import type {
   WebSocketTunnelConfig,
 } from '../../types';
 import { getDriverConnectionForm, getDriverValidator } from '../../extensions/generated';
+import { pickPath } from '../../lib/pathPicker';
 import type { ConnectionFormState } from '@datazen/driver-sdk';
 
 /** Canonical shape lives in @datazen/driver-sdk; re-exported for existing host imports. */
@@ -755,5 +756,8 @@ export function useConnectionForm(options: UseConnectionFormOptions = {}): Conne
     validate,
     options: connectionOptions,
     setOptions,
+    // Driver connection fields render `PathInput`, which cannot open a native
+    // dialog by itself; the picker travels through the form-state contract.
+    pickPath,
   };
 }

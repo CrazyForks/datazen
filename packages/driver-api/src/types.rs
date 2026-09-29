@@ -63,6 +63,32 @@ pub enum SslMode {
     VerifyFull,
 }
 
+/// Dialect-specific pagination syntax for a `SELECT`.
+///
+/// The host must never hardcode `LIMIT`: dialects disagree on both the clause
+/// and its preconditions. SQL Server, for instance, has no `LIMIT` at all and
+/// needs `OFFSET n ROWS FETCH NEXT m ROWS ONLY`, which is only legal on a
+/// statement that already carries `ORDER BY`.
+///
+/// Produced by [`DatabaseDriver::pagination_syntax`](crate::DatabaseDriver::pagination_syntax);
+/// callers append [`Self::clause`] after the ordering clause and, when the
+/// statement has no natural order columns, emit [`Self::order_by_fallback`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaginationSyntax {
+    /// Clause to append after the ordering clause, without a leading space —
+    /// `LIMIT 25 OFFSET 50` or `OFFSET 50 ROWS FETCH NEXT 25 ROWS ONLY`.
+    /// Empty when the dialect cannot paginate the statement at all.
+    pub clause: String,
+    /// `true` when [`Self::clause`] is only valid on a statement that has an
+    /// `ORDER BY`.
+    pub requires_order_by: bool,
+    /// Ordering expression the dialect accepts when the caller has no natural
+    /// order columns (T-SQL: `(SELECT NULL)`). `None` when the dialect needs
+    /// none — callers must not invent one then, because an invented `ORDER BY`
+    /// changes the rows a page returns.
+    pub order_by_fallback: Option<&'static str>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshTunnelConfig {

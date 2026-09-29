@@ -14,7 +14,9 @@
  *   - darwin-aarch64: *-macos-arm64[-<variant>].tar.gz
  *   - darwin-x86_64:  *-macos-x64[-<variant>].tar.gz
  *   - windows-x86_64: *-windows-x64[-<variant>].exe (NSIS)
- *   - linux-x86_64:   *-linux-x64[-<variant>].AppImage
+ *   - linux-x86_64:   *-x86_64[-<variant>].AppImage (AppImage catalog naming:
+ *                     no platform segment, arch spelled x86_64 — see the
+ *                     release.yml rename step)
  *
  * Usage:
  *   node scripts/generate-updater-latest-json.mjs \
@@ -46,13 +48,15 @@ function arg(name, fallback) {
 /**
  * How each Tauri platform key is named in the canonical asset set:
  * `DataZen-{version}-{stem}{variantSuffix}.{ext}`, where `stem` already carries
- * the OS and arch labels the rename step emits.
+ * the OS and arch labels the rename step emits. Linux AppImages have no OS
+ * segment (AppImage catalog naming: "linux" in the name is rejected), so their
+ * stem is the arch alone.
  */
 const PLATFORM_ARTIFACTS = {
   'darwin-aarch64': { stem: 'macos-arm64', ext: 'tar.gz' },
   'darwin-x86_64': { stem: 'macos-x64', ext: 'tar.gz' },
   'windows-x86_64': { stem: 'windows-x64', ext: 'exe' },
-  'linux-x86_64': { stem: 'linux-x64', ext: 'AppImage' },
+  'linux-x86_64': { stem: 'x86_64', ext: 'AppImage' },
 };
 
 const variant = normalizeVariant(arg('variant', 'basic'));

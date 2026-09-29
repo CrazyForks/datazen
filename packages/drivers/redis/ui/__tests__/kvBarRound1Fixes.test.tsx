@@ -10,12 +10,12 @@
  * before asserting (the frame these rules cover is the one *between* the render
  * that moves a selection and the effect that starts the next read).
  *
- * Mutation policy for this file (per the coordination ruling on BUG-001): each
+ * Mutation policy for this file: each
  * identity field of a read — database session, database index, key name — is
  * pinned by its own case, so dropping any one of them from the ownership token
  * reddens exactly that case instead of leaving a silent survivor.
  *
- * Assertion policy (PRD §7-6): `data-*` markers, i18n keys and values echoed by
+ * Assertion policy: `data-*` markers, i18n keys and values echoed by
  * Redis only. No rendered English copy is asserted anywhere in this file.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';

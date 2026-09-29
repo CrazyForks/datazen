@@ -148,25 +148,32 @@ describe('详情面板 (DP-001~DP-004)', () => {
     await browser.keys(['Enter']);
     await browser.pause(1500);
     // InlineFieldEditor Enter only stages a cell change in the store
-    // (updateCell -> stageCellChange).  The pending-changes-bar appears with a
-    // commit button; click it and confirm so the change is really flushed to DB,
-    // otherwise DP-004's readback would still see the original value.
+    // (updateCell -> stageCellChange).  The pending-changes-bar is what flushes it.
+    // Both steps must be WAITED on, not probed: an `isExisting()` poll silently
+    // skips the commit when the bar has not mounted yet, DP-003 still passes (it
+    // asserts nothing after locating the input) and the failure surfaces later on
+    // DP-004's readback instead — where it points at the wrong cause.
     const commitBtn = await $('[data-testid="pending-commit"]');
-    if (await commitBtn.isExisting()) {
-      await commitBtn.click();
-      await browser.pause(300);
-      const ok = await $('[data-testid="confirm-dialog-ok"]');
-      if (await ok.isExisting()) {
-        await ok.click();
-        await browser.pause(1500);
-      }
-    }
+    await commitBtn.waitForDisplayed({ timeout: 15000 });
+    await commitBtn.click();
+    const ok = await $('[data-testid="confirm-dialog-ok"]');
+    await ok.waitForDisplayed({ timeout: 15000 });
+    await ok.click();
+    // The bar unmounts only once commitPendingChanges cleared the staged map,
+    // so its disappearance is the real completion signal.
+    // `waitForDisplayed({ reversed: true })` cannot express that here: on this
+    // WebKit build it keeps polling the element handle after the node is
+    // unmounted and only ever reports "still not displayed", so the wait timed
+    // out even though the bar was gone within ~2s. Poll DOM absence instead.
+    await browser.waitUntil(
+      async () => (await $('[data-testid="pending-changes-bar"]').isExisting()) === false,
+      { timeout: 20000, timeoutMsg: '提交后待提交变更条仍未消失' },
+    );
   });
 
   it('编辑后的值应持久化到数据库 (DP-004)', async () => {
     await openQueryTab();
     await executeSQL(`SELECT name FROM ${TEST_TABLE} WHERE id = 1`);
-    await browser.pause(1000);
 
     const body = await $('body').getText();
     expect(body).toContain('AliceEdited');

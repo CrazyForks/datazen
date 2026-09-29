@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Play, RefreshCw } from 'lucide-react';
+import { Play, RefreshCw } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { SqlEditor, type SqlEditorHandle } from '../../components/SqlEditor';
 import { useI18n } from '../../hooks/useI18n';
 import { databaseCommands } from '../../commands/database';
 import { queryCommands } from '../../commands/query';
 import type { DatabaseObjectKind } from '../../types';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface DatabaseObjectViewProps {
   dbSessionId: string;
@@ -119,7 +120,7 @@ export function DatabaseObjectView({
       </div>
       {loading ? (
         <div className="flex flex-1 items-center justify-center text-fg-muted">
-          <Loader2 className="h-5 w-5 animate-spin" />
+          <Spinner size="xl" />
         </div>
       ) : (
         <div className="min-h-0 flex-1">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Gauge, Loader2, Pin } from 'lucide-react';
+import { Download, Gauge, Pin } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
 import { CopyableError } from '../../../components/ui/CopyableError';
@@ -18,6 +18,7 @@ import type { ExplainResult, StatementResult } from '../../../types';
 import type { ChartConfig } from '../../../types/chart';
 import type { DataExportCapability } from '../../../lib/exportCapability';
 import type { QueryActionBuildResult, QueryDiagnosisContext } from '../../../lib/aiQueryActions';
+import { Spinner } from '../../../components/ui/Spinner';
 
 export interface UseQueryTransactionOptions {
   dbSessionId: string;
@@ -382,7 +383,7 @@ export function QueryResultsPane({
             </div>
             {explainLoading && (
               <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-                <Loader2 className="h-5 w-5 animate-spin" />
+                <Spinner size="xl" />
                 {t('explain.loading')}
               </div>
             )}
@@ -410,7 +411,7 @@ export function QueryResultsPane({
 
         {!showExplain && running && results.length === 0 && (
           <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <Spinner size="xl" />
             {t('query.executing')}
           </div>
         )}
@@ -509,7 +510,7 @@ export function QueryResultsPane({
               <>
                 {running && (
                   <div className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-alt px-3 py-1.5 text-xs text-fg-muted">
-                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <Spinner size="sm" />
                     {t('query.streamingRows', { n: String(activeResult.rows.length) })}
                   </div>
                 )}

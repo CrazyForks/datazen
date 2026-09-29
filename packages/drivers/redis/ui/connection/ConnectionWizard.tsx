@@ -330,6 +330,7 @@ export function RedisTlsFields({ form }: { form: ConnectionFormState }) {
         <PathInput
           value={redisOptions.tls?.caPath ?? ''}
           onChange={(path) => updateOptions({ tls: { caPath: path } })}
+          onBrowse={form.pickPath}
           placeholder="/path/to/ca.pem"
         />
       </div>
@@ -338,6 +339,7 @@ export function RedisTlsFields({ form }: { form: ConnectionFormState }) {
         <PathInput
           value={redisOptions.tls?.certPath ?? ''}
           onChange={(path) => updateOptions({ tls: { certPath: path } })}
+          onBrowse={form.pickPath}
           placeholder="/path/to/client.crt"
         />
       </div>
@@ -346,6 +348,7 @@ export function RedisTlsFields({ form }: { form: ConnectionFormState }) {
         <PathInput
           value={redisOptions.tls?.keyPath ?? ''}
           onChange={(path) => updateOptions({ tls: { keyPath: path } })}
+          onBrowse={form.pickPath}
           placeholder="/path/to/client.key"
         />
       </div>

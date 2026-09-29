@@ -17,8 +17,7 @@
  * which branch rendered without pinning any translated copy (the guard deleted
  * in W1-C means copy is a human-review concern, not an assertion target).
  */
-import { Loader2 } from 'lucide-react';
-import { useI18n } from '@datazen/ui';
+import { useI18n, Spinner } from '@datazen/ui';
 import type { KeyDetail } from '../shared/types';
 import { KeyDetailEditor } from '../value-editors/KeyEditors';
 
@@ -77,7 +76,7 @@ export function DetailColumn({
             className="flex items-center gap-2 text-xs text-fg-muted"
             data-testid="redis-detail-loading"
           >
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Spinner size="md" />
             {t('common.loading')}
           </div>
         ) : detail ? (

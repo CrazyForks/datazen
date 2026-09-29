@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Database,
   FolderOpen,
-  Loader2,
   Play,
   Plus,
   RefreshCw,
@@ -24,6 +23,7 @@ import { PrivilegeSelector, usePrivilegeOptions } from '../../components/admin/P
 import { useConnectionCommand, useConnectionCommands } from '../../hooks/useConnectionCommand';
 import { hasCommand } from '../../lib/commandSchema';
 import type { PrivilegeGrant } from '../../types';
+import { Spinner } from '../../components/ui/Spinner';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -378,11 +378,7 @@ function GrantDialog({
               disabled={submitting || !username.trim() || selected.size === 0}
               onClick={() => void handleGrant()}
             >
-              {submitting ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                t('privileges.grant')
-              )}
+              {submitting ? <Spinner size="md" /> : t('privileges.grant')}
             </Button>
           </div>
         </div>
@@ -867,7 +863,7 @@ export function PrivilegeView({ dbSessionId, database = null }: PrivilegeViewPro
       {/* Content */}
       {loading && (
         <div className="flex items-center gap-2 p-3 text-xs text-fg-muted">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Spinner size="md" />
           {t('common.loading')}
         </div>
       )}

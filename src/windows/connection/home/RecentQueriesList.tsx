@@ -1,11 +1,15 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Check, ChevronRight, Clock, Copy, Play } from 'lucide-react';
 import { useI18n } from '../../../hooks/useI18n';
+import { useCopyFeedback } from '../../../components/ui/useCopyFeedback';
 import { cn } from '../../../lib/cn';
 import { getRelativeTimeParts, RELATIVE_WINDOW_MS } from '../../../lib/relativeTime';
 import type { ConnectionConfig, QueryHistoryEntry } from '../../../types';
 
 const MAX_VISIBLE = 5;
+
+/** How long the per-row "copied" marker stays before reverting. */
+const COPIED_FEEDBACK_MS = 2000;
 
 /**
  * Builds the localized relative-time label for a history timestamp from the
@@ -65,7 +69,23 @@ export function RecentQueriesList({
 }: RecentQueriesListProps) {
   const { t } = useI18n();
   const [copiedSqlId, setCopiedSqlId] = useState<string | null>(null);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
   const formatRelativeLabel = useRelativeTimeLabel();
+
+  /**
+   * `copied` is the shared, request-bound flag and `copiedSqlId` names the row
+   * it belongs to; gating on both keeps a rolled-back write from leaving a
+   * stale "copied" marker on the last attempted row.
+   */
+  const copiedRowId = copied ? copiedSqlId : null;
+
+  const handleCopy = useCallback(
+    (id: string, sql: string) => {
+      copy(sql);
+      setCopiedSqlId(id);
+    },
+    [copy],
+  );
 
   const connectionNameById = new Map(savedConnections.map((c) => [c.id, c.name] as const));
 
@@ -158,13 +178,11 @@ export function RecentQueriesList({
                         data-testid={`home-query-copy-${item.id}`}
                         onClick={(e) => {
                           e.stopPropagation();
-                          void navigator.clipboard?.writeText(item.sql);
-                          setCopiedSqlId(item.id);
-                          setTimeout(() => setCopiedSqlId(null), 2000);
+                          handleCopy(item.id, item.sql);
                         }}
                         className="flex items-center gap-1 text-[11px] text-fg-muted hover:text-accent"
                       >
-                        {copiedSqlId === item.id ? (
+                        {copiedRowId === item.id ? (
                           <>
                             <Check className="h-3 w-3 text-success" />
                             <span className="text-success">

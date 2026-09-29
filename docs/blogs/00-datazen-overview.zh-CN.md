@@ -2,7 +2,7 @@
 
 ## DataZen 是什么？
 
-![DataZen](../../e2e/screenshots/uiux-review/02-query-chart.png)
+![DataZen](https://raw.githubusercontent.com/flyxl/datazen/main/site/assets/screenshots/02-query-chart.png)
 
 DataZen 是一款主要面向开发者的开源 AI 数据库客户端，运行在 macOS、Windows 和 Linux 上。它基于 Tauri v2 构建：前端使用 React 18 与 TypeScript，后端使用 Rust。
 

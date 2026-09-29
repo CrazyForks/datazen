@@ -9,7 +9,7 @@
 > v3.3: fixed-height cards that scroll internally, orthogonal direction-less
 > relation lines, and a preview that is highlighted, pretty-printed and full
 > height.
-> PRD: [docs/prd/query-builder-prd.md](../prd/query-builder-prd.md)
+> 实现归属：SQL Editor Pro 扩展（独立仓库）；宿主侧只有入口与 Fallback 壳。
 
 ## Overview
 

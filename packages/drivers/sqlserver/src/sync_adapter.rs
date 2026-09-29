@@ -95,6 +95,31 @@ fn base_type(raw: &str) -> String {
 // ── SyncSourceAdapter ──────────────────────────────────────────────
 
 impl SyncSourceAdapter for SqlServerSyncAdapter {
+    /// Rebuild declared type dimensions that INFORMATION_SCHEMA omits, so a
+    /// transfer preserves bounded strings and decimal precision/scale.
+    fn full_column_types_query(&self, table: &str) -> Option<String> {
+        let escaped = table.replace('\'', "''");
+        Some(format!(
+            "SELECT c.name AS col_name, \
+                    t.name + CASE \
+                      WHEN t.name IN ('nvarchar','nchar') THEN \
+                        '(' + CASE WHEN c.max_length = -1 THEN 'max' \
+                                   ELSE CAST(c.max_length / 2 AS varchar(10)) END + ')' \
+                      WHEN t.name IN ('varchar','char','varbinary','binary') THEN \
+                        '(' + CASE WHEN c.max_length = -1 THEN 'max' \
+                                   ELSE CAST(c.max_length AS varchar(10)) END + ')' \
+                      WHEN t.name IN ('decimal','numeric') THEN \
+                        '(' + CAST(c.precision AS varchar(10)) + ',' + CAST(c.scale AS varchar(10)) + ')' \
+                      WHEN t.name IN ('datetime2','datetimeoffset','time') THEN \
+                        '(' + CAST(c.scale AS varchar(10)) + ')' \
+                      ELSE '' END AS full_type \
+             FROM sys.columns c \
+             JOIN sys.types t ON t.user_type_id = c.user_type_id \
+             WHERE c.object_id = OBJECT_ID('{escaped}') \
+             ORDER BY c.column_id"
+        ))
+    }
+
     fn unsupported_transfer_structure_query(
         &self,
         database: &str,
@@ -340,6 +365,21 @@ mod tests {
             is_primary_key: false,
             is_auto_increment: false,
         }
+    }
+
+    #[test]
+    fn full_column_types_query_preserves_declared_dimensions_and_escapes_names() {
+        let sql = SqlServerSyncAdapter
+            .full_column_types_query("dbo.users")
+            .expect("SQL Server reports complete column types");
+        assert!(sql.contains("sys.columns"));
+        assert!(sql.contains("c.max_length / 2"));
+        assert!(sql.contains("c.precision"));
+
+        let quoted = SqlServerSyncAdapter
+            .full_column_types_query("dbo.o'brien")
+            .expect("table name query");
+        assert!(quoted.contains("OBJECT_ID('dbo.o''brien')"));
     }
 
     #[test]

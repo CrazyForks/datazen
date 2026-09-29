@@ -29,7 +29,7 @@ import {
   dropWorkerDatabase,
   seedDefaultPgConnection,
 } from './lib/testDataLifecycle.js';
-import { ensureMainWindowForIpc, invokeBackend } from './helpers.js';
+import { ensureMainWindowForIpc, ensureSeededPgSessionFresh, invokeBackend } from './helpers.js';
 import { browser } from '@wdio/globals';
 
 const WD_PORT = parseInt(process.env.E2E_WD_PORT || '4445', 10);
@@ -177,6 +177,15 @@ async function runSessionBootstrap() {
     await seedDefaultPgConnection(browser, _workerDb);
   }
 
+  // The Tauri process (and its ConnectionManager) is reused across spec files,
+  // so the live `conn_e2e_pg` session can still be bound to the previous
+  // worker's database, which `after` just dropped. Backend `connect` hands that
+  // still-alive session back unchanged, so specs that connect through the raw
+  // IPC path (no workspace connect) would run against a database that no longer
+  // exists. Specs that drive the workspace UI already re-bind via their own
+  // connect; this covers the rest.
+  await ensureSeededPgSessionFresh();
+
   // Reload page so the new language and seeded connections take effect
   await browser.execute(() => location.reload());
   await browser.pause(2000);
@@ -277,6 +286,7 @@ export const config: WebdriverIO.Config = {
       './specs/window-operations.ts',
       './specs/unified-tab-bar.ts',
       './specs/wapps.spec.ts',
+      './specs/ui-extract-dialogs.ts',
     ],
     // Real-DB Host specs incl. the host contract matrix (was `pnpm e2e:db`)
     db: [

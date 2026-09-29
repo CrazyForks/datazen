@@ -172,37 +172,47 @@ pub fn list_objects_sql(db_type: &str, kind: ObjectKind) -> Option<String> {
              ORDER BY 1, 2"
                 .into(),
         ),
+        ("sqlserver", ObjectKind::View) => Some(
+            "SELECT s.name AS [schema], v.name AS name \
+             FROM sys.views v JOIN sys.schemas s ON s.schema_id = v.schema_id \
+             WHERE v.is_ms_shipped = 0 \
+             ORDER BY 1, 2"
+                .into(),
+        ),
         ("sqlserver", ObjectKind::Function) => Some(
-            "SELECT s.name AS schema, o.name AS name \
+            "SELECT s.name AS [schema], o.name AS name \
              FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id \
              WHERE o.type IN ('FN','FS','FT','IF','TF') \
              ORDER BY 1, 2"
                 .into(),
         ),
         ("sqlserver", ObjectKind::Procedure) => Some(
-            "SELECT s.name AS schema, o.name AS name \
+            "SELECT s.name AS [schema], o.name AS name \
              FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id \
              WHERE o.type IN ('P','PC') \
              ORDER BY 1, 2"
                 .into(),
         ),
         ("sqlserver", ObjectKind::Trigger) => Some(
-            "SELECT s.name AS schema, t.name AS name \
+            // `sys.triggers` has no `schema_id` column (error 207); the owning
+            // schema is reached through `sys.objects`.
+            "SELECT s.name AS [schema], t.name AS name \
              FROM sys.triggers t \
-             JOIN sys.schemas s ON s.schema_id = t.schema_id \
+             JOIN sys.objects o ON o.object_id = t.object_id \
+             JOIN sys.schemas s ON s.schema_id = o.schema_id \
              WHERE t.is_ms_shipped = 0 \
              ORDER BY 1, 2"
                 .into(),
         ),
         ("sqlserver", ObjectKind::Sequence) => Some(
-            "SELECT s.name AS schema, q.name AS name \
+            "SELECT s.name AS [schema], q.name AS name \
              FROM sys.sequences q \
              JOIN sys.schemas s ON s.schema_id = q.schema_id \
              ORDER BY 1, 2"
                 .into(),
         ),
         ("sqlserver", ObjectKind::Type) => Some(
-            "SELECT s.name AS schema, t.name AS name \
+            "SELECT s.name AS [schema], t.name AS name \
              FROM sys.types t \
              JOIN sys.schemas s ON s.schema_id = t.schema_id \
              WHERE t.is_user_defined = 1 \
@@ -419,7 +429,10 @@ pub fn object_ddl_sql_with_metadata(
             "SELECT sql AS ddl FROM duckdb_sequences() WHERE sequence_name = {} LIMIT 1",
             sql_string(name),
         )),
-        ("sqlserver", ObjectKind::Function | ObjectKind::Procedure | ObjectKind::Trigger) => {
+        (
+            "sqlserver",
+            ObjectKind::View | ObjectKind::Function | ObjectKind::Procedure | ObjectKind::Trigger,
+        ) => {
             let schema_str = schema.filter(|s| !s.is_empty()).unwrap_or("dbo");
             let target_ident = format!(
                 "{}.{}",
@@ -510,7 +523,7 @@ pub fn list_privileges_sql(db_type: &str) -> Option<String> {
         ),
         "sqlserver" => Some(
             "SELECT pr.name AS grantee, \
-                    CASE WHEN p.class = 0 THEN '<server>' ELSE OBJECT_SCHEMA_NAME(p.major_id) END AS schema, \
+                    CASE WHEN p.class = 0 THEN '<server>' ELSE OBJECT_SCHEMA_NAME(p.major_id) END AS [schema], \
                     CASE WHEN p.class = 0 THEN '*' ELSE OBJECT_NAME(p.major_id) END AS name, \
                     p.permission_name AS privilege \
              FROM sys.database_permissions p \
@@ -701,6 +714,7 @@ mod tests {
         assert_eq!(dialect_family("sqlserver"), "sqlserver");
         assert_eq!(dialect_family("mssql"), "sqlserver");
         for kind in [
+            ObjectKind::View,
             ObjectKind::Function,
             ObjectKind::Procedure,
             ObjectKind::Trigger,
@@ -710,6 +724,7 @@ mod tests {
             let sql = list_objects_sql("sqlserver", kind)
                 .unwrap_or_else(|| panic!("sqlserver should list object kind {kind:?}"));
             let catalog = match kind {
+                ObjectKind::View => "sys.views",
                 ObjectKind::Sequence => "sys.sequences",
                 ObjectKind::Type => "sys.types",
                 _ => "sys.objects",
@@ -719,10 +734,19 @@ mod tests {
                     || (kind == ObjectKind::Trigger && sql.contains("sys.triggers")),
                 "sqlserver list should read catalog views for {kind:?}: {sql}"
             );
+            // `schema` is a reserved keyword in T-SQL: an unquoted alias is a
+            // syntax error (156), so these queries must bracket-quote it.
+            assert!(
+                !sql.contains("AS schema"),
+                "sqlserver list must not alias a column `AS schema` (reserved word) for {kind:?}: {sql}"
+            );
         }
         let fn_ddl = object_ddl_sql("sqlserver", ObjectKind::Function, "fn", Some("dbo")).unwrap();
         assert!(fn_ddl.contains("OBJECT_DEFINITION"));
         assert!(fn_ddl.contains("[dbo].[fn]"));
+        let view_ddl = object_ddl_sql("sqlserver", ObjectKind::View, "v", Some("dbo")).unwrap();
+        assert!(view_ddl.contains("OBJECT_DEFINITION"));
+        assert!(view_ddl.contains("[dbo].[v]"));
         // Without schema it falls back to dbo.
         let no_schema = object_ddl_sql("sqlserver", ObjectKind::Procedure, "p", None).unwrap();
         assert!(no_schema.contains("[dbo].[p]"));

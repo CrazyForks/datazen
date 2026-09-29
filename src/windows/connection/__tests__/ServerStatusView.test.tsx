@@ -217,3 +217,108 @@ describe('ServerStatusView data cards + charts (data-driven)', () => {
     });
   });
 });
+
+/**
+ * The three view tabs used to spell out `role="tab"` / `aria-selected` inline
+ * and carried no keyboard support at all — the arrow keys did nothing until a
+ * tab had been clicked once. They now run `@datazen/ui`'s `Tabs` in bar-only
+ * mode, so these pin that the delegation kept the strip working rather than
+ * quietly trading keyboard access for a shared component.
+ */
+describe('ServerStatusView view tabs (converged onto Tabs)', () => {
+  // The block above owns its own teardown; this one is top-level, so it has to
+  // unmount too or every `getByTestId('server-view-tab-*')` finds two strips.
+  afterEach(cleanup);
+
+  const TABS = ['dashboard', 'variables', 'details'] as const;
+
+  function renderView() {
+    const data = payload();
+    executeMock.mockImplementation(async () => ({ data }));
+    return render(
+      <ServerStatusView
+        dbSessionId="conn-tabs"
+        initialData={{
+          status: statusRecord(data),
+          variables: data.statusVariables,
+          history: {
+            qps: series(Date.now(), [1, 2, 3]),
+            netIn: series(Date.now(), [10, 20]),
+            netOut: series(Date.now(), [5, 6]),
+          },
+        }}
+      />,
+    );
+  }
+
+  it('keeps a named tablist with the three original test ids', () => {
+    renderView();
+    expect(
+      screen.getByRole('tablist', { name: 'serverStatus.dashboardTitle' }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole('tab')).toHaveLength(TABS.length);
+    TABS.forEach((id) => {
+      expect(screen.getByTestId(`server-view-tab-${id}`)).toBeInTheDocument();
+    });
+  });
+
+  it('announces the active view and leaves the rest explicitly unselected', () => {
+    renderView();
+    expect(screen.getByTestId('server-view-tab-dashboard')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByTestId('server-view-tab-variables')).toHaveAttribute(
+      'aria-selected',
+      'false',
+    );
+  });
+
+  it('holds the strip at a single tab stop', () => {
+    renderView();
+    expect(
+      TABS.map((id) => screen.getByTestId(`server-view-tab-${id}`).getAttribute('tabindex')),
+    ).toEqual(['0', '-1', '-1']);
+  });
+
+  it('keeps the strip a flex row above the view body', () => {
+    renderView();
+    // The tablist is the flex container the three tabs sit in. Bar-only `Tabs`
+    // injects no layout class by design, so this string is the only thing making
+    // the bar a row; drop `flex` and the three `relative` tabs stack vertically,
+    // putting `border-b` on each stacked tab instead of under the strip.
+    const tablist = screen.getByRole('tablist', { name: 'serverStatus.dashboardTitle' });
+    expect(tablist).toHaveClass('flex');
+    expect(tablist).toHaveClass('items-center');
+    expect(tablist).toHaveClass('border-b');
+  });
+
+  it('switches view from the keyboard', () => {
+    renderView();
+    const dashboard = screen.getByTestId('server-view-tab-dashboard');
+
+    fireEvent.keyDown(dashboard, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(screen.getByTestId('server-view-tab-variables'));
+    expect(screen.getByTestId('server-view-tab-variables')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+
+    fireEvent.keyDown(dashboard, { key: 'End' });
+    expect(screen.getByTestId('server-view-tab-details')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('still switches view on click', () => {
+    renderView();
+    fireEvent.click(screen.getByTestId('server-view-tab-details'));
+    expect(screen.getByTestId('server-view-tab-details')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('owns no tabpanel — the view bodies are siblings, not panels', () => {
+    renderView();
+    expect(screen.queryByRole('tabpanel')).toBeNull();
+    screen.getAllByRole('tab').forEach((tab) => {
+      expect(tab).not.toHaveAttribute('aria-controls');
+    });
+  });
+});

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Copy, Loader2 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
+import { useCopyFeedback } from '../../components/ui/useCopyFeedback';
 import { useI18n } from '../../hooks/useI18n';
 import type {
   DataSyncOperation,
@@ -14,6 +15,9 @@ import { filterStatementsByOp, statementsToPreviewText } from './clientSqlPrevie
 import type { DataSyncTableResult } from './mappingView';
 
 type OpFilter = 'all' | DataSyncOperation;
+
+/** How long the "copied" button label stays before reverting to "copy". */
+const COPIED_FEEDBACK_MS = 2000;
 
 interface SqlPreviewProps {
   sourceConnId: string;
@@ -46,7 +50,7 @@ export function SqlPreview({
   const [previewError, setPreviewError] = useState('');
   const generation = useRef(0);
   const [loading, setLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
 
   const loadPreview = useCallback(async () => {
     const revision = ++generation.current;
@@ -102,15 +106,7 @@ export function SqlPreview({
     'Data Sync SQL preview exceeds the 16 MiB IPC limit',
   );
 
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(previewText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* ignore */
-    }
-  };
+  const handleCopy = () => copy(previewText);
 
   const filters: OpFilter[] = ['all', 'INSERT', 'UPDATE', 'DELETE'];
 
@@ -138,7 +134,7 @@ export function SqlPreview({
         <Button variant="ghost" size="sm" onClick={() => void loadPreview()}>
           {t('sync.refreshPreview')}
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => void handleCopy()}>
+        <Button variant="secondary" size="sm" onClick={handleCopy}>
           <Copy className="h-3.5 w-3.5" />
           {copied ? t('common.copied') : t('common.copy')}
         </Button>

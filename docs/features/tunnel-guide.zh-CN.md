@@ -1,7 +1,7 @@
 # 隧道连接（SSH / HTTP Proxy / WebSocket）
 
 > 对应代码：`src-tauri/src/ssh_tunnel.rs`、`src-tauri/src/tunnel/`、连接表单 Advanced → Tunnel。
-> 设计文档：`docs/architecture/rfc/http-https-websocket-tunnel.zh-CN.md`。
+> 架构文档：[docs/architecture/backend/tunnel.md](../architecture/backend/tunnel.md)。
 
 ## 1. 概述
 

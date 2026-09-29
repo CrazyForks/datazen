@@ -1,6 +1,14 @@
 /** @vitest-environment node */
 import { describe, expect, it } from 'vitest';
-import { parseVariant, resolveDrivers, wantsCodegenOnly } from '../resolve-drivers.mjs';
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import {
+  parseVariant,
+  resolveDrivers,
+  wantsCodegenOnly,
+  writeIfChanged,
+} from '../resolve-drivers.mjs';
 
 const registry = {
   postgres: { source: 'path' },
@@ -129,5 +137,50 @@ describe('buildRootCargoPatchLines', () => {
         postgres: { source: 'path', path: 'packages/drivers/postgres' },
       }),
     ).toEqual([]);
+  });
+});
+
+describe('writeIfChanged', () => {
+  // Cargo fingerprints crate sources by mtime, so a byte-identical rewrite of
+  // src-tauri/src/driver_init.rs forces a full host-lib recompile for nothing.
+  it('writes a missing file and creates its directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dz-wic-'));
+    const target = join(dir, 'nested', 'driver_init.rs');
+    expect(writeIfChanged(target, 'fn main() {}\n')).toBe(true);
+    expect(readFileSync(target, 'utf-8')).toBe('fn main() {}\n');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('skips the write and preserves mtime when content is identical', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dz-wic-'));
+    const target = join(dir, 'driver_init.rs');
+    writeIfChanged(target, 'same\n');
+    // Pin mtime to a known past instant; a rewrite would move it forward.
+    const pinned = new Date('2020-01-01T00:00:00Z');
+    utimesSync(target, pinned, pinned);
+    const before = statSync(target).mtimeMs;
+
+    expect(writeIfChanged(target, 'same\n')).toBe(false);
+    expect(statSync(target).mtimeMs).toBe(before);
+    expect(readFileSync(target, 'utf-8')).toBe('same\n');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('still writes when the content genuinely differs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dz-wic-'));
+    const target = join(dir, 'driver_init.rs');
+    writeIfChanged(target, 'driver-postgres\n');
+    expect(writeIfChanged(target, 'driver-postgres\ndriver-mysql\n')).toBe(true);
+    expect(readFileSync(target, 'utf-8')).toBe('driver-postgres\ndriver-mysql\n');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rewrites when the file was tampered with, so stale output self-heals', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dz-wic-'));
+    const target = join(dir, 'driver_init.rs');
+    writeFileSync(target, 'corrupted\n');
+    expect(writeIfChanged(target, 'expected\n')).toBe(true);
+    expect(readFileSync(target, 'utf-8')).toBe('expected\n');
+    rmSync(dir, { recursive: true, force: true });
   });
 });

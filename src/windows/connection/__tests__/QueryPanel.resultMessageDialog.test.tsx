@@ -246,7 +246,9 @@ describe('[tester] QueryPanel ResultMessageDialog', () => {
     await waitFor(() =>
       expect(screen.getByText('query.postgresDoubleQuoteHint')).toBeInTheDocument(),
     );
-    expect(screen.getByRole('button', { name: 'common.ok' })).toBeInTheDocument();
+    // Target the stable data-* locator, not the translated label: the dialog
+    // reads the shared @datazen/ui registry, so the button text is localized.
+    expect(screen.getByTestId('result-message-ok')).toBeInTheDocument();
     expect(executeQuery).not.toHaveBeenCalled();
   });
 
@@ -275,6 +277,8 @@ describe('[tester] QueryPanel ResultMessageDialog', () => {
 
     await waitFor(() => expect(createWidgetFromSql).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText('widget creation failed')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'common.ok' })).toBeInTheDocument();
+    // Target the stable data-* locator, not the translated label: the dialog
+    // reads the shared @datazen/ui registry, so the button text is localized.
+    expect(screen.getByTestId('result-message-ok')).toBeInTheDocument();
   });
 });

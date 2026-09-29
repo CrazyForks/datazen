@@ -89,6 +89,10 @@ impl DatabaseDriver for ReuseDriver {
         self.inner.supports_offset()
     }
 
+    fn pagination_syntax(&self, limit: u64, offset: u64) -> PaginationSyntax {
+        self.inner.pagination_syntax(limit, offset)
+    }
+
     fn supports_explain(&self) -> bool {
         self.inner.supports_explain()
     }
@@ -958,11 +962,9 @@ mod tests {
             .unwrap();
         assert!(*inner.streamed.lock().unwrap());
         let events = events.lock().unwrap();
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, QueryStreamEvent::StatementStart { .. }))
-        );
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, QueryStreamEvent::StatementStart { .. })));
         assert!(matches!(events.last(), Some(QueryStreamEvent::Done { .. })));
     }
 
@@ -975,12 +977,10 @@ mod tests {
             pool_id: "p".into(),
         };
 
-        assert!(
-            reuse
-                .has_complete_foreign_key_catalog_visibility(&handle)
-                .await
-                .expect("forward visibility query")
-        );
+        assert!(reuse
+            .has_complete_foreign_key_catalog_visibility(&handle)
+            .await
+            .expect("forward visibility query"));
     }
 
     #[tokio::test]

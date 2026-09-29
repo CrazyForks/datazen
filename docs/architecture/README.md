@@ -10,6 +10,7 @@
 
 - [Drivers](backend/drivers.md)
 - [Services](backend/services.md)
+- [Tunnel](backend/tunnel.md)
 - [Commands](backend/commands.md)
 - [Cache](backend/cache.md)
 - [Store](backend/store.md)
@@ -35,9 +36,8 @@
 - [Windows](windows.md)
 - [Testing](testing.md)
 
-### RFC（演进方向，非已实现）
-
-- [Web 平台化实现方案](rfc/web-platform-implementation.zh-CN.md)（Proposed）
+> 本目录只描述 **已落地** 的实现。方案草稿、RFC 与实施计划不长期留在 `architecture/`：
+> 结论落地后改写为本目录的事实条目，未落地的提案不入库。演进方向的公开叙述见 [blogs/](../blogs/README.md)。
 
 ## 1. 总体结构
 
@@ -85,11 +85,11 @@ packages/drivers/*
 
 核心接口包括：
 
-- `DatabaseDriver)：连接、Schema、Query、事务、Command、EXPLAIN、查询流等。
-- `DatabaseDriverFactory)：创建 Driver 实例并声明协议版本。
-- `DriverCommandDefinition)：向 Workflow / UI 暴露 Driver Command。
-- `MigrationRenderer` / `MigrationCapabilities` / `TypeNormalizer)：Schema Diff 的方言渲染与类型归一化。
-- `SyncSourceAdapter` / `SyncTargetAdapter)：Data Transfer 的异构类型与值转换。
+- `DatabaseDriver`：连接、Schema、Query、事务、Command、EXPLAIN、查询流等。
+- `DatabaseDriverFactory`：创建 Driver 实例并声明协议版本。
+- `DriverCommandDefinition`：向 Workflow / UI 暴露 Driver Command。
+- `MigrationRenderer` / `MigrationCapabilities` / `TypeNormalizer`：Schema Diff 的方言渲染与类型归一化。
+- `SyncSourceAdapter` / `SyncTargetAdapter`：Data Transfer 的异构类型与值转换。
 
 Driver API 当前 `PROTOCOL_VERSION = 3`，最低兼容版本为 1。具体公共依赖边界见 [Driver API Dependency Boundary](backend/drivers.md)。
 
@@ -101,13 +101,19 @@ Driver API 当前 `PROTOCOL_VERSION = 3`，最低兼容版本为 1。具体公�
 connectionId
    │
    ▼
-Store → ConnectionManager → Driver.connect()
-                         │
-                         ▼
-                    dbSessionId
+Store → ConnectionManager → 隧道解析 / 本机回环监听 → Driver.connect()
+                                                  │
+                                                  ▼
+                                             dbSessionId
 ```
 
-`ConnectionManager` 负责 Driver 选择、SSH Tunnel、session 生命周期、引用计数和 idle eviction。Schema Diff / Data Sync / Data Transfer 使用 dedicated session，避免与主工作区共享 database selection、事务等状态。
+`ConnectionManager` 负责 Driver 选择、隧道解析、session 生命周期、引用计数和 idle eviction。Schema Diff / Data Sync / Data Transfer 使用 dedicated session，避免与主工作区共享 database selection、事务等状态。
+
+## 3.1 隧道
+
+连接不可直连时，DataZen 在本机监听 `127.0.0.1:<随机端口>`，把流量经 **SSH / HTTP CONNECT 代理 / WebSocket 中继** 转到真实 `host:port`，并把交给 Driver 的地址改写为该回环地址。四种状态（直连 / SSH / HTTP / WebSocket）互斥，**对 Driver 完全不可见**：加隧道不需要任何驱动改动。隧道配置可保存复用（`SavedTunnel` + `tunnels.json`），连接只持 `tunnel_id` 引用。
+
+详见 [Tunnel](backend/tunnel.md)。
 
 ## 4. 查询执行
 
@@ -139,17 +145,17 @@ Deploy on target
 
 Schema Diff 领域代码位于 `src-tauri/src/schema_diff/`：
 
-- `compare.rs)：列、PK、索引差异。
-- `ir.rs)：Snapshot → dialect-neutral `MigrationOperation`。
-- `operations.rs)：中间操作及风险级别。
-- `dependencies.rs)：操作依赖排序。
-- `plan.rs)：渲染 MigrationStatement、能力检查和计划结果。
-- `deploy.rs)：目标库部署。
-- `types.rs)：Snapshot、Diff、Plan DTO。
+- `compare.rs`：列、PK、索引差异。
+- `ir.rs`：Snapshot → dialect-neutral `MigrationOperation`。
+- `operations.rs`：中间操作及风险级别。
+- `dependencies.rs`：操作依赖排序。
+- `plan.rs`：渲染 MigrationStatement、能力检查和计划结果。
+- `deploy.rs`：目标库部署。
+- `types.rs`：Snapshot、Diff、Plan DTO。
 
 **方言 SQL 属于 Driver API / Driver 层。** Host 不按 PostgreSQL/MySQL 等数据库类型复制 SQL。Driver 提供 `MigrationRenderer`、`MigrationCapabilities` 和 `TypeNormalizer`。
 
-Source 是 desired state，Target 是 apply site。例如 source 为 `VARCHAR(255))、target 为 `VARCHAR(100)` 时，计划方向是把 target 修改为 `VARCHAR(255)`。
+Source 是 desired state，Target 是 apply site。例如 source 为 `VARCHAR(255)`、target 为 `VARCHAR(100)` 时，计划方向是把 target 修改为 `VARCHAR(255)`。
 
 ## 6. Data Sync 与 Data Transfer
 
@@ -191,13 +197,13 @@ Desktop 持久化由 `src-tauri/src/store/` 管理，包含连接配置、设置
 
 React 前端使用 Zustand。主要 Store 位于 `src/stores/`：
 
-- `connectionStore)：持久化连接配置。
-- `activeConnectionStore)：运行时连接/session 状态。
-- `schemaStore)：Schema 元数据。
-- `tableDataStore)：表数据、筛选、分页和编辑状态。
-- `panelStore)：统一工作区 Panel 与查询结果。
-- `workspaceTabsStore)：工作区 Tab。
-- `aiStore)、`dashboardStore)、`wappStore)、`settingsStore)、`uiStore)：对应领域状态。
+- `connectionStore`：持久化连接配置。
+- `activeConnectionStore`：运行时连接/session 状态。
+- `schemaStore`：Schema 元数据。
+- `tableDataStore`：表数据、筛选、分页和编辑状态。
+- `panelStore`：统一工作区 Panel 与查询结果。
+- `workspaceTabsStore`：工作区 Tab。
+- `aiStore`、`dashboardStore`、`wappStore`、`settingsStore`、`uiStore`：对应领域状态。
 
 跨窗口不共享 React/Zustand 内存状态，通过 Tauri Event 进行同步。
 

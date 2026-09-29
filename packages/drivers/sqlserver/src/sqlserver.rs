@@ -229,7 +229,7 @@ impl SqlServerDriver {
             .map_err(|e| DriverError::ConnectionFailed(format!("SQL Server login failed: {e}")))
     }
 
-    fn value_from_column(data: &ColumnData<'_>) -> Option<Value> {
+    fn value_from_column(data: &ColumnData<'static>) -> Option<Value> {
         match data {
             ColumnData::U8(v) => v.map(|x| Value::Integer(x as i64)),
             ColumnData::I16(v) => v.map(|x| Value::Integer(x as i64)),
@@ -248,22 +248,95 @@ impl SqlServerDriver {
             }),
             ColumnData::Numeric(v) => v.map(|n| Value::String(n.to_string())),
             ColumnData::Xml(v) => v.as_ref().map(|x| Value::String(x.to_string())),
-            ColumnData::DateTime(v) => v.map(|d| Value::String(format!("{d:?}"))),
-            ColumnData::SmallDateTime(v) => v.map(|d| Value::String(format!("{d:?}"))),
-            ColumnData::Time(v) => v.map(|d| Value::String(format!("{d:?}"))),
-            ColumnData::Date(v) => v.map(|d| Value::String(format!("{d:?}"))),
-            ColumnData::DateTime2(v) => v.map(|d| Value::String(format!("{d:?}"))),
-            ColumnData::DateTimeOffset(v) => v.map(|d| Value::String(format!("{d:?}"))),
+            ColumnData::DateTime(_)
+            | ColumnData::SmallDateTime(_)
+            | ColumnData::Time(_)
+            | ColumnData::Date(_)
+            | ColumnData::DateTime2(_)
+            | ColumnData::DateTimeOffset(_) => Self::temporal_value(data),
         }
     }
 
+    /// TDS date/time values arrive as tiberius' own calendar structs, whose
+    /// `Debug` output (`Date(739617)`, `Time { increments: … }`) is meaningless
+    /// to a user. Decode them through tiberius' `chrono` bridge and render the
+    /// same textual shapes the MySQL and PostgreSQL drivers return:
+    /// `YYYY-MM-DD`, `HH:MM:SS[.f]`, `YYYY-MM-DD HH:MM:SS[.f]` and RFC 3339 for
+    /// the offset-aware type.
+    fn temporal_value(data: &ColumnData<'static>) -> Option<Value> {
+        use tiberius::time::chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime};
+        use tiberius::FromSql;
+
+        // A `None` payload is a real SQL NULL and must stay NULL. A *failed*
+        // conversion is not a NULL, so it degrades to the raw shape rather than
+        // silently turning a value into NULL.
+        let payload_is_null = match data {
+            ColumnData::Date(v) => v.is_none(),
+            ColumnData::Time(v) => v.is_none(),
+            ColumnData::DateTime(v) => v.is_none(),
+            ColumnData::SmallDateTime(v) => v.is_none(),
+            ColumnData::DateTime2(v) => v.is_none(),
+            ColumnData::DateTimeOffset(v) => v.is_none(),
+            _ => return None,
+        };
+        if payload_is_null {
+            return None;
+        }
+
+        let rendered = match data {
+            ColumnData::Date(_) => NaiveDate::from_sql(data)
+                .ok()
+                .flatten()
+                .map(|d| d.to_string()),
+            ColumnData::Time(_) => NaiveTime::from_sql(data)
+                .ok()
+                .flatten()
+                .map(|t| t.to_string()),
+            ColumnData::DateTime(_) | ColumnData::SmallDateTime(_) | ColumnData::DateTime2(_) => {
+                NaiveDateTime::from_sql(data)
+                    .ok()
+                    .flatten()
+                    .map(|dt| dt.to_string())
+            }
+            ColumnData::DateTimeOffset(_) => DateTime::<FixedOffset>::from_sql(data)
+                .ok()
+                .flatten()
+                .map(|dt| dt.to_rfc3339()),
+            _ => None,
+        };
+        Some(Value::String(
+            rendered.unwrap_or_else(|| format!("{data:?}")),
+        ))
+    }
+
     async fn run(client: &mut SqlClient, sql: &str) -> Result<QueryResult, DriverError> {
+        Self::run_routed(client, sql, false).await
+    }
+
+    /// Read a result set from a statement that must go out as a real batch even
+    /// though its text would normally be routed through `sp_executesql`.
+    ///
+    /// `SET SHOWPLAN_TEXT ON` is the reason this exists: while the flag is set
+    /// the server answers with the plan *instead of executing*, and the RPC path
+    /// (prepare + `sp_executesql`) returns no rows for it — the plan only
+    /// arrives over a plain batch.
+    async fn run_batch(client: &mut SqlClient, sql: &str) -> Result<QueryResult, DriverError> {
+        Self::run_routed(client, sql, true).await
+    }
+
+    async fn run_routed(
+        client: &mut SqlClient,
+        sql: &str,
+        force_batch: bool,
+    ) -> Result<QueryResult, DriverError> {
         use futures_util::TryStreamExt;
         let start = Instant::now();
-        let mut stream = client
-            .query(sql, &[])
-            .await
-            .map_err(|e| DriverError::QueryFailed(format!("SQL Server query failed: {e}")))?;
+        let mut stream = if force_batch || needs_own_batch(sql) {
+            client.simple_query(sql).await
+        } else {
+            client.query(sql, &[]).await
+        }
+        .map_err(|e| DriverError::QueryFailed(format!("SQL Server query failed: {e}")))?;
         let mut columns: Vec<ColumnInfo> = Vec::new();
         let mut result_rows: Vec<Vec<Option<Value>>> = Vec::new();
         while let Some(item) = stream
@@ -331,10 +404,12 @@ impl SqlServerDriver {
         use futures_util::TryStreamExt;
         let (effective, applied) = apply_sqlserver_top(stmt, limit);
         let stmt_start = Instant::now();
-        let mut stream = client
-            .query(&effective, &[])
-            .await
-            .map_err(|e| DriverError::QueryFailed(format!("SQL Server query failed: {e}")))?;
+        let mut stream = if needs_own_batch(&effective) {
+            client.simple_query(&effective).await
+        } else {
+            client.query(&effective, &[]).await
+        }
+        .map_err(|e| DriverError::QueryFailed(format!("SQL Server query failed: {e}")))?;
         let mut batcher =
             QueryRowBatcher::new(Arc::clone(on_event), index, stmt.to_string(), applied);
         while let Some(item) = stream
@@ -365,6 +440,194 @@ impl SqlServerDriver {
     }
 }
 
+/// Split a multi-statement script into individual statements.
+///
+/// A plain `split(';')` breaks on any semicolon inside a string literal, a
+/// bracketed identifier or a comment (`SELECT ';' AS [a]` failed with error 105
+/// "Unclosed quotation mark"), so this delegates to the shared, quote/comment
+/// aware scanner in `driver-api`.
+fn split_statements(sql: &str) -> Vec<String> {
+    use datazen_driver_api::sql_split::{is_comment_only_or_empty, split_sql_statements};
+    split_sql_statements(sql)
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !is_comment_only_or_empty(s))
+        .collect()
+}
+
+/// T-SQL accepts a few statements **only as the first statement of a batch**:
+/// the programmable-object definitions (`CREATE`/`ALTER` `SCHEMA`, `VIEW`,
+/// `PROCEDURE`/`PROC`, `FUNCTION`, `TRIGGER`, `RULE`, `DEFAULT`). tiberius sends
+/// `Client::query`/`Client::execute` through `sp_executesql`, which rejects them
+/// with error 156 (`Incorrect syntax near the keyword 'SCHEMA'`) — verified
+/// live against Azure SQL Database. Such statements must go out as a real batch
+/// via `Client::simple_query`.
+///
+/// Session-scoped statements (`SET`, `USE`, transaction control) are routed the
+/// same way for the same underlying reason: `sp_executesql` runs them in a
+/// module whose scope ends with the call, so the setting or transaction would be
+/// discarded (and transaction control fails with error 266).
+fn needs_own_batch(sql: &str) -> bool {
+    let mut words = leading_keywords(sql).into_iter();
+    let Some(first) = words.next() else {
+        return false;
+    };
+    match first.as_str() {
+        // Session-scoped statements do not survive the module boundary that
+        // `sp_executesql` (tiberius `Client::query`) creates: the setting, the
+        // `USE` context or the open transaction is rolled back when the module
+        // exits. Transaction control additionally fails outright with error 266
+        // ("Transaction count after EXECUTE indicates a mismatching number of
+        // BEGIN and COMMIT statements"). Send these as a real batch.
+        //
+        // `SET SHOWPLAN_TEXT ON` is the sharpest case: if it does not stick,
+        // `explain()` executes the statement it was asked to plan.
+        "BEGIN" | "COMMIT" | "ROLLBACK" | "SAVE" | "SET" => return true,
+        "CREATE" | "ALTER" => {}
+        _ => return false,
+    }
+    let mut kind = words.next();
+    if kind.as_deref() == Some("OR") {
+        // `CREATE OR ALTER <kind>`, the SQL Server 2016 SP1+ form.
+        let _ = words.next();
+        kind = words.next();
+    }
+    matches!(
+        kind.as_deref(),
+        Some(
+            "SCHEMA" | "VIEW" | "PROCEDURE" | "PROC" | "FUNCTION" | "TRIGGER" | "RULE" | "DEFAULT"
+        )
+    )
+}
+
+/// The first few keywords of `sql`, uppercased, with leading line and block
+/// comments skipped.
+fn leading_keywords(sql: &str) -> Vec<String> {
+    let mut rest = sql;
+    loop {
+        rest = rest.trim_start();
+        if let Some(after) = rest.strip_prefix("--") {
+            rest = after.split_once('\n').map_or("", |(_, tail)| tail);
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix("/*") {
+            rest = after.split_once("*/").map_or("", |(_, tail)| tail);
+            continue;
+        }
+        break;
+    }
+    rest.split_whitespace()
+        .take(4)
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .to_ascii_uppercase()
+        })
+        .collect()
+}
+
+/// True when the statement paginates itself with a **top-level** `OFFSET`
+/// clause.
+///
+/// T-SQL rejects `TOP` in the same query as `OFFSET … FETCH` (error 10741:
+/// "A TOP can not be used in the same query or sub-query as a OFFSET"), so the
+/// editor row cap must not be injected into a statement that already pages:
+/// `SELECT … ORDER BY (SELECT NULL) OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY` —
+/// exactly what the Visual Query Builder emits for SQL Server — failed on
+/// execute until this check existed.
+///
+/// Only depth-0 occurrences count: `TOP` in an outer query next to an `OFFSET`
+/// inside a sub-query is legal, so a nested one must not disable the cap.
+/// String literals, quoted/bracketed identifiers and comments are skipped, so
+/// `SELECT 'OFFSET 5 ROWS' AS [offset] FROM t` still gets its cap.
+fn has_top_level_offset(sql: &str) -> bool {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut depth = 0i32;
+    let mut words: Vec<(i32, String)> = Vec::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\'' | '"' => {
+                let quote = c;
+                i += 1;
+                while i < chars.len() {
+                    if chars[i] == quote {
+                        // A doubled quote is an escaped quote, not the end.
+                        if chars.get(i + 1) == Some(&quote) {
+                            i += 2;
+                            continue;
+                        }
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            '[' => {
+                i += 1;
+                while i < chars.len() {
+                    if chars[i] == ']' {
+                        if chars.get(i + 1) == Some(&']') {
+                            i += 2;
+                            continue;
+                        }
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            '-' if chars.get(i + 1) == Some(&'-') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                i += 2;
+                while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                    i += 1;
+                }
+                i = (i + 2).min(chars.len());
+            }
+            '(' => {
+                depth += 1;
+                i += 1;
+            }
+            ')' => {
+                depth -= 1;
+                i += 1;
+            }
+            c if c.is_ascii_alphanumeric() || matches!(c, '_' | '@' | '#' | '$') => {
+                let start = i;
+                while i < chars.len()
+                    && (chars[i].is_ascii_alphanumeric()
+                        || matches!(chars[i], '_' | '@' | '#' | '$'))
+                {
+                    i += 1;
+                }
+                words.push((
+                    depth,
+                    chars[start..i]
+                        .iter()
+                        .collect::<String>()
+                        .to_ascii_uppercase(),
+                ));
+            }
+            _ => i += 1,
+        }
+    }
+
+    // `OFFSET <count> [ROW|ROWS]`: the count is a literal or a variable, never a
+    // bare identifier — that is what keeps a column named `offset` from
+    // disabling the cap.
+    words.windows(2).any(|pair| {
+        pair[0].0 == 0
+            && pair[0].1 == "OFFSET"
+            && (pair[1].1.starts_with('@')
+                || pair[1].1.chars().next().is_some_and(|c| c.is_ascii_digit()))
+    })
+}
+
 fn apply_sqlserver_top(stmt: &str, limit: Option<u32>) -> (String, Option<u32>) {
     let Some(lim) = limit else {
         return (stmt.to_string(), None);
@@ -374,22 +637,27 @@ fn apply_sqlserver_top(stmt: &str, limit: Option<u32>) -> (String, Option<u32>) 
     if !upper.starts_with("SELECT") {
         return (stmt.to_string(), None);
     }
-    let after_select = trimmed[6..].trim_start();
+    // A statement that pages itself is left alone: `TOP` cannot join it (10741)
+    // and its own `FETCH NEXT` already bounds the result.
+    if has_top_level_offset(trimmed) {
+        return (stmt.to_string(), None);
+    }
+    let after_select = trimmed["SELECT".len()..].trim_start();
     let after_upper = after_select.to_ascii_uppercase();
-    if after_upper.starts_with("DISTINCT") {
-        let after_distinct = after_select[8..].trim_start();
-        if after_distinct.to_ascii_uppercase().starts_with("TOP") {
-            return (stmt.to_string(), Some(lim));
-        }
-        return (
-            format!("SELECT DISTINCT TOP {} {after_distinct}", lim + 1),
-            Some(lim),
-        );
+    let (prefix, body) = if after_upper.starts_with("DISTINCT") {
+        (
+            "SELECT DISTINCT",
+            after_select["DISTINCT".len()..].trim_start(),
+        )
+    } else {
+        ("SELECT", after_select)
+    };
+    // `TOP` is this dialect's own row limit; the switch only caps SELECTs
+    // *without* one, so a hand-written `TOP` is respected verbatim.
+    if body.to_ascii_uppercase().starts_with("TOP") {
+        return (stmt.to_string(), None);
     }
-    if after_upper.starts_with("TOP") {
-        return (stmt.to_string(), Some(lim));
-    }
-    (format!("SELECT TOP {} {after_select}", lim + 1), Some(lim))
+    (format!("{prefix} TOP {} {body}", lim + 1), Some(lim))
 }
 
 #[async_trait]
@@ -412,6 +680,18 @@ impl DatabaseDriver for SqlServerDriver {
     /// which is `dbo` unless the login was created with another one.
     fn default_schema(&self) -> Option<&'static str> {
         Some("dbo")
+    }
+
+    /// T-SQL has no `LIMIT`: paging uses `OFFSET … ROWS FETCH NEXT … ROWS ONLY`,
+    /// which is only legal on a statement that already carries `ORDER BY`. For
+    /// an unordered read (`SELECT *` with no usable column) the driver supplies
+    /// `(SELECT NULL)` so the caller never has to invent a dialect expression.
+    fn pagination_syntax(&self, limit: u64, offset: u64) -> PaginationSyntax {
+        PaginationSyntax {
+            clause: format!("OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"),
+            requires_order_by: true,
+            order_by_fallback: Some("(SELECT NULL)"),
+        }
     }
 
     /// F7: qualify unqualified table references with the T-SQL three-part
@@ -588,6 +868,15 @@ impl DatabaseDriver for SqlServerDriver {
             .filter(|c| c.is_primary_key)
             .map(|c| c.name.clone())
             .collect();
+        // A relation always has at least one column, so "no columns" means the
+        // table is absent (or not visible) rather than a column-less table.
+        // Reporting `Ok` here would let callers cache a blank structure; this is
+        // the same defect class PostgreSQL fixed in BUG-003.
+        if columns.is_empty() {
+            return Err(DriverError::QueryFailed(format!(
+                "Table '{schema}.{table}' does not exist in database '{database}'"
+            )));
+        }
         Ok(TableSchema {
             table_name: table.to_string(),
             columns,
@@ -648,19 +937,25 @@ impl DatabaseDriver for SqlServerDriver {
 
             // The payload is keyed by bare table name, so two same-named tables
             // in different schemas cannot both be represented. Keep the first
-            // and say so rather than merging their columns into one table.
-            if let Some(existing) = owners.get(&table_name) {
-                if existing != &table_schema {
+            // schema seen for a name and say so, rather than merging columns
+            // from two different tables. Rows of the *same* table must all be
+            // collected — only a name/schema clash skips a row.
+            let seen_schema = owners.get(&table_name).cloned();
+            match seen_schema {
+                Some(existing) if existing != table_schema => {
                     tracing::warn!(
                         table = %table_name,
                         kept = %existing,
                         skipped = %table_schema,
                         "get_all_columns: same-named table in another schema skipped"
                     );
+                    continue;
                 }
-                continue;
+                Some(_) => {}
+                None => {
+                    owners.insert(table_name.clone(), table_schema.clone());
+                }
             }
-            owners.insert(table_name.clone(), table_schema);
 
             let column = ColumnSchema {
                 name: col_name.clone(),
@@ -713,33 +1008,29 @@ impl DatabaseDriver for SqlServerDriver {
             .get_mut(&handle.pool_id)
             .ok_or_else(|| DriverError::ConnectionFailed("Connection pool not found".into()))?;
         let total_start = Instant::now();
-        let statements: Vec<String> = sql
-            .split(';')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let statements = split_statements(sql);
         let mut results = Vec::new();
         for stmt in statements {
             let start = Instant::now();
-            let limited = if let Some(lim) = limit {
-                let upper = stmt.to_uppercase();
-                if upper.starts_with("SELECT") && !upper.contains("TOP") {
-                    let inner = stmt.trim_start();
-                    format!("SELECT TOP {lim} {}", &inner["SELECT".len()..])
-                } else {
-                    stmt.clone()
+            // Share the streaming path's cap rewrite: the previous inline check
+            // skipped the cap whenever "TOP" appeared *anywhere* in the
+            // statement (`SELECT * FROM stopwatch`) and injected `TOP` into
+            // statements that page with `OFFSET` (error 10741).
+            let (limited, applied) = apply_sqlserver_top(&stmt, limit);
+            let mut r = Self::run(client, &limited).await?;
+            let truncated = applied.is_some_and(|lim| r.rows.len() as u32 > lim);
+            if let Some(lim) = applied {
+                if truncated {
+                    r.rows.truncate(lim as usize);
                 }
-            } else {
-                stmt.clone()
-            };
-            let r = Self::run(client, &limited).await?;
+            }
             results.push(StatementResult {
                 sql: stmt,
                 columns: r.columns,
                 rows: r.rows,
                 rows_affected: r.rows_affected,
                 execution_time_ms: r.execution_time_ms,
-                truncated: false,
+                truncated,
             });
             let _ = start;
         }
@@ -760,11 +1051,7 @@ impl DatabaseDriver for SqlServerDriver {
         let client = map
             .get_mut(&handle.pool_id)
             .ok_or_else(|| DriverError::ConnectionFailed("Connection pool not found".into()))?;
-        let statements: Vec<String> = sql
-            .split(';')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let statements = split_statements(sql);
         if statements.is_empty() {
             on_event(QueryStreamEvent::Done { total_time_ms: 0 });
             return Ok(());
@@ -789,10 +1076,27 @@ impl DatabaseDriver for SqlServerDriver {
     }
 
     async fn execute(&self, handle: &ConnectionHandle, sql: &str) -> Result<u64, DriverError> {
+        use futures_util::TryStreamExt;
         let mut map = self.clients.write().await;
         let client = map
             .get_mut(&handle.pool_id)
             .ok_or_else(|| DriverError::ConnectionFailed("Connection pool not found".into()))?;
+        if needs_own_batch(sql) {
+            // These statements are only legal as the first statement of a
+            // batch, which `sp_executesql` cannot provide; T-SQL reports no row
+            // count for them, so the result is 0.
+            let mut stream = client
+                .simple_query(sql)
+                .await
+                .map_err(|e| DriverError::QueryFailed(format!("SQL Server execute failed: {e}")))?;
+            while stream
+                .try_next()
+                .await
+                .map_err(|e| DriverError::QueryFailed(format!("SQL Server execute failed: {e}")))?
+                .is_some()
+            {}
+            return Ok(0);
+        }
         client
             .execute(sql, &[])
             .await
@@ -823,7 +1127,10 @@ impl DatabaseDriver for SqlServerDriver {
             let _ = Self::run(client, "SET SHOWPLAN_TEXT OFF").await;
             return Err(e);
         }
-        let plan = Self::run(client, sql).await;
+        // The planned statement must be sent as a real batch: under SHOWPLAN the
+        // RPC path yields no result rows at all (and would be a data-loss trap
+        // if the flag had not stuck).
+        let plan = Self::run_batch(client, sql).await;
         let disable = Self::run(client, "SET SHOWPLAN_TEXT OFF").await;
         let result = plan?;
         disable?;
@@ -850,6 +1157,18 @@ impl DatabaseDriver for SqlServerDriver {
             try_execute_schema_catalog_command(self, handle, command, input.clone()).await?
         {
             return Ok(result);
+        }
+        // `list_objects` / `get_object_ddl` / `list_privileges` are shared
+        // driver-api commands; the driver only supplies its dialect.
+        if is_schema_object_command(command) {
+            return execute_schema_object_command(
+                self,
+                &self.driver_type(),
+                handle,
+                command,
+                input,
+            )
+            .await;
         }
         let sql = crate::admin_commands::build_admin_sql(command, &input)?;
         let mut map = self.clients.write().await;
@@ -1003,13 +1322,19 @@ mod tests {
             apply_sqlserver_top("SELECT * FROM t", Some(10)),
             ("SELECT TOP 11 * FROM t".into(), Some(10))
         );
+        // A hand-written `TOP` is the dialect's own row limit: respected, and
+        // no cap is reported as applied.
         assert_eq!(
             apply_sqlserver_top("SELECT TOP 5 * FROM t", Some(10)),
-            ("SELECT TOP 5 * FROM t".into(), Some(10))
+            ("SELECT TOP 5 * FROM t".into(), None)
         );
         assert_eq!(
             apply_sqlserver_top("SELECT DISTINCT name FROM t", Some(3)),
             ("SELECT DISTINCT TOP 4 name FROM t".into(), Some(3))
+        );
+        assert_eq!(
+            apply_sqlserver_top("SELECT DISTINCT TOP 2 name FROM t", Some(3)),
+            ("SELECT DISTINCT TOP 2 name FROM t".into(), None)
         );
         assert_eq!(
             apply_sqlserver_top("INSERT INTO t VALUES (1)", Some(10)),
@@ -1019,5 +1344,208 @@ mod tests {
             apply_sqlserver_top("select id from t", Some(1)),
             ("SELECT TOP 2 id from t".into(), Some(1))
         );
+
+        // `TOP` cannot share a query with `OFFSET … FETCH` (error 10741), so a
+        // statement that pages itself is never rewritten — this is the statement
+        // the Visual Query Builder emits for SQL Server.
+        let paged = "SELECT [u].[id] FROM [users] AS [u] \
+                     ORDER BY (SELECT NULL) OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY";
+        assert_eq!(apply_sqlserver_top(paged, Some(100)), (paged.into(), None));
+        // The same is true for an offset-only page and for either keyword case.
+        assert_eq!(
+            apply_sqlserver_top("select id from t order by id offset 2 rows", Some(10)),
+            ("select id from t order by id offset 2 rows".into(), None)
+        );
+        assert_eq!(
+            apply_sqlserver_top("SELECT id FROM t OFFSET @skip ROWS", Some(10)),
+            ("SELECT id FROM t OFFSET @skip ROWS".into(), None)
+        );
+
+        // A nested `OFFSET` is legal next to an outer `TOP`, so the cap stays.
+        assert_eq!(
+            apply_sqlserver_top(
+                "SELECT * FROM (SELECT id FROM t ORDER BY id OFFSET 2 ROWS) AS inner_q",
+                Some(10)
+            ),
+            (
+                "SELECT TOP 11 * FROM (SELECT id FROM t ORDER BY id OFFSET 2 ROWS) AS inner_q"
+                    .into(),
+                Some(10)
+            )
+        );
+        // …and a column named `offset` is not an OFFSET clause.
+        assert_eq!(
+            apply_sqlserver_top("SELECT offset FROM t", Some(10)),
+            ("SELECT TOP 11 offset FROM t".into(), Some(10))
+        );
+    }
+
+    #[test]
+    fn has_top_level_offset_ignores_literals_comments_and_identifiers() {
+        assert!(has_top_level_offset(
+            "SELECT id FROM t ORDER BY id OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY"
+        ));
+        assert!(has_top_level_offset("SELECT id FROM t OFFSET 5 ROWS"));
+
+        // Inside a string literal, a bracketed/quoted identifier or a comment it
+        // is data, not a clause.
+        assert!(!has_top_level_offset(
+            "SELECT 'x OFFSET 5 ROWS' AS [offset 3] FROM t"
+        ));
+        assert!(!has_top_level_offset("SELECT id FROM t -- OFFSET 5 ROWS\n"));
+        assert!(!has_top_level_offset(
+            "SELECT id /* OFFSET 5 ROWS */ FROM t"
+        ));
+        assert!(!has_top_level_offset("\"OFFSET 5\" AS c FROM t"));
+        // A doubled bracket inside an identifier must not end it early.
+        assert!(!has_top_level_offset(
+            "SELECT [we]]ird OFFSET 5 ROWS] FROM t"
+        ));
+        // Depth matters: a sub-query's OFFSET is not the outer query's.
+        assert!(!has_top_level_offset(
+            "SELECT * FROM (SELECT id FROM t OFFSET 5 ROWS) AS q"
+        ));
+        assert!(has_top_level_offset(
+            "SELECT * FROM (SELECT id FROM t) AS q OFFSET 1 ROWS"
+        ));
+    }
+
+    /// Regression: the host used to append `LIMIT n OFFSET m`, which T-SQL
+    /// rejects with "Incorrect syntax near 'LIMIT'".
+    #[test]
+    fn pagination_syntax_is_offset_fetch_and_never_limit() {
+        let driver = SqlServerDriver::new();
+        assert!(driver.supports_offset());
+
+        let first_page = driver.pagination_syntax(25, 0);
+        assert_eq!(
+            first_page.clause,
+            "OFFSET 0 ROWS FETCH NEXT 25 ROWS ONLY".to_string()
+        );
+        assert!(first_page.requires_order_by);
+        assert_eq!(first_page.order_by_fallback, Some("(SELECT NULL)"));
+        assert!(!first_page.clause.contains("LIMIT"));
+
+        let deep_page = driver.pagination_syntax(50, 150);
+        assert_eq!(
+            deep_page.clause,
+            "OFFSET 150 ROWS FETCH NEXT 50 ROWS ONLY".to_string()
+        );
+        assert!(!deep_page.clause.contains("LIMIT"));
+    }
+
+    #[test]
+    fn batch_only_ddl_is_detected() {
+        // Statements SQL Server rejects through `sp_executesql`.
+        for stmt in [
+            "CREATE SCHEMA [reporting]",
+            "create schema reporting",
+            "CREATE VIEW [dbo].[v] AS SELECT 1 AS c",
+            "ALTER VIEW [dbo].[v] AS SELECT 1 AS c",
+            "CREATE PROCEDURE [dbo].[p] AS SELECT 1",
+            "CREATE PROC [dbo].[p] AS SELECT 1",
+            "CREATE FUNCTION [dbo].[f]() RETURNS INT AS BEGIN RETURN 1 END",
+            "CREATE TRIGGER [dbo].[tr] ON [dbo].[t] AFTER INSERT AS SELECT 1",
+            "CREATE OR ALTER PROCEDURE [dbo].[p] AS SELECT 1",
+            "CREATE OR ALTER VIEW [dbo].[v] AS SELECT 1 AS c",
+            "  -- installs the reporting schema\nCREATE SCHEMA [reporting]",
+            "/* bootstrap */ CREATE TRIGGER [dbo].[tr] ON [dbo].[t] AFTER INSERT AS SELECT 1",
+            // Session-scoped statements must also bypass sp_executesql.
+            "SET NOCOUNT ON",
+            "SET IDENTITY_INSERT [dbo].[t] ON",
+            "BEGIN TRAN; SELECT 1; COMMIT",
+            "BEGIN TRANSACTION",
+            "COMMIT",
+            "ROLLBACK",
+            "SAVE TRAN savepoint_one",
+        ] {
+            assert!(needs_own_batch(stmt), "expected own batch: {stmt}");
+        }
+    }
+
+    #[test]
+    fn statement_splitting_respects_literals_and_comments() {
+        assert_eq!(
+            split_statements("SELECT ';' AS [a]"),
+            vec!["SELECT ';' AS [a]"]
+        );
+        assert_eq!(
+            split_statements("SELECT 1; SELECT ';' AS [b]; -- trailing\n"),
+            vec!["SELECT 1", "SELECT ';' AS [b]"]
+        );
+        assert_eq!(
+            split_statements("SELECT '[;]' AS [c] /* ; */; SELECT 2"),
+            vec!["SELECT '[;]' AS [c] /* ; */", "SELECT 2"]
+        );
+        assert!(split_statements("   ").is_empty());
+    }
+
+    #[test]
+    fn preparable_statements_stay_on_the_rpc_path() {
+        for stmt in [
+            "CREATE TABLE [dbo].[t] ([id] INT NOT NULL)",
+            "ALTER TABLE [dbo].[t] ADD [c] INT NULL",
+            "DROP TABLE [dbo].[t]",
+            "DROP SCHEMA [reporting]",
+            "CREATE SEQUENCE [dbo].[s] AS INT START WITH 1",
+            "CREATE TYPE [dbo].[ty] FROM INT",
+            "INSERT INTO [dbo].[t] ([id]) VALUES (1)",
+            "UPDATE [dbo].[t] SET [id] = 2",
+            "DELETE FROM [dbo].[t]",
+            "MERGE [dbo].[t] AS t USING [dbo].[s] AS s ON t.id = s.id WHEN MATCHED THEN DELETE;",
+            "SELECT * FROM [dbo].[t]",
+            "",
+        ] {
+            assert!(!needs_own_batch(stmt), "expected RPC path: {stmt}");
+        }
+    }
+
+    /// Render a temporal cell and unwrap it to its text payload.
+    fn temporal_text(data: &ColumnData<'static>) -> Option<String> {
+        match SqlServerDriver::value_from_column(data) {
+            Some(Value::String(text)) => Some(text),
+            None => None,
+            other => panic!("expected a text value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn temporal_columns_render_as_text_not_debug_output() {
+        use tiberius::time::{Date, DateTime2, DateTimeOffset, Time};
+
+        // 2026-01-02 is 739617 days after 0001-01-01; 03:04:05 is 11 045 s.
+        let date = temporal_text(&ColumnData::Date(Some(Date::new(739_617))));
+        assert_eq!(date.as_deref(), Some("2026-01-02"));
+
+        let time = temporal_text(&ColumnData::Time(Some(Time::new(110_450_000_000, 7))));
+        assert_eq!(time.as_deref(), Some("03:04:05"));
+
+        let datetime2 = temporal_text(&ColumnData::DateTime2(Some(DateTime2::new(
+            Date::new(739_617),
+            Time::new(110_450_000_000, 7),
+        ))));
+        assert_eq!(datetime2.as_deref(), Some("2026-01-02 03:04:05"));
+
+        // TDS carries the UTC instant plus the original offset: the live wire
+        // value for `CAST('2026-01-02T03:04:05+08:00' AS DATETIMEOFFSET)` is the
+        // datetime2 `2026-01-01 19:04:05` (day 739616, 68 645 s) with offset 480.
+        let offset = temporal_text(&ColumnData::DateTimeOffset(Some(DateTimeOffset::new(
+            DateTime2::new(Date::new(739_616), Time::new(686_450_000_000, 7)),
+            480,
+        ))));
+        assert_eq!(offset.as_deref(), Some("2026-01-02T03:04:05+08:00"));
+
+        for text in [date, time, datetime2, offset].into_iter().flatten() {
+            assert!(
+                !text.contains("Date(") && !text.contains("Time {") && !text.contains("increments"),
+                "temporal value must not leak tiberius' Debug output: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn null_temporal_columns_stay_null() {
+        assert_eq!(temporal_text(&ColumnData::Date(None)), None);
+        assert_eq!(temporal_text(&ColumnData::DateTimeOffset(None)), None);
     }
 }

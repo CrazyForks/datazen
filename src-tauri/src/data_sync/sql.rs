@@ -19,6 +19,9 @@ pub struct SqlStatement {
 }
 
 pub fn quote_ident_sql(name: &str, quote: char) -> String {
+    if quote == '[' {
+        return format!("[{}]", name.replace(']', "]]"));
+    }
     let doubled = name.replace(quote, &format!("{quote}{quote}"));
     format!("{quote}{doubled}{quote}")
 }
@@ -1066,6 +1069,7 @@ mod tests {
         assert!(format_literal(&Some(Value::Timestamp("t".into()))).contains("'t'"));
         assert!(format_literal(&Some(Value::Json(serde_json::json!({"a":1})))).contains('{'));
         assert_eq!(quote_ident_sql("na\"me", '"'), r#""na""me""#);
+        assert_eq!(quote_ident_sql("na]me", '['), "[na]]me]");
     }
     #[test]
     fn test_tester_binary_preview_never_replaces_bytes_with_unicode() {

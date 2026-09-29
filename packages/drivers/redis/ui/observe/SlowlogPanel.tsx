@@ -13,8 +13,8 @@
 //! `data-row-count`，不钉任何翻译后的英文字面量。
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCw, Trash2 } from 'lucide-react';
-import { Button, Dialog, useI18n } from '@datazen/ui';
+import { RefreshCw, Trash2 } from 'lucide-react';
+import { Button, Dialog, useI18n, Spinner } from '@datazen/ui';
 import { redisCommandInvoke, type RedisInvokeFn } from '../shared/redisInvoke';
 import { useRedisGate } from '../shared/useRedisGate';
 import {
@@ -159,7 +159,7 @@ export function SlowlogPanel({ dbSessionId, invoke = redisCommandInvoke }: Slowl
           className="flex flex-1 items-center justify-center gap-2 text-xs text-fg-muted"
           data-testid="redis-slowlog-loading"
         >
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Spinner size="md" />
           {t('common.loading')}
         </div>
       ) : rows.length === 0 ? (

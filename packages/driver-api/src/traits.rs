@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::query_stream::{QueryStreamCallback, emit_multi_query_as_stream};
+use crate::query_stream::{emit_multi_query_as_stream, QueryStreamCallback};
 use crate::schema_migration::{MigrationCapabilities, MigrationRenderer, TypeNormalizer};
 use crate::sql_target::SqlTarget;
 use crate::types::*;
 use crate::{
-    CommandResult, DriverCommandDefinition, execute_command_definition, query_command_definition,
-    schema_catalog_command_definitions, try_execute_schema_catalog_command,
+    execute_command_definition, query_command_definition, schema_catalog_command_definitions,
+    try_execute_schema_catalog_command, CommandResult, DriverCommandDefinition,
 };
 
 /// Lowercase hexadecimal encoding used by the default SQL literal formatter.
@@ -81,6 +81,26 @@ pub trait DatabaseDriver: Send + Sync {
     /// Drivers that don't (e.g. Presto/Hive via Superset) should return `false`.
     fn supports_offset(&self) -> bool {
         true
+    }
+
+    /// Pagination syntax this dialect accepts for a `SELECT` returning at most
+    /// `limit` rows starting at `offset`.
+    ///
+    /// The host builds every paged read through this method, so a dialect that
+    /// has no `LIMIT` (SQL Server) or that needs an `ORDER BY` before `OFFSET`
+    /// overrides it instead of the host special-casing the driver by name.
+    /// The default keeps the historical `LIMIT …` / `LIMIT … OFFSET …` shape for
+    /// dialects that opt out of `OFFSET` via [`Self::supports_offset`].
+    fn pagination_syntax(&self, limit: u64, offset: u64) -> PaginationSyntax {
+        PaginationSyntax {
+            clause: if self.supports_offset() {
+                format!("LIMIT {limit} OFFSET {offset}")
+            } else {
+                format!("LIMIT {limit}")
+            },
+            requires_order_by: false,
+            order_by_fallback: None,
+        }
     }
 
     /// Whether the driver supports EXPLAIN query plan analysis.
@@ -295,7 +315,7 @@ pub trait DatabaseDriver: Send + Sync {
     }
 
     async fn query(&self, handle: &ConnectionHandle, sql: &str)
-    -> Result<QueryResult, DriverError>;
+        -> Result<QueryResult, DriverError>;
 
     async fn query_multi(
         &self,
@@ -1289,12 +1309,10 @@ mod structure_defaults_tests {
             pool_id: "pool".into(),
         };
 
-        assert!(
-            !driver
-                .has_complete_foreign_key_catalog_visibility(&handle)
-                .await
-                .expect("default visibility capability")
-        );
+        assert!(!driver
+            .has_complete_foreign_key_catalog_visibility(&handle)
+            .await
+            .expect("default visibility capability"));
     }
 
     #[tokio::test]
@@ -1630,29 +1648,33 @@ mod structure_defaults_tests {
             assert!(
                 validate_schema_target(&SchemaAware, "app", None, SchemaScope::AnySchema).is_ok()
             );
-            assert!(
-                validate_schema_target(&SchemaAware, "app", Some("public"), SchemaScope::AnySchema)
-                    .is_ok()
-            );
-            assert!(
-                validate_schema_target(
-                    &SchemaAware,
-                    "app",
-                    Some("public"),
-                    SchemaScope::ExactSchema
-                )
-                .is_ok()
-            );
+            assert!(validate_schema_target(
+                &SchemaAware,
+                "app",
+                Some("public"),
+                SchemaScope::AnySchema
+            )
+            .is_ok());
+            assert!(validate_schema_target(
+                &SchemaAware,
+                "app",
+                Some("public"),
+                SchemaScope::ExactSchema
+            )
+            .is_ok());
             let err = validate_schema_target(&SchemaAware, "app", None, SchemaScope::ExactSchema)
                 .expect_err("schema-aware driver must require a schema when resolving one table");
             assert!(
                 err.to_string().contains("explicit schema is required"),
                 "{err}"
             );
-            assert!(
-                validate_schema_target(&SchemaAware, "app", Some(" "), SchemaScope::ExactSchema)
-                    .is_err()
-            );
+            assert!(validate_schema_target(
+                &SchemaAware,
+                "app",
+                Some(" "),
+                SchemaScope::ExactSchema
+            )
+            .is_err());
         }
     }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
 import { tunnelCommands } from '../../commands/tunnel';
 import { useI18n } from '../../hooks/useI18n';
 import type { DeleteTunnelOutcome } from '../../lib/tunnelDeletion';
@@ -168,9 +169,9 @@ export function TunnelDeleteDialog({ open, tunnel, onClose, onConfirm }: TunnelD
         <p className="text-[11px] text-fg-muted">{t('settings.tunnels.delete.unbindHint')}</p>
 
         {errorText ? (
-          <p role="alert" className="text-xs text-red-400" data-testid="tunnel-delete-error">
+          <ErrorBanner as="p" data-testid="tunnel-delete-error">
             {errorText}
-          </p>
+          </ErrorBanner>
         ) : null}
         {note ? (
           <p className="text-xs text-amber-400" data-testid="tunnel-delete-note">
