@@ -79,6 +79,7 @@ jobs:
         # no test in this suite reads it. There is no seam gate to waive: the
         # cross-repo assertions live in the Pro repo and run in the Pro's CI.
 
+        run: pnpm test:unit
       - name: Check site changes
         id: site-changes
         run: |
