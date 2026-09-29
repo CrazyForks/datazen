@@ -16,6 +16,7 @@ pub(crate) async fn read_target_object_catalog(
     schema_scope: Option<&str>,
     complete: &mut bool,
 ) -> (Vec<DatabaseObject>, Vec<SchemaObjectDependencySnapshot>) {
+    let metadata_database = super::schema_catalog_database(dialect, Some(database));
     let mut objects = Vec::new();
     for kind in UNIFIED_OBJECT_KINDS {
         match list_schema_objects(driver, handle, kind).await {
@@ -27,7 +28,7 @@ pub(crate) async fn read_target_object_catalog(
         }
     }
     let mut dependency_objects = objects.clone();
-    match driver.get_tables(handle, database, None).await {
+    match driver.get_tables(handle, metadata_database, None).await {
         Ok(tables) => {
             dependency_objects.extend(
                 tables
@@ -39,7 +40,7 @@ pub(crate) async fn read_target_object_catalog(
                             if normalize_dialect(dialect) == "postgresql" {
                                 schema_scope.map(str::to_owned)
                             } else {
-                                Some(database.to_owned())
+                                Some(metadata_database.to_owned())
                             }
                         }),
                         name: table.name,

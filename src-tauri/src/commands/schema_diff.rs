@@ -423,6 +423,20 @@ fn is_table_missing_error(msg: &str) -> bool {
         || lower.contains("not found")
 }
 
+/// Convert a connection's configured database value to the catalog identifier
+/// expected by metadata methods. SQLite stores a file path in the connection
+/// config while its single default catalog is named `main`.
+pub(super) fn schema_catalog_database<'a>(
+    database_type: &str,
+    configured_database: Option<&'a str>,
+) -> &'a str {
+    if normalize_dialect(database_type) == "sqlite" {
+        "main"
+    } else {
+        configured_database.unwrap_or_default()
+    }
+}
+
 async fn fetch_target_table_schema(
     driver: &dyn datazen_driver_api::DatabaseDriver,
     handle: &datazen_driver_api::ConnectionHandle,
@@ -430,6 +444,7 @@ async fn fetch_target_table_schema(
     database: &str,
     schema: Option<&str>,
 ) -> Result<crate::db::TableSchema, CommandError> {
+    let database = schema_catalog_database(&driver.driver_type(), Some(database));
     match driver
         .get_table_schema(handle, table, database, schema)
         .await
@@ -465,6 +480,7 @@ async fn fetch_target_table_dependency_catalog(
 ) -> Result<Vec<(String, crate::db::TableSchema)>, CommandError> {
     const CATALOG_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     let started_at = std::time::Instant::now();
+    let metadata_database = schema_catalog_database(dialect, Some(database));
     let (snapshots, table_count) = tokio::time::timeout(CATALOG_READ_TIMEOUT, async {
         let databases = if normalize_dialect(dialect) == "mysql" {
             if !driver
@@ -487,7 +503,7 @@ async fn fetch_target_table_dependency_catalog(
             }
             databases
         } else {
-            vec![database.to_string()]
+            vec![metadata_database.to_string()]
         };
         let mut snapshots = selected_snapshots.to_vec();
         let mut seen = snapshots
@@ -851,7 +867,7 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             .get_table_schema(
                 &src_handle,
                 &src_table,
-                src_config.database.as_deref().unwrap_or_default(),
+                schema_catalog_database(&src_config.database_type, src_config.database.as_deref()),
                 source_schema_override
                     .as_deref()
                     .or(src_config.schema.as_deref()),
@@ -895,7 +911,7 @@ async fn prepare_schema_diff_plan_with_schemas_impl(
             .get_table_schema(
                 &tgt_handle,
                 &tgt_table,
-                tgt_config.database.as_deref().unwrap_or_default(),
+                schema_catalog_database(&tgt_config.database_type, tgt_config.database.as_deref()),
                 target_schema_override
                     .as_deref()
                     .or(tgt_config.schema.as_deref()),
@@ -2025,7 +2041,7 @@ pub(crate) async fn compare_table_schemas_impl(
         .get_table_schema(
             &src_handle,
             &src_table,
-            src_config.database.as_deref().unwrap_or_default(),
+            schema_catalog_database(&src_config.database_type, src_config.database.as_deref()),
             source_schema.as_deref().or(src_config.schema.as_deref()),
         )
         .await
@@ -2897,5 +2913,15 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn sqlite_metadata_uses_catalog_name_instead_of_configured_file_path() {
+        assert_eq!(
+            schema_catalog_database("sqlite", Some("/tmp/source.sqlite")),
+            "main"
+        );
+        assert_eq!(schema_catalog_database("postgresql", Some("app")), "app");
+        assert_eq!(schema_catalog_database("mysql", None), "");
     }
 }

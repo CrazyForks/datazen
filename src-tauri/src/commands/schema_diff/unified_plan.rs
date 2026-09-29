@@ -183,7 +183,10 @@ pub async fn prepare_schema_unified_plan(
     let (target_object_list, target_object_catalog) = read_target_object_catalog(
         target_driver.as_ref(),
         &target_handle,
-        target_config.database.as_deref().unwrap_or_default(),
+        super::schema_catalog_database(
+            &target_config.database_type,
+            target_config.database.as_deref(),
+        ),
         &target_config.database_type,
         target_dependency_schema_scope,
         &mut target_catalog_complete,
@@ -238,7 +241,10 @@ pub async fn prepare_schema_unified_plan(
             .get_table_schema(
                 &source_handle,
                 &source_table,
-                source_config.database.as_deref().unwrap_or_default(),
+                super::schema_catalog_database(
+                    &source_config.database_type,
+                    source_config.database.as_deref(),
+                ),
                 source_schema_scope,
             )
             .await
@@ -248,13 +254,19 @@ pub async fn prepare_schema_unified_plan(
             &source_table,
             &source_config.database_type,
             source_schema_scope,
-            source_config.database.as_deref(),
+            Some(super::schema_catalog_database(
+                &source_config.database_type,
+                source_config.database.as_deref(),
+            )),
         );
         let target_table_identity = table_identity_for_target(
             &target_table,
             &target_config.database_type,
             target_dependency_schema_scope,
-            target_config.database.as_deref(),
+            Some(super::schema_catalog_database(
+                &target_config.database_type,
+                target_config.database.as_deref(),
+            )),
         );
         source_to_target_table.insert(source_table_identity.clone(), target_table_identity.clone());
         let source_table_object = DatabaseObject {
@@ -364,7 +376,10 @@ pub async fn prepare_schema_unified_plan(
             .get_table_schema(
                 &target_handle,
                 &table,
-                target_config.database.as_deref().unwrap_or_default(),
+                super::schema_catalog_database(
+                    &target_config.database_type,
+                    target_config.database.as_deref(),
+                ),
                 target_schema_scope,
             )
             .await
@@ -407,7 +422,10 @@ pub async fn prepare_schema_unified_plan(
                             table,
                             &target_config.database_type,
                             target_dependency_schema_scope,
-                            target_config.database.as_deref(),
+                            Some(super::schema_catalog_database(
+                                &target_config.database_type,
+                                target_config.database.as_deref(),
+                            )),
                         )
                     })
                     .collect();
@@ -424,7 +442,10 @@ pub async fn prepare_schema_unified_plan(
         match read_target_table_identities(
             target_driver.as_ref(),
             &target_handle,
-            target_config.database.as_deref().unwrap_or_default(),
+            super::schema_catalog_database(
+                &target_config.database_type,
+                target_config.database.as_deref(),
+            ),
             &target_config.database_type,
             target_dependency_schema_scope,
         )
@@ -479,7 +500,10 @@ pub async fn prepare_schema_unified_plan(
     let source_object_scope = if normalize_dialect(&source_config.database_type) == "postgresql" {
         source_schema_scope.or(source_driver.default_schema())
     } else {
-        source_config.database.as_deref()
+        Some(super::schema_catalog_database(
+            &source_config.database_type,
+            source_config.database.as_deref(),
+        ))
     };
     let mut plan = build_unified_schema_diff_plan_with_source_scope(
         &table_pairs,
@@ -494,7 +518,10 @@ pub async fn prepare_schema_unified_plan(
         &source_config.database_type,
         &target_config.database_type,
         target_dependency_schema_scope,
-        target_config.database.as_deref(),
+        Some(super::schema_catalog_database(
+            &target_config.database_type,
+            target_config.database.as_deref(),
+        )),
         allow_destructive,
         include_indexes.unwrap_or(true),
         type_overrides.as_deref().unwrap_or_default(),
@@ -637,15 +664,16 @@ pub(super) async fn read_target_table_identities(
     dialect: &str,
     schema_scope: Option<&str>,
 ) -> Result<Vec<SchemaObjectIdentity>, CommandError> {
+    let metadata_database = super::schema_catalog_database(dialect, Some(database));
     let tables = driver
-        .get_tables(handle, database, None)
+        .get_tables(handle, metadata_database, None)
         .await
         .map_err(CommandError::Driver)?;
     Ok(table_identities_from_catalog(
         &tables,
         dialect,
         schema_scope,
-        Some(database),
+        Some(metadata_database),
     ))
 }
 
