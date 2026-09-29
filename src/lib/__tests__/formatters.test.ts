@@ -50,6 +50,20 @@ describe('formatTimestamp', () => {
   it('returns raw string for invalid dates', () => {
     expect(formatTimestamp('not-a-date')).toBe('not-a-date');
   });
+
+  it('keeps zone-less wall-clock values verbatim', () => {
+    // Database text without a zone designator must not be reinterpreted as a
+    // local instant: `new Date('2026-03-01 00:15:30').toISOString()` shifted it
+    // by the local UTC offset and appended `Z`.
+    expect(formatTimestamp('2026-03-01 00:15:30')).toBe('2026-03-01 00:15:30');
+    expect(formatTimestamp('2026-03-01 00:15:30.123')).toBe('2026-03-01 00:15:30.123');
+    expect(formatTimestamp('2026-03-01')).toBe('2026-03-01');
+  });
+
+  it('normalizes values that do carry a zone', () => {
+    expect(formatTimestamp('2024-01-15T10:00:00Z')).toBe('2024-01-15T10:00:00.000Z');
+    expect(formatTimestamp('2024-01-15T10:00:00+08:00')).toBe('2024-01-15T02:00:00.000Z');
+  });
 });
 
 describe('formatLastConnected', () => {

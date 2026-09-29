@@ -72,6 +72,10 @@ impl DatabaseDriver for ReuseDriver {
         self.inner.supports_offset()
     }
 
+    fn pagination_syntax(&self, limit: u64, offset: u64) -> PaginationSyntax {
+        self.inner.pagination_syntax(limit, offset)
+    }
+
     fn supports_explain(&self) -> bool {
         self.inner.supports_explain()
     }

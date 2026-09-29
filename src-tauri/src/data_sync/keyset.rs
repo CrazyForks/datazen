@@ -5,7 +5,12 @@ use datazen_driver_api::Value;
 use super::error::DataSyncError;
 use super::sql::quote_ident_sql;
 
-/// Build a parameterized `SELECT … ORDER BY pk LIMIT n` for keyset paging.
+/// Build a parameterized `SELECT … ORDER BY pk <pagination> ` for keyset paging.
+///
+/// The clause is **not** built here: callers must pass
+/// `driver.pagination_syntax(limit, 0).clause`, because dialects disagree
+/// (`LIMIT n` vs T-SQL `OFFSET 0 ROWS FETCH NEXT n ROWS ONLY`). An empty clause
+/// is rejected rather than silently producing an unpaged full scan.
 ///
 /// First page omits `WHERE`; subsequent pages use tuple comparison
 /// `(pk1, pk2, …) > (placeholder…)` matching the PK `ORDER BY`.
@@ -17,7 +22,7 @@ pub fn build_keyset_select_sql<P>(
     columns: &[String],
     pk_columns: &[String],
     after_key: Option<&[Value]>,
-    limit: u32,
+    pagination_clause: &str,
     quote: char,
     placeholder: P,
 ) -> Result<(String, Vec<Value>), DataSyncError>
@@ -32,6 +37,11 @@ where
     if columns.is_empty() {
         return Err(DataSyncError::validation(
             "keyset paging requires at least one selected column",
+        ));
+    }
+    if pagination_clause.trim().is_empty() {
+        return Err(DataSyncError::validation(
+            "keyset paging requires a pagination clause from the driver",
         ));
     }
     if let Some(key) = after_key {
@@ -71,8 +81,7 @@ where
 
     let qualified = super::sql::qualify_relation_sql(family, database, schema, table, quote);
     let sql = format!(
-        "SELECT {select_cols} FROM {qualified}{where_clause} ORDER BY {order_cols} LIMIT {limit}",
-        limit = limit.max(1),
+        "SELECT {select_cols} FROM {qualified}{where_clause} ORDER BY {order_cols} {pagination_clause}"
     );
     Ok((sql, params))
 }
@@ -104,7 +113,7 @@ mod tests {
             &cols(),
             &pk1(),
             None,
-            100,
+            "LIMIT 100",
             '`',
             mysql_placeholder,
         )
@@ -126,7 +135,7 @@ mod tests {
             &cols(),
             &pk1(),
             None,
-            100,
+            "LIMIT 100",
             '`',
             mysql_placeholder,
         )
@@ -148,7 +157,7 @@ mod tests {
             &cols(),
             &pk1(),
             Some(&[Value::Integer(42)]),
-            50,
+            "LIMIT 50",
             '`',
             mysql_placeholder,
         )
@@ -172,7 +181,7 @@ mod tests {
             &cols,
             &pk2(),
             Some(&[Value::Integer(1), Value::String("east".into())]),
-            10,
+            "LIMIT 10",
             '`',
             mysql_placeholder,
         )
@@ -197,7 +206,7 @@ mod tests {
             &cols(),
             &pk1(),
             None,
-            25,
+            "LIMIT 25",
             '"',
             postgres_placeholder,
         )
@@ -220,7 +229,7 @@ mod tests {
             &cols,
             &pk2(),
             Some(&[Value::Integer(2), Value::String("west".into())]),
-            5,
+            "LIMIT 5",
             '"',
             postgres_placeholder,
         )
@@ -246,7 +255,7 @@ mod tests {
             &cols(),
             &[],
             None,
-            1,
+            "LIMIT 1",
             '"',
             postgres_placeholder,
         )
@@ -264,7 +273,7 @@ mod tests {
             &cols(),
             &pk2(),
             Some(&[Value::Integer(1)]),
-            1,
+            "LIMIT 1",
             '"',
             postgres_placeholder,
         )
@@ -282,7 +291,7 @@ mod tests {
             &cols(),
             &pk1(),
             None,
-            10,
+            "LIMIT 10",
             '"',
             postgres_placeholder,
         )
