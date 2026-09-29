@@ -19,8 +19,9 @@ import {
   createGitIgnorePredicate,
   resolveSpecifier,
   runCli,
-  scanCode,
 } from '../check-driver-import-boundaries.mjs';
+import { scanCode } from '../lib/scanSourceCode.mjs';
+import { withProbeLock, withTempSourceFile } from './boundaryMutation';
 
 /** Run the guard on a virtual tree, capturing both output channels. */
 function run(files, opts = {}) {
@@ -58,7 +59,9 @@ describe('scanCode (specifier extraction)', () => {
   });
 
   it('skips `${}` templates (computed specifiers cannot be judged statically)', () => {
-    const { literals } = scanCode('const m = await import(`./dyn/${name}`);\nimport x from "./keep";');
+    const { literals } = scanCode(
+      'const m = await import(`./dyn/${name}`);\nimport x from "./keep";',
+    );
     expect(literals).toEqual([{ value: './keep', line: 2 }]);
   });
 
@@ -82,7 +85,9 @@ describe('scanCode (specifier extraction)', () => {
   it('tolerates an unterminated block comment and an unterminated string', () => {
     // Matches JavaScript: an unclosed `/* … * /` runs to end of file, so the
     // code below it is comment territory — the guard must not crash on it.
-    const { literals, code } = scanCode("const a = /* never closed\nsetLocale();\nconst b = \"dangling\n");
+    const { literals, code } = scanCode(
+      'const a = /* never closed\nsetLocale();\nconst b = "dangling\n',
+    );
     expect(literals).toEqual([]);
     expect(code.split('\n')).toHaveLength(4);
   });
@@ -94,9 +99,9 @@ describe('resolveSpecifier', () => {
       'packages/drivers/redis/shared/meta',
     );
     expect(resolveSpecifier(DRIVER_UI, DRIVER_UI_HOST_CLIMB)).toBe('src/hooks/useI18n');
-    expect(resolveSpecifier('src/test/driverUiSetup.ts', '../../packages/drivers/redis/ui/shared/meta')).toBe(
-      'packages/drivers/redis/ui/shared/meta',
-    );
+    expect(
+      resolveSpecifier('src/test/driverUiSetup.ts', '../../packages/drivers/redis/ui/shared/meta'),
+    ).toBe('packages/drivers/redis/ui/shared/meta');
   });
 
   it('returns null for bare package specifiers', () => {
@@ -108,7 +113,8 @@ describe('resolveSpecifier', () => {
 describe('R1 · drivers must not reference host src/', () => {
   it('passes a clean tree and says so', () => {
     const result = run({
-      [DRIVER_UI]: "import { useI18n } from '@datazen/ui';\nimport { helpers } from '../shared/helpers';\nexport const x = 1;\n",
+      [DRIVER_UI]:
+        "import { useI18n } from '@datazen/ui';\nimport { helpers } from '../shared/helpers';\nexport const x = 1;\n",
     });
     expect(result.code).toBe(0);
     expect(result.out).toContain('ok (1 file(s) scanned');
@@ -218,8 +224,10 @@ describe('R2 · only the host may call setLocale()', () => {
 
   it('never flags the i18n runtime owner package (it defines setLocale and tests it)', () => {
     const result = run({
-      'packages/ui/src/i18n.ts': 'export function setLocale(locale: string): void {\n  currentLocale = locale;\n}\n',
-      'packages/ui/src/__tests__/i18n.test.tsx': "import { setLocale } from '../i18n';\nsetLocale('zh-CN');\n",
+      'packages/ui/src/i18n.ts':
+        'export function setLocale(locale: string): void {\n  currentLocale = locale;\n}\n',
+      'packages/ui/src/__tests__/i18n.test.tsx':
+        "import { setLocale } from '../i18n';\nsetLocale('zh-CN');\n",
     });
     expect(result.code).toBe(0);
   });
@@ -235,7 +243,8 @@ describe('R2 · only the host may call setLocale()', () => {
 describe('R3 · host must not import driver internals', () => {
   it('reports host → driver references as advisory findings without failing', () => {
     const result = run({
-      'src/test/driverUiSetup.ts': "import '../locales';\nimport '../../packages/drivers/redis/ui/shared/meta';\n",
+      'src/test/driverUiSetup.ts':
+        "import '../locales';\nimport '../../packages/drivers/redis/ui/shared/meta';\n",
     });
     expect(result.code).toBe(0);
     expect(result.out).toContain('R3 (advisory) src/test/driverUiSetup.ts:2');
@@ -245,7 +254,8 @@ describe('R3 · host must not import driver internals', () => {
 
   it('exempts the gitignored codegen registries (the sanctioned host → driver edge)', () => {
     const result = run({
-      'src/extensions/generated.ts': "import { redisMeta } from '../../packages/drivers/redis/ui/shared/meta';\n",
+      'src/extensions/generated.ts':
+        "import { redisMeta } from '../../packages/drivers/redis/ui/shared/meta';\n",
     });
     expect(result.code).toBe(0);
     expect(result.out).not.toContain('advisory');
@@ -258,7 +268,8 @@ describe('R3 · host must not import driver internals', () => {
 // are downgraded to advisory and never absorbed into the allow-list.
 describe('tracking-scope classification (BUG-008)', () => {
   const SUPERSET_FILE = 'packages/drivers/superset/ui/SupersetConnectionFields.tsx';
-  const EP_TEST_FILE = 'packages/pro-extensions/sql-editor-pro/src/locales/__tests__/locales.test.ts';
+  const EP_TEST_FILE =
+    'packages/pro-extensions/sql-editor-pro/src/locales/__tests__/locales.test.ts';
   /** One R1 (external clone), one R2 (staged Pro EP) and one R3 (tracked host). */
   const MIXED_TREE = {
     [SUPERSET_FILE]: "import { useI18n } from '../../../../src/hooks/useI18n';\n",
@@ -330,16 +341,24 @@ describe('allow-list', () => {
     };
     expect(run(files, { allowlist: [entry] }).code).toBe(0);
     expect(run(files, { allowlist: [{ ...entry, rule: 'R3' }] }).code).toBe(1);
-    expect(run(files, { allowlist: [{ ...entry, file: 'packages/drivers/redis/ui/other.tsx' }] }).code).toBe(1);
+    expect(
+      run(files, { allowlist: [{ ...entry, file: 'packages/drivers/redis/ui/other.tsx' }] }).code,
+    ).toBe(1);
     expect(run(files, { allowlist: [{ ...entry, specifier: './stale' }] }).code).toBe(1);
   });
 
   it('reports an exemption whose file disappeared as expired and fails', () => {
-    const result = run({ [DRIVER_UI]: "import { useI18n } from '@datazen/ui';\n" }, { allowlist: [entry] });
-    const withExpiry = run({ [DRIVER_UI]: "import { useI18n } from '@datazen/ui';\n" }, {
-      allowlist: [entry],
-      checkExpiredAllowlist: true,
-    });
+    const result = run(
+      { [DRIVER_UI]: "import { useI18n } from '@datazen/ui';\n" },
+      { allowlist: [entry] },
+    );
+    const withExpiry = run(
+      { [DRIVER_UI]: "import { useI18n } from '@datazen/ui';\n" },
+      {
+        allowlist: [entry],
+        checkExpiredAllowlist: true,
+      },
+    );
     expect(withExpiry.code).toBe(1);
     expect(withExpiry.err).toContain('expired exemption: R1');
     expect(withExpiry.err).toContain('the file no longer exists');
@@ -348,19 +367,25 @@ describe('allow-list', () => {
   });
 
   it('reports an exemption that no longer matches (reference decoupled) as expired', () => {
-    const result = run({ [DRIVER_TEST]: "import { useI18n } from '@datazen/ui';\n" }, {
-      allowlist: [entry],
-      checkExpiredAllowlist: true,
-    });
+    const result = run(
+      { [DRIVER_TEST]: "import { useI18n } from '@datazen/ui';\n" },
+      {
+        allowlist: [entry],
+        checkExpiredAllowlist: true,
+      },
+    );
     expect(result.code).toBe(1);
     expect(result.err).toContain('the reference has been decoupled');
   });
 
   it('stays silent about exemptions that were used', () => {
-    const result = run({ [DRIVER_TEST]: `vi.mock('${entry.specifier}');\n` }, {
-      allowlist: [entry],
-      checkExpiredAllowlist: true,
-    });
+    const result = run(
+      { [DRIVER_TEST]: `vi.mock('${entry.specifier}');\n` },
+      {
+        allowlist: [entry],
+        checkExpiredAllowlist: true,
+      },
+    );
     expect(result.code).toBe(0);
     expect(result.out).toContain('1 allow-listed reference(s) skipped');
     expect(result.err).toBe('');
@@ -379,6 +404,115 @@ describe('allow-list', () => {
       '../../../../../src/components/ui/WebContextMenu',
       '../../../../../src/stores/contextMenuStore',
     ]);
+  });
+});
+
+describe('R4 · the shared design system must stay host-free and runtime-free', () => {
+  const UI_SRC = 'packages/ui/src/PathInput.tsx';
+
+  it('keeps R1/R2/R4 blocking while R3 stays advisory', () => {
+    expect([RULES.R1.blocking, RULES.R2.blocking, RULES.R3.blocking, RULES.R4.blocking]).toEqual([
+      true,
+      true,
+      false,
+      true,
+    ]);
+  });
+
+  it('passes a design-system file that only depends on React and on itself', () => {
+    const result = run({
+      [UI_SRC]: [
+        "import { useCallback } from 'react';",
+        "import { FolderOpen } from 'lucide-react';",
+        "import { Input } from './Input';",
+        "import { cn } from '../cn';",
+        '// A comment may name a plugin; a comment is not an import.',
+        "const title = 'uses @tauri-apps/plugin-dialog only in prose';",
+        'export const x = [useCallback, FolderOpen, Input, cn, title];',
+        '',
+      ].join('\n'),
+    });
+    expect(result.code).toBe(0);
+    expect(result.err).toBe('');
+  });
+
+  // Every shape below is a real way the boundary breaks. A rule that only
+  // understood `import … from` (the old `from '…'` grep baseline) would miss
+  // the dynamic, `require()` and `vi.mock()` rows entirely.
+  const SHAPES = [
+    {
+      what: 'a static Tauri plugin import (the shipped PathInput regression)',
+      body: "import { open, type OpenDialogOptions } from '@tauri-apps/plugin-dialog';\nexport const pick = open;\n",
+      reason: "imports the host-only runtime package '@tauri-apps/…'",
+    },
+    {
+      what: 'a dynamic Tauri plugin import',
+      body: "export const pick = () => import('@tauri-apps/plugin-fs');\n",
+      reason: "imports the host-only runtime package '@tauri-apps/…'",
+    },
+    {
+      what: 'a CommonJS require of a Tauri plugin',
+      body: "const dlg = require('@tauri-apps/api/dialog');\nexport default dlg;\n",
+      reason: "imports the host-only runtime package '@tauri-apps/…'",
+    },
+    {
+      what: 'a mocked host store package',
+      body: "vi.mock('zustand', () => ({}));\nexport const noop = true;\n",
+      reason: "imports the host-only runtime package 'zustand…'",
+    },
+    {
+      what: 'a relative climb into the host src tree',
+      body: "import { useSettingsStore } from '../../../src/stores/settingsStore';\nexport const s = useSettingsStore;\n",
+      reason: 'reaches into the host src/stores/settingsStore',
+    },
+    {
+      what: 'a bare import of a sibling DataZen package',
+      body: "import type { DriverFormValidator } from '@datazen/driver-sdk';\nexport type V = DriverFormValidator;\n",
+      reason: "imports the host-only runtime package '@datazen/driver-sdk…'",
+    },
+  ];
+
+  for (const { what, body, reason } of SHAPES) {
+    it(`flags ${what} with file:line and a reason`, () => {
+      const result = run({ [UI_SRC]: `const a = 1;\n${body}` });
+      expect(result.code).toBe(1);
+      expect(result.err).toContain(`R4 ${UI_SRC}:2: ${reason}`);
+      expect(result.err).toContain('FAILED: 1 violation(s)');
+    });
+  }
+
+  it('leaves driver frontends and the driver-sdk IPC wrappers alone', () => {
+    // Only `packages/ui/**` is the design system. Drivers own native IPC
+    // through the driver-sdk wrappers, so R4 must not quietly widen into a
+    // "no Tauri anywhere in packages/**" rule.
+    const result = run({
+      'packages/driver-sdk/src/ipc/fileCommands.ts':
+        "import { invoke } from '@tauri-apps/api/core';\nexport const call = invoke;\n",
+      'packages/drivers/redis/ui/observe/Panel.tsx':
+        "import { open } from '@tauri-apps/plugin-dialog';\nexport const p = open;\n",
+    });
+    expect(result.code).toBe(0);
+  });
+
+  it('has teeth against the REAL tree, not only against a virtual one', () => {
+    const err = [];
+    const code = withTempSourceFile(
+      'packages/ui/src/__uiBoundaryProbe__.tsx',
+      "import { open } from '@tauri-apps/plugin-dialog';\nexport const pick = open;\n",
+      () =>
+        checkDriverImportBoundaries({
+          log: () => {},
+          error: (msg) => err.push(String(msg)),
+          // Probe names are gitignored on purpose (see .gitignore), so the
+          // gitignore downgrade would swallow the finding. That downgrade is
+          // asserted on its own below; this case is about the R4 rule.
+          isIgnored: () => false,
+        }),
+    );
+    expect(code).toBe(1);
+    expect(err.join('\n')).toContain(
+      "R4 packages/ui/src/__uiBoundaryProbe__.tsx:1: imports the host-only runtime package '@tauri-apps/…'",
+    );
   });
 });
 
@@ -405,7 +539,11 @@ describe('guard plumbing', () => {
   it('runCli forwards argv and honours --root', () => {
     const err = [];
     const code = runCli({
-      argv: ['node', 'check-driver-import-boundaries.mjs', '--root=/tmp/definitely-not-a-datazen-root'],
+      argv: [
+        'node',
+        'check-driver-import-boundaries.mjs',
+        '--root=/tmp/definitely-not-a-datazen-root',
+      ],
       log: () => {},
       error: (msg) => err.push(String(msg)),
     });
@@ -416,11 +554,15 @@ describe('guard plumbing', () => {
   it('runCli without --root uses the real repository and passes', () => {
     const out = [];
     const err = [];
-    const code = runCli({
-      argv: ['node', 'check-driver-import-boundaries.mjs'],
-      log: (msg) => out.push(String(msg)),
-      error: (msg) => err.push(String(msg)),
-    });
+    // Under the probe lock so a concurrent mutation probe from the sibling
+    // suite cannot land in this full-tree walk.
+    const code = withProbeLock(() =>
+      runCli({
+        argv: ['node', 'check-driver-import-boundaries.mjs'],
+        log: (msg) => out.push(String(msg)),
+        error: (msg) => err.push(String(msg)),
+      }),
+    );
     const report = out.join('\n');
     expect(err.join('')).toBe('');
     expect(code).toBe(0);
@@ -430,6 +572,13 @@ describe('guard plumbing', () => {
     expect(report).toContain('R3 (advisory) src/windows/connection/DocumentConnectionView.tsx:25');
   });
 
+  // Deliberately not under `withProbeLock`, unlike the two cases above. The
+  // lock exists for cases whose verdict depends on the tree being *clean* or
+  // that mutate it: `runCli without --root` asserts `err === ''`, and the R4
+  // teeth case writes a probe. This one writes nothing, and an expired entry
+  // forces `code = 1` on its own (`blocked.length > 0 || expired.length > 0`),
+  // so a concurrent probe finding would be additive noise it cannot fail on.
+  // If its assertions ever tighten to a clean-tree claim, it needs the lock.
   it('detects an expired exemption against the real file system too', () => {
     const err = [];
     const code = checkDriverImportBoundaries({
@@ -447,7 +596,9 @@ describe('guard plumbing', () => {
       error: (msg) => err.push(String(msg)),
     });
     expect(code).toBe(1);
-    expect(err.join('\n')).toContain('expired exemption: R1 packages/drivers/redis/ui/__tests__/deleted-fixture.test.tsx');
+    expect(err.join('\n')).toContain(
+      'expired exemption: R1 packages/drivers/redis/ui/__tests__/deleted-fixture.test.tsx',
+    );
     expect(err.join('\n')).toContain('the file no longer exists');
   });
 });

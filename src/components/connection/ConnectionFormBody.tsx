@@ -40,6 +40,7 @@ export function ConnectionFormBody({
             onChange={(e) => form.setName(e.target.value)}
             placeholder={t('newConn.namePlaceholder')}
             autoFocus={isWindow}
+            data-testid="new-conn-name"
           />
         </div>
 

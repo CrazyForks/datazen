@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../../components/ui/Button';
+import { useCopyFeedback } from '../../components/ui/useCopyFeedback';
 import { LocaleDomainLoading } from '../../components/LocaleDomainLoading';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useConnectionStore } from '../../stores/connectionStore';
@@ -16,6 +17,9 @@ import type { AppSettings, McpPermissionMode } from '../../types';
 import type { TranslationKey } from '../../locales';
 import { SectionTitle, SettingRow, ToggleRow } from './settingsUi';
 import { SettingHint } from './SettingHint';
+
+/** How long the "copied" config-snippet label stays before reverting. */
+const COPIED_FEEDBACK_MS = 2000;
 
 const MCP_PERMISSION_MODES: {
   value: McpPermissionMode;
@@ -63,7 +67,7 @@ export function McpSettingsSection({
   const [toggling, setToggling] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [agentTarget, setAgentTarget] = useState<McpAgentTarget>('cursor');
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
 
   const updateAppSettings = (partial: Partial<AppSettings>) => {
     if (onSettingsChange) {
@@ -188,15 +192,7 @@ export function McpSettingsSection({
     () => buildMcpAgentSnippet(agentTarget, appExecutablePath),
     [agentTarget, appExecutablePath],
   );
-  const handleCopySnippet = async () => {
-    try {
-      await navigator.clipboard.writeText(snippet.json);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* ignore */
-    }
-  };
+  const handleCopySnippet = () => copy(snippet.json);
 
   // All hooks above. Gate the section on the `mcp` locale pack so the UI never
   // renders raw/un-translated `t('mcp.*')` keys before it is imported.
@@ -316,7 +312,7 @@ export function McpSettingsSection({
           />
           <button
             type="button"
-            onClick={() => void handleCopySnippet()}
+            onClick={handleCopySnippet}
             className="ml-auto text-xs text-accent hover:underline"
           >
             {copied ? t('mcp.config.copied') : t('mcp.config.copy')}

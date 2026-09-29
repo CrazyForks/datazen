@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
-import { ArrowLeftRight, Loader2, RefreshCcw } from 'lucide-react';
+import { ArrowLeftRight, RefreshCcw } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
 import { useI18n } from '../../hooks/useI18n';
 import type { I18nKey } from '../../locales';
+import { Spinner } from '../ui/Spinner';
 
 export type MigrationI18nPrefix = 'sync' | 'schemaDiff' | 'transfer';
 
@@ -358,11 +359,7 @@ export function MigrationEndpointsBar({
             onClick={onCompare}
             disabled={busy || compareDisabled}
           >
-            {busy ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCcw className="h-4 w-4" />
-            )}
+            {busy ? <Spinner size="lg" /> : <RefreshCcw className="h-4 w-4" />}
             {compareLabel}
           </Button>
         </div>

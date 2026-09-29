@@ -489,7 +489,7 @@ describe('PostgreSQL admin commands (IPC)', () => {
       },
     });
 
-    // Pin the live session to another catalog (F1 database pin on a query command).
+    // Pin a query command to another catalog (F1 database pin).
     await invokeBackend('execute_driver_command', {
       request: {
         dbSessionId: connId,
@@ -499,22 +499,16 @@ describe('PostgreSQL admin commands (IPC)', () => {
       },
     });
 
-    await expect(
-      invokeBackend('execute_driver_command', {
-        request: {
-          dbSessionId: connId,
-          command: 'drop_schema',
-          input: { name: dropSchema, cascade: true },
-        },
-      }),
-    ).rejects.toThrow(/does not exist/i);
-
+    // The pin is scoped to that one statement: Postgres resolves a foreign
+    // target through a separate pool per statement, and the host only injects
+    // the envelope `database` for query/execute commands
+    // (driver_command/execute.rs) — a non-SQL command such as drop_schema always
+    // runs on the session's home catalog. So the drop must still find the schema.
     await invokeBackend('execute_driver_command', {
       request: {
         dbSessionId: connId,
         command: 'drop_schema',
         input: { name: dropSchema, cascade: true },
-        database: PG_DB,
       },
     });
 

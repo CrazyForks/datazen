@@ -41,6 +41,7 @@ import {
 } from './settingsSections';
 import { useExtension, sqlEditorEnhancedEP } from '@datazen/extension-points';
 import { SQL_SYNTAX_PRESETS } from '../../lib/themeEditorColors';
+import { pickPath } from '../../lib/pathPicker';
 import { SqlSyntaxPreview } from '../../components/SqlSyntaxPreview';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500];
@@ -670,6 +671,7 @@ export function SettingsContent({ initialSection, onBack }: Readonly<SettingsCon
                 <PathInput
                   value={settings.logPath}
                   onChange={(v) => updateField('logPath', v)}
+                  onBrowse={pickPath}
                   placeholder={defaultLogPath || t('settings.logPathPlaceholder')}
                   dialogOptions={{ directory: true }}
                 />

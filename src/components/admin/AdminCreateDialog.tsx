@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import { Dialog } from '../ui/Dialog';
 import { CopyableError } from '../ui/CopyableError';
 import { Button } from '../ui/Button';
@@ -10,6 +9,7 @@ import { useConnectionCommand } from '../../hooks/useConnectionCommand';
 import { useI18n } from '../../hooks/useI18n';
 import type { I18nKey } from '../../locales';
 import { toErrorMessage } from '../../lib/errors';
+import { Spinner } from '../ui/Spinner';
 
 export interface AdminCreateDialogProps {
   open: boolean;
@@ -107,7 +107,7 @@ export function AdminCreateDialog({
             onClick={() => void handleCreate()}
             disabled={!name.trim() || running}
           >
-            {running && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {running && <Spinner size="lg" className="mr-2" />}
             {title}
           </Button>
         </>

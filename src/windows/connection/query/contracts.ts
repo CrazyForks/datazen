@@ -3,6 +3,7 @@ import type { QueryExecState } from '../../../stores/queryExecActions';
 import type { SqlEditorHandle } from '../../../components/SqlEditor';
 import type { MutableRefObject } from 'react';
 import { usePanelStore, type QueryPanel as QueryPanelState } from '../../../stores/panelStore';
+import { paneKey } from '../../../stores/paneKeys';
 import { useActiveConnectionStore } from '../../../stores/activeConnectionStore';
 import { useSchemaStore } from '../../../stores/schemaStore';
 import { buildQueryDiagnosisContext, type RetryValidationInput } from '../../../lib/aiQueryActions';
@@ -11,6 +12,12 @@ import type { ContentViewCallbacks } from './aiDraftBridge';
 
 export interface QueryPanelProps {
   panelId: string;
+  /**
+   * Pane whose editor state this panel instance renders and acts on. `null` /
+   * omitted = the tab's own (pre-split) pane, which is what `ContentView`
+   * passes while the tab holds a single pane.
+   */
+  focusedPaneId?: string | null;
   /** Live database session id used for every query this panel issues. */
   dbSessionId: string;
   /** Persistent saved-connection ID (stable across restarts). */
@@ -123,13 +130,15 @@ export function buildQueryPanelDiagnosisContext({
 export function readCurrentQueryPanelRetryValidationInput(
   panelId: string,
   paramValues: Record<string, string>,
+  /** Pane to read the SQL / error from; omitted = the panel's own pane. */
+  paneId?: string,
 ): RetryValidationInput | null {
   const panelStoreState = usePanelStore.getState();
   const panel = panelStoreState.panels.find(
     (candidate): candidate is QueryPanelState =>
       candidate.id === panelId && candidate.type === 'query',
   );
-  const execution = panel ? panelStoreState.queryExec.get(panelId) : undefined;
+  const execution = panel ? panelStoreState.queryExec.get(paneKey(panelId, paneId)) : undefined;
   if (!panel || !execution) return null;
 
   const activeConnections = useActiveConnectionStore.getState().connections;

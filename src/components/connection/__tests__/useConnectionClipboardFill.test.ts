@@ -4,6 +4,37 @@ import { useConnectionClipboardFill } from '../useConnectionClipboardFill';
 import type { ConnectionFormState } from '../useConnectionForm';
 import { DB_REGISTRY } from '../../../lib/databaseTypes';
 
+/**
+ * The clipboard helpers read the connection fields and call the matching
+ * setters, so the stub is that subset — named here, and checked against
+ * `ConnectionFormState` with `satisfies`, rather than laundered through a bare
+ * `as`. A field the clipboard path actually uses is renamed → this fails. The
+ * single widening cast at the end says out loud that the rest of the contract
+ * is not under test here.
+ */
+type ClipboardFormSubset = Pick<
+  ConnectionFormState,
+  | 'name'
+  | 'databaseType'
+  | 'host'
+  | 'setHost'
+  | 'port'
+  | 'setPort'
+  | 'database'
+  | 'setDatabase'
+  | 'username'
+  | 'setUsername'
+  | 'password'
+  | 'setPassword'
+  | 'options'
+  | 'setSchema'
+  | 'setSslMode'
+  | 'setOptions'
+  | 'setShowAdvanced'
+  | 'handleDatabaseTypeChange'
+  | 'pickPath'
+>;
+
 function stubForm(overrides: Partial<ConnectionFormState> = {}): ConnectionFormState {
   return {
     name: '',
@@ -25,8 +56,10 @@ function stubForm(overrides: Partial<ConnectionFormState> = {}): ConnectionFormS
     setOptions: vi.fn(),
     setShowAdvanced: vi.fn(),
     handleDatabaseTypeChange: vi.fn(),
+    // Not touched by the clipboard path, but part of the named subset above.
+    pickPath: vi.fn(async () => null),
     ...overrides,
-  } as ConnectionFormState;
+  } satisfies ClipboardFormSubset as unknown as ConnectionFormState;
 }
 
 function mockClipboard(text: string) {

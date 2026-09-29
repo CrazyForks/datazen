@@ -33,21 +33,22 @@ src/windows/connection/
 ├── SqlConnectionView.tsx       # SQL 连接 UI
 ├── DocumentConnectionView.tsx  # 文档型连接 UI
 └── schema-tree/
-    ├── SchemaTree.tsx
-    └── UnifiedSchemaTree.tsx
+    ├── schemaTreeCategories.ts  # 分类定义与驱动 → 分类映射
+    ├── schemaTreeDrag.ts        # 行拖拽编排
+    └── useExpandedDbCacheRefresh.ts # 展开库时的表缓存刷新
 ```
 
 ### 1.3 DB_REGISTRY 行为标志
 
-| 字段 | 用途 |
-|------|------|
-| `connectionView` | 路由到 `CONNECTION_VIEWS`（sql / keyvalue / document） |
-| `connectionForm` | 路由到连接表单 Fields 组件（standard / kiwi / file / index） |
-| `sqlDialect` | 路由到 `sqlDialects/` 策略 |
-| `hasMultiDatabase` | 驱动**能力**标志。`UnifiedSchemaTree` 内部通过 `isSingleDbMode` 切换单库/多库渲染 |
-| `databaseFieldType` | `name` / `path` / `index` / `domain`（Kiwi 实例域名） |
-| `defaultPageSize` | 覆盖默认分页（如 Kiwi 1000 行） |
-| `supportsBackup` | BackupWindow 过滤 + 方言备份选项 |
+| 字段                | 用途                                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------------- |
+| `connectionView`    | 路由到 `CONNECTION_VIEWS`（sql / keyvalue / document）                                              |
+| `connectionForm`    | 路由到连接表单 Fields 组件（standard / kiwi / file / index）                                        |
+| `sqlDialect`        | 路由到 `sqlDialects/` 策略                                                                          |
+| `hasMultiDatabase`  | 驱动**能力**标志。连接树通过 `navigator/utils.ts` 的 `shouldUseMultiDatabaseTree` 切换单库/多库渲染 |
+| `databaseFieldType` | `name` / `path` / `index` / `domain`（Kiwi 实例域名）                                               |
+| `defaultPageSize`   | 覆盖默认分页（如 Kiwi 1000 行）                                                                     |
+| `supportsBackup`    | BackupWindow 过滤 + 方言备份选项                                                                    |
 
 ### 1.4 添加新 DB 类型检查清单
 
@@ -65,10 +66,33 @@ src/windows/connection/
 
 主题包与数据库驱动**不共享**安装路径或注册表：
 
-| | 数据库驱动 | 主题包 |
-|---|---------|--------|
+|      | 数据库驱动                                                            | 主题包                                                                                      |
+| ---- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | 路径 | `packages/drivers/<id>/`（path 已提交；git 构建时 clone，gitignored） | Wapp 包内 `contributes.themes[]` 声明（运行时安装到 `{appData}/wapps/{publisher}.{name}/`） |
-| 注册 | `drivers-registry.json` + `DB_REGISTRY` | 文件系统 + `manifest.json` |
-| 扩展 | Rust crate + 前端 meta | CSS / JSON / SVG\|PNG\|WebP / 字体（无 JS） |
+| 注册 | `drivers-registry.json` + `DB_REGISTRY`                               | 文件系统 + `manifest.json`                                                                  |
+| 扩展 | Rust crate + 前端 meta                                                | CSS / JSON / SVG\|PNG\|WebP / 字体（无 JS）                                                 |
 
 驱动在无主题包（`packId: null`）下正常工作；主题包可覆盖 `db.<type>` 图标与 `--dt-*`（含 `--dt-binary`）DataTable 单元格色，但不改变驱动协议。Redis 深度 UI 位于 `packages/drivers/redis/ui/`（非 Host `src/windows/connection/`）。
+
+### 1.6 SQL 编辑器特权扩展点（Host ↔ Pro）
+
+SQL 编辑器的增强能力通过 `sqlEditorEnhancedEP`（`packages/extension-points/src/sqlEditorEnhancedEP.ts`）注入。宿主是唯一的 Compartment 与键位所有者：扩展只贡献钩子实现，**不能**自行安装 Compartment、不能重排宿主键位优先级。
+
+**两级空实现，Community 版因此可以零 Pro 代码运行：**
+
+1. EP 自身为每个钩子提供了返回空值的默认实现（`sqlEditorEnhancedEP.ts:170-181`）；
+2. 宿主调用点再用 `?? []` 兜一层（`src/components/sql-editor/editorExtensions.ts:379`、`:619`、`:667`、`:696`、`:724`）。
+
+**能力归属（已核对代码）：**
+
+| 能力 | 归属 | 落点 |
+| ---- | ---- | ---- |
+| 补全源（JOIN / 限定列）、语句装饰、签名帮助 | Pro | `createJoinCompletionSource` / `createColumnCompletionSource` / `createStatementDecorations` / `createSignatureHelpExtensions` |
+| 意图（Alt+Enter）、悬停跳转、Linter | Pro | `createIntentionExtensions` / `createHoverExtensions` / `createLinterExtensions` |
+| Code Folding | Pro | `createFoldExtensions`（`sqlEditorEnhancedEP.ts:140`），Compartment 仍由宿主持有 |
+| 粘贴为 IN、表拖放等粘贴增强 | Pro | `createPasteExtensions` / `createPasteAsInContextMenuItems` |
+| 多光标、查询历史、收藏 | 宿主 | `src/components/sql-editor/`、`windows/connection/query/` |
+
+**测试落点（重要）：** 宿主 `e2e/` 构建的 Community 版里，上述 Pro 钩子全部走空实现，因此在 `e2e/specs/` 里断言 Pro 行为必然失败——不是用例写错，是被测代码根本不在宿主里。**凡由 EP 钩子实现的能力，其 E2E 必须写在 Pro 包内**（`packages/pro-extensions/sql-editor-pro/e2e/specs/`），与「驱动测试写在驱动 crate 内」是同一条纪律。这条规则的直接后果：改 Pro 代码后必须先重新 stage（`resolve-pro` 对已存在的 `builtin-ep` 目录会跳过重新打包），否则测的是上一次的产物。
+
+Pro 包是**独立 git 仓库**（gitignored），需独立 commit / pull / push；宿主 PR 不会带上它的改动。

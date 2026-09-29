@@ -1,10 +1,11 @@
 import { useCallback, useEffect } from 'react';
-import { ArrowDownToLine, Loader2, Settings, Stethoscope, X } from 'lucide-react';
+import { ArrowDownToLine, Settings, Stethoscope, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { useI18n } from '../../hooks/useI18n';
 import { useAiStore } from '../../stores/aiStore';
 import { openSettingsWindow } from '../../lib/windowManager';
 import type { QueryActionBuildResult, QueryDiagnosisContext } from '../../lib/aiQueryActions';
+import { Spinner } from '../ui/Spinner';
 
 interface DiagnosisPanelProps {
   diagnosisContext: QueryActionBuildResult<QueryDiagnosisContext>;
@@ -111,7 +112,7 @@ export function DiagnosisPanel({ diagnosisContext, onApplySql, onClose }: Diagno
       <div className="max-h-[200px] overflow-auto px-3 py-2">
         {isDiagnosing && (
           <div className="flex items-center gap-2 py-3 text-xs text-fg-muted">
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Spinner size="lg" />
             {t('diagnosis.diagnosing')}
           </div>
         )}

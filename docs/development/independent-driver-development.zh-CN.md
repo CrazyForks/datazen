@@ -173,7 +173,7 @@ Driver 前端**只允许** import：
 
 | 来源 | 提供内容 |
 | --- | --- |
-| `@datazen/ui` | 基础组件（`Button` / `Input` / `Select` / `Dialog` / `Tabs` / `Badge` / `Label` / `Slider` / `TemporalValueInput` / `PathInput`）、`cn`、i18n 运行时（`t` / `useI18n` 等） |
+| `@datazen/ui` | 基础组件（`Button` / `Input` / `Select` / `Dialog` / `Tabs` / `Badge` / `Label` / `Slider` / `TemporalValueInput` / `PathInput`）、`cn`、i18n 运行时（`t` / `useI18n` 等）。`PathInput` 是纯视图：用它时**必须**把宿主选择器传进去 `onBrowse={form.pickPath}`，组件自己不会打开任何原生对话框 |
 | `@datazen/driver-sdk` | `DatabaseTypeMeta` 等元数据/方言契约、下沉共享类型（`ConnectionFormState`、`KeyEntry`、`NativeMenuItemDef`、`ConnectionViewProps` 等）、Command IPC 封装（`driverCommands` / `fileCommands`）、纯函数 helpers、右键菜单、注入桥 `useBound*`（见 6.2） |
 | `@datazen/extension-points` | 仅 EP 契约类型；普通数据库 Driver 通常不需要 |
 | npm 依赖 | 在 Driver 仓库自行声明的第三方包（如 `react`） |

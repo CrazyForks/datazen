@@ -71,6 +71,24 @@ export function parseBuildArgs(argv = process.argv.slice(2), env = process.env) 
   return { edition, drivers, proPath, proGit, variant, extraArgs };
 }
 
+/**
+ * Assemble the child command line from {@link parseBuildArgs} output.
+ *
+ * `variant` is optional and not defaulted here: an unnamed SKU must contribute
+ * no `--variant` flag at all, which is what leaves resolve-drivers to apply its
+ * own `custom` fallback rather than this script inventing a channel. Declaring
+ * the parameter makes that optionality visible to callers.
+ *
+ * @param {{
+ *   edition: string,
+ *   drivers: string,
+ *   proPath: string | null,
+ *   proGit: string | null,
+ *   variant?: string | null,
+ *   extraArgs: string[],
+ * }} opts
+ * @returns {string}
+ */
 export function buildCommandString({ edition, drivers, proPath, proGit, variant, extraArgs }) {
   const injectFlags = [
     `--drivers=${drivers}`,

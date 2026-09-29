@@ -353,9 +353,15 @@ pub fn create_onboarding_window(
 /// Creates the main window and closes the wizard window.
 #[tauri::command]
 pub async fn onboarding_complete(app: AppHandle) -> Result<(), CommandError> {
-    // Close the wizard window.
+    // Close the wizard window. `close()` on its own does NOT take it down: it
+    // posts a close request, `CloseRequested` fires and nothing vetoes it, yet
+    // the window is still registered seconds later — a fresh-install user was
+    // left with the onboarding window on top of the workspace they had just
+    // entered (J1 of the onboarding journey). Keep the polite `close()` so the
+    // event still fires, then force the teardown.
     if let Some(wizard) = app.get_webview_window("onboarding") {
         let _ = wizard.close();
+        let _ = wizard.destroy();
     }
 
     // Create the main window (ignore error if it already exists).

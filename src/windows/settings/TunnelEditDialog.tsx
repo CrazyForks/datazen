@@ -10,10 +10,12 @@ import {
   type WebSocketTunnelFieldsValue,
 } from '../../components/connection/tunnelFieldContracts';
 import { Button } from '../../components/ui/Button';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
 import { Dialog } from '../../components/ui/Dialog';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { tunnelCommands } from '../../commands/tunnel';
+import { pickPath } from '../../lib/pathPicker';
 import { useI18n } from '../../hooks/useI18n';
 import {
   SAVED_TUNNEL_KINDS,
@@ -162,6 +164,8 @@ export function TunnelEditDialog({ open, tunnelId, onClose, onSaved }: TunnelEdi
     sshJumpPassphrase: draft.ssh.jump.passphrase,
     setSshJumpPassphrase: (v) => patchJump({ passphrase: v }),
     tabFill: noopTabFill,
+    // The key-path inputs are `PathInput`s, which ask the host for a picker.
+    pickPath,
   };
 
   const httpProxyForm: HttpProxyTunnelFieldsValue = {
@@ -287,14 +291,14 @@ export function TunnelEditDialog({ open, tunnelId, onClose, onSaved }: TunnelEdi
         )}
 
         {hint ? (
-          <p role="alert" className="text-xs text-red-400" data-testid="tunnel-edit-hint">
+          <ErrorBanner as="p" data-testid="tunnel-edit-hint">
             {hint}
-          </p>
+          </ErrorBanner>
         ) : null}
         {errorText ? (
-          <p role="alert" className="text-xs text-red-400" data-testid="tunnel-edit-error">
+          <ErrorBanner as="p" data-testid="tunnel-edit-error">
             {errorText}
-          </p>
+          </ErrorBanner>
         ) : null}
       </div>
     </Dialog>

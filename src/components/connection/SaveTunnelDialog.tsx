@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
+import { ErrorBanner } from '../ui/ErrorBanner';
 import { Input } from '../ui/Input';
 import { useI18n } from '../../hooks/useI18n';
 import { Label } from './shared';
@@ -86,13 +87,9 @@ export function SaveTunnelDialog({
         data-testid="save-tunnel-name"
       />
       {error ? (
-        <div
-          role="alert"
-          data-testid="save-tunnel-error"
-          className="mt-3 rounded-md border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-400"
-        >
+        <ErrorBanner variant="boxed" className="mt-3" data-testid="save-tunnel-error">
           {error}
-        </div>
+        </ErrorBanner>
       ) : null}
     </Dialog>
   );

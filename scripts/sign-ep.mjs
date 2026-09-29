@@ -13,12 +13,7 @@
  *   node scripts/sign-ep.mjs --dir=packages/pro-extensions/sql-editor-pro [--out=path]
  */
 
-import crypto, {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  sign,
-} from 'node:crypto';
+import crypto, { createHash, createPrivateKey } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,14 +27,30 @@ export const EP_SIGNED_FILE_PATHS = DEFAULT_SIGNED_FILES;
 export const TEST_EP_PRIVATE_KEY_PKCS8_B64 =
   'MC4CAQAwBQYDK2VwBCIEIPEWEScCcGuvAK1PLiblsaf/hx6x2/oVqUovRkBU/X0N';
 
+/**
+ * @param {string | Uint8Array} content text or bytes to digest
+ * @returns {string} lowercase hex SHA-256
+ */
 export function sha256Hex(content) {
   return createHash('sha256').update(content).digest('hex');
 }
 
+/**
+ * @param {string} filePath file to read and digest
+ * @returns {string} lowercase hex SHA-256 of its bytes
+ */
 export function sha256File(filePath) {
   return sha256Hex(fs.readFileSync(filePath));
 }
 
+/**
+ * Accept either PEM text or a base64-encoded raw 32-byte Ed25519 seed (which
+ * is re-wrapped as PKCS#8 before handing it to node).
+ *
+ * @param {string} raw PEM body or base64 key material
+ * @returns {import('node:crypto').KeyObject}
+ * @throws {Error} when the material is neither PEM nor a valid PKCS#8 blob
+ */
 export function parsePrivateKeyMaterial(raw) {
   const trimmed = raw.trim();
   if (trimmed.includes('BEGIN')) {
@@ -67,6 +78,10 @@ export function parsePrivateKeyMaterial(raw) {
   }
 }
 
+/**
+ * @param {Record<string, string | undefined>} [env] environment to read
+ * @returns {import('node:crypto').KeyObject}
+ */
 export function resolveSigningPrivateKey(env = process.env) {
   const envVal =
     env.DATAZEN_EP_PRIVATE_KEY?.trim() ||
@@ -77,7 +92,20 @@ export function resolveSigningPrivateKey(env = process.env) {
   return parsePrivateKeyMaterial(TEST_EP_PRIVATE_KEY_PKCS8_B64);
 }
 
+/**
+ * Build the canonical bytes that get signed: `{ version, files }` JSON with the
+ * file keys sorted, so two runs over the same tree produce identical bytes.
+ *
+ * The digests are typed `unknown` rather than `{ sha256: string }` because this
+ * function only orders keys before serialising — it never inspects a value, and
+ * `buildSignaturePayload` is also exercised directly on plain strings.
+ *
+ * @param {Record<string, unknown>} files digest map keyed by relative path
+ * @param {number} [version] payload version, stamped verbatim into the JSON
+ * @returns {Buffer} the exact bytes handed to Ed25519
+ */
 export function buildSignaturePayload(files, version = EP_SIGNATURE_VERSION) {
+  /** @type {Record<string, unknown>} */
   const sortedFiles = {};
   for (const key of Object.keys(files).sort()) {
     sortedFiles[key] = files[key];
@@ -92,7 +120,17 @@ export function buildSignaturePayload(files, version = EP_SIGNATURE_VERSION) {
  *   privateKey?: import('crypto').KeyObject,
  *   signedAt?: string,
  *   outPath?: string,
- * }} opts
+ * }} opts `outPath` defaults to `<packageDir>/signature.sig`
+ * @returns {{
+ *   outPath: string,
+ *   sigDoc: {
+ *     version: number,
+ *     algorithm: string,
+ *     signedAt: string,
+ *     files: Record<string, { sha256: string }>,
+ *     signature: string,
+ *   },
+ * }}
  */
 export function signEpPackage(opts) {
   const packageDir = path.resolve(opts.packageDir);
@@ -100,6 +138,7 @@ export function signEpPackage(opts) {
   const privateKey = opts.privateKey ?? resolveSigningPrivateKey();
   const signedAt = opts.signedAt ?? new Date().toISOString();
 
+  /** @type {Record<string, { sha256: string }>} */
   const files = {};
   for (const rel of filesList) {
     const abs = path.join(packageDir, rel);
@@ -125,6 +164,10 @@ export function signEpPackage(opts) {
   return { outPath, sigDoc };
 }
 
+/**
+ * @param {string[]} [argv] arguments after the script name
+ * @returns {{ packageDir: string | null, outPath: string | null }}
+ */
 export function parseSignArgs(argv = process.argv.slice(2)) {
   let packageDir = null;
   let outPath = null;

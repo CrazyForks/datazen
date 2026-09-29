@@ -1,3 +1,4 @@
+import { effectiveExpanded, searchedRowLevels } from '@datazen/ui';
 import { isLeaf } from '../../../lib/sqlNamespace';
 import { formatGroupLabel } from '../../../lib/connectionGroups';
 import { DB_REGISTRY } from '../../../lib/databaseTypes';
@@ -23,7 +24,12 @@ import type { ConnectionSchemaState } from '../../../stores/schemaStore';
 import { shouldUseMultiDatabaseTree } from './utils';
 import { getCategoriesForDriver } from '../schema-tree/schemaTreeCategories';
 import type { UnifiedRow } from './types';
-import { flattenNamespaceTree, groupBySchema } from './utils';
+import {
+  CONNECTION_CHILD_DEPTH,
+  DATABASE_CHILD_DEPTH,
+  flattenNamespaceTree,
+  groupBySchema,
+} from './utils';
 
 /**
  * Whether the tree should mark `dbName` as open.
@@ -89,6 +95,16 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
 
   const rows: UnifiedRow[] = [];
 
+  // A search force-expands every branch and drops the header above a
+  // connection, so "is this branch open" and "how deep does it announce" are
+  // two halves of the same fact. Both used to be spelled out by hand at eight
+  // sites each — `has(key) || !!query` and a depth that quietly stayed put —
+  // which is exactly how they drifted apart. `levels` and `isOpen` are the one
+  // spelling now, shared with the Redis key tree.
+  const searching = query !== '';
+  const levels = (depth: number) => searchedRowLevels(depth, CONNECTION_CHILD_DEPTH, searching);
+  const isOpen = (own: boolean) => effectiveExpanded(own, searching);
+
   const addCategories = (
     allItems: TableInfo[],
     connectionId: string,
@@ -112,7 +128,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
       const catKey = schemaName
         ? `${connectionId}::${dbName}::${schemaName}::${cat.id}`
         : `${connectionId}::${dbName}::${cat.id}`;
-      const isExpanded = expandedCats.has(catKey) || !!query;
+      const isExpanded = isOpen(expandedCats.has(catKey));
 
       let count = 0;
       if (cat.id === 'tables') {
@@ -141,7 +157,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
         cat,
         count,
         expanded: isExpanded,
-        depth: baseDepth,
+        ...levels(baseDepth),
       });
 
       if (isExpanded) {
@@ -168,7 +184,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
             rows.push({
               type: 'table',
               item,
-              depth: baseDepth + 1,
+              ...levels(baseDepth + 1),
               catId: cat.id,
               isSelected: false,
               connectionId,
@@ -178,7 +194,18 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
           }
         } else if (objs.length > 0) {
           for (const obj of objs) {
-            rows.push({ type: 'object', obj, depth: baseDepth + 1, catId: cat.id });
+            // Carries its owner tuple, exactly as the `table` variant does: two
+            // connections can each hold an object with the same name, and a key
+            // built from `(catId, name)` alone would collide across them.
+            rows.push({
+              type: 'object',
+              obj,
+              ...levels(baseDepth + 1),
+              catId: cat.id,
+              connectionId,
+              dbName,
+              ...(schemaName === undefined ? {} : { schemaName }),
+            });
           }
         }
       }
@@ -204,7 +231,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
     : grouped;
 
   if (sections.length === 0) {
-    rows.push({ type: 'no-connections' });
+    rows.push({ type: 'no-connections', depth: 0, levelDepth: 0 });
     return rows;
   }
   for (const { group: groupName, connections: groupConns } of sections) {
@@ -213,7 +240,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
 
     const isPinnedSection = groupName === PINNED_GROUP_KEY;
     const isRecentSection = groupName === RECENT_GROUP_KEY;
-    const expanded = expandedGroups.has(groupName) || !!query;
+    const expanded = isOpen(expandedGroups.has(groupName));
     const displayName = isPinnedSection
       ? t('main.ctx.pinConnection')
       : isRecentSection
@@ -225,6 +252,8 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
     if (isPinnedSection || isRecentSection) {
       rows.push({
         type: 'section',
+        depth: 0,
+        levelDepth: 0,
         section: isPinnedSection ? 'pinned' : 'recent',
         displayName,
         count: filteredConns.length,
@@ -233,6 +262,8 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
     } else if (!query) {
       rows.push({
         type: 'group',
+        depth: 0,
+        levelDepth: 0,
         groupName,
         displayName,
         count: filteredConns.length,
@@ -243,7 +274,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
     if (!expanded) continue;
 
     if (filteredConns.length === 0) {
-      rows.push({ type: 'empty-group', groupName });
+      rows.push({ type: 'empty-group', groupName, depth: 1, levelDepth: 1 });
       continue;
     }
 
@@ -253,8 +284,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
       const status = entry?.status ?? 'idle';
       const isConnected = status === 'connected';
       const isConnecting = status === 'connecting';
-      const isExpanded =
-        expandedConnections.has(connectionExpandKey(groupName, conn.id)) || !!query;
+      const isExpanded = isOpen(expandedConnections.has(connectionExpandKey(groupName, conn.id)));
 
       rows.push({
         type: 'connection',
@@ -262,22 +292,32 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
         sectionGroup: groupName,
         isSelected: activeConnectionId === conn.id,
         status,
-        expanded: (isExpanded && (isConnected || isConnecting)) || !!query,
-        depth: query ? 0 : 1,
+        expanded: isOpen(isExpanded && (isConnected || isConnecting)),
+        ...levels(query ? 0 : CONNECTION_CHILD_DEPTH - 1),
         match: matchesById.get(conn.id)?.match ?? undefined,
       });
 
       if ((!isConnected && !isConnecting) || (!isExpanded && !query)) continue;
 
       if (isConnecting) {
-        rows.push({ type: 'db-loading', depth: 2 });
+        // The connection is still dialling: this spinner *is* the connection row.
+        rows.push({
+          type: 'db-loading',
+          ...levels(CONNECTION_CHILD_DEPTH),
+          ownerKey: `conn:${conn.id}`,
+        });
         continue;
       }
 
       const dbSessionId = entry!.dbSessionId!;
       const schemaData = schemas.get(dbSessionId);
       if (!schemaData) {
-        rows.push({ type: 'db-loading', depth: 2 });
+        // The session exists but its schema has not arrived: owned by the session.
+        rows.push({
+          type: 'db-loading',
+          ...levels(CONNECTION_CHILD_DEPTH),
+          ownerKey: `session:${dbSessionId}`,
+        });
         continue;
       }
 
@@ -288,7 +328,11 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
         const treeEmpty = isLeaf(tree) || Object.keys(tree).length === 0;
         if (treeEmpty) {
           if (!query && (schemaData.loading || schemaData.ensuringCount > 0)) {
-            rows.push({ type: 'db-loading', depth: 2 });
+            rows.push({
+              type: 'db-loading',
+              ...levels(CONNECTION_CHILD_DEPTH),
+              ownerKey: `session:${dbSessionId}`,
+            });
           }
           continue;
         }
@@ -298,7 +342,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
           tree,
           conn.id,
           dbSessionId,
-          2,
+          CONNECTION_CHILD_DEPTH,
           rows,
           expandedDbs,
           query,
@@ -311,7 +355,12 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
       if (meta?.isKeyValue) {
         const dbs = schemaData.databases;
         if (schemaData.loading && dbs.length === 0) {
-          rows.push({ type: 'db-loading', depth: 2 });
+          // The key-value db list itself is still loading: owned by the session.
+          rows.push({
+            type: 'db-loading',
+            ...levels(CONNECTION_CHILD_DEPTH),
+            ownerKey: `session:${dbSessionId}`,
+          });
         } else {
           const filteredDbs = query ? dbs.filter((d) => d.toLowerCase().includes(query)) : dbs;
           for (const dbName of filteredDbs) {
@@ -320,7 +369,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
               connectionId: conn.id,
               dbSessionId,
               dbName,
-              depth: 2,
+              ...levels(CONNECTION_CHILD_DEPTH),
               isSelected: false,
               dbCountsCommand: meta.dbCountsCommand,
             });
@@ -345,7 +394,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
         for (const dbName of dbs) {
           const dbKey = `${conn.id}::${dbName}`;
           const tableKey = `${dbSessionId}::${dbName}`;
-          const isDbExpanded = expandedDbs.has(dbKey) || !!query;
+          const isDbExpanded = isOpen(expandedDbs.has(dbKey));
           const isLoading = loadingDbs.has(tableKey);
 
           rows.push({
@@ -356,12 +405,17 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
             expanded: isDbExpanded,
             loading: isLoading,
             isOpen: isDatabaseOpen(expandedDbs, openDbs, dbSessionId, dbName, conn.id),
-            depth: 2,
+            ...levels(CONNECTION_CHILD_DEPTH),
           });
 
           if (!isDbExpanded) continue;
           if (isLoading) {
-            rows.push({ type: 'db-loading', depth: 3 });
+            // This database's tables are loading: owned by that database.
+            rows.push({
+              type: 'db-loading',
+              ...levels(DATABASE_CHILD_DEPTH),
+              ownerKey: `db:${conn.id}::${dbName}`,
+            });
             continue;
           }
 
@@ -392,7 +446,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
               if (!shouldShowSchema(schemaName, objectFilter)) continue;
               const schemaKey = `${conn.id}::${dbName}::${schemaName}`;
               const schemaItems = schemaGroups.get(schemaName) ?? [];
-              const schemaExpanded = expandedSchemas.has(schemaKey) || !!query;
+              const schemaExpanded = isOpen(expandedSchemas.has(schemaKey));
 
               rows.push({
                 type: 'schema',
@@ -400,7 +454,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
                 dbName,
                 schemaName,
                 expanded: schemaExpanded,
-                depth: 3,
+                ...levels(DATABASE_CHILD_DEPTH),
               });
 
               if (schemaExpanded) {
@@ -410,7 +464,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
                   dbSessionId,
                   dbName,
                   schemaName,
-                  4,
+                  DATABASE_CHILD_DEPTH + 1,
                   conn.databaseType,
                   objectFilter,
                 );
@@ -423,7 +477,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
               dbSessionId,
               dbName,
               undefined,
-              3,
+              DATABASE_CHILD_DEPTH,
               conn.databaseType,
               objectFilter,
             );
@@ -444,13 +498,17 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
           expanded: isDbExpanded,
           loading: schemaData.loading && schemaData.tables.length === 0,
           isOpen: isDatabaseOpen(expandedDbs, openDbs, dbSessionId, dbName, conn.id),
-          depth: 2,
+          ...levels(CONNECTION_CHILD_DEPTH),
         });
 
         if (!isDbExpanded) continue;
 
         if (schemaData.loading && schemaData.tables.length === 0) {
-          rows.push({ type: 'db-loading', depth: 3 });
+          rows.push({
+            type: 'db-loading',
+            ...levels(DATABASE_CHILD_DEPTH),
+            ownerKey: `db:${conn.id}::${dbName}`,
+          });
           continue;
         }
 
@@ -471,7 +529,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
             if (!shouldShowSchema(schemaName, objectFilter)) continue;
             const schemaKey = `${conn.id}::${dbName}::${schemaName}`;
             const schemaItems = schemaGroups.get(schemaName) ?? [];
-            const schemaExpanded = expandedSchemas.has(schemaKey) || !!query;
+            const schemaExpanded = isOpen(expandedSchemas.has(schemaKey));
 
             rows.push({
               type: 'schema',
@@ -479,7 +537,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
               dbName,
               schemaName,
               expanded: schemaExpanded,
-              depth: 3,
+              ...levels(DATABASE_CHILD_DEPTH),
             });
 
             if (schemaExpanded) {
@@ -489,7 +547,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
                 dbSessionId,
                 dbName,
                 schemaName,
-                4,
+                DATABASE_CHILD_DEPTH + 1,
                 conn.databaseType,
                 objectFilter,
               );
@@ -502,7 +560,7 @@ export function buildNavigatorFlatRows(params: BuildNavigatorFlatRowsParams): Un
             dbSessionId,
             dbName,
             undefined,
-            3,
+            DATABASE_CHILD_DEPTH,
             conn.databaseType,
             objectFilter,
           );

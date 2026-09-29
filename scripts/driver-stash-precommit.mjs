@@ -152,6 +152,17 @@ export function runDriverStashPrecommit(opts = {}) {
     }
   }
 
+  // Cargo.lock carries no injection markers, but a build with injected driver
+  // features rewrites it. The stash holds the pre-build copy, so any divergence
+  // from it is build residue that must not be committed.
+  const lockStash = stash.stashPath('Cargo.lock');
+  if (existsSync(lockStash)) {
+    const committed = getContent('Cargo.lock');
+    if (committed && committed !== readFileSync(lockStash, 'utf-8')) {
+      injectedFiles.push('Cargo.lock');
+    }
+  }
+
   const stashDirPresent = existsSync(stash.STASH_DIR);
   if (injectedFiles.length === 0 && !stashDirPresent) {
     return { status: 0, restored: false };

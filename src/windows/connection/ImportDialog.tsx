@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, FileText, Loader2 } from 'lucide-react';
+import { AlertTriangle, FileText } from 'lucide-react';
 import { Dialog } from '../../components/ui/Dialog';
 import { CopyableError } from '../../components/ui/CopyableError';
 import { Button } from '../../components/ui/Button';
@@ -14,6 +14,7 @@ import type { ParsedData } from '../../lib/importData';
 import { queryCommands } from '../../commands/query';
 import { cn } from '../../lib/cn';
 import { useI18n } from '../../hooks/useI18n';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface ImportDialogProps {
   open: boolean;
@@ -151,7 +152,7 @@ export function ImportDialog({
 
         {loading && (
           <div className="flex items-center gap-2 text-xs text-fg-muted">
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Spinner size="lg" />
             {t('import.parsing')}
           </div>
         )}

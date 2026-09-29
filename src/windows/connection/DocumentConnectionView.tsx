@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Database, FileJson, Loader2, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { Database, FileJson, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Button } from '../../components/ui/Button';
 import { CopyableError } from '../../components/ui/CopyableError';
@@ -25,6 +25,7 @@ import {
 } from '../../../packages/drivers/mongodb/ui/mongodbFind';
 import type { ConnectionViewProps } from '../../lib/connectionViews/types';
 import type { StatementResult, TableInfo } from '../../types';
+import { Spinner } from '../../components/ui/Spinner';
 
 const ROW_HEIGHT = 32;
 const DEFAULT_LIMIT = 50;
@@ -239,7 +240,7 @@ export function DocumentConnectionView({
     }
     const id = getDocumentId(doc);
     if (id === undefined) {
-      setEditError(t('mongo.noIdHint'));
+      setEditError(t('docView.noIdHint'));
       return;
     }
     const setFields = { ...doc };
@@ -303,7 +304,7 @@ export function DocumentConnectionView({
     }
     const id = getDocumentId(doc);
     if (id === undefined) {
-      setEditError(t('mongo.noIdHint'));
+      setEditError(t('docView.noIdHint'));
       return;
     }
     setMutating(true);
@@ -366,7 +367,7 @@ export function DocumentConnectionView({
             )}
             onClick={() => setActiveTab(tab)}
           >
-            {tab === 'documents' ? t('mongo.documents') : t('mongo.queries')}
+            {tab === 'documents' ? t('docView.documents') : t('docView.queries')}
             <span
               className={cn(
                 'absolute inset-x-0 bottom-0 h-0.5 bg-accent transition-opacity duration-300',
@@ -384,11 +385,11 @@ export function DocumentConnectionView({
           <aside className="flex w-56 shrink-0 flex-col overflow-hidden border-r border-edge bg-surface-alt">
             <div className="border-b border-edge p-2">
               <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-fg-muted">
-                {t('mongo.databases')}
+                {t('docView.databases')}
               </div>
               {loading && (
                 <div className="flex items-center gap-2 py-1 text-xs text-fg-muted">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Spinner size="md" />
                   {t('common.loading')}
                 </div>
               )}
@@ -418,7 +419,7 @@ export function DocumentConnectionView({
                 <Input
                   value={collectionFilter}
                   onChange={(e) => setCollectionFilter(e.target.value)}
-                  placeholder={t('mongo.searchCollections')}
+                  placeholder={t('docView.searchCollections')}
                   className="h-7 pl-7 text-xs"
                 />
               </div>
@@ -426,16 +427,16 @@ export function DocumentConnectionView({
 
             <div className="min-h-0 flex-1 overflow-y-auto p-1">
               <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-fg-muted">
-                {t('mongo.collections')}
+                {t('docView.collections')}
               </div>
               {collectionsLoading && (
                 <div className="flex items-center gap-2 px-2 py-1 text-xs text-fg-muted">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Spinner size="md" />
                   {t('common.loading')}
                 </div>
               )}
               {!collectionsLoading && filteredCollections.length === 0 && (
-                <div className="px-2 py-2 text-xs text-fg-muted">{t('mongo.noCollections')}</div>
+                <div className="px-2 py-2 text-xs text-fg-muted">{t('docView.noCollections')}</div>
               )}
               {filteredCollections.map((c) => (
                 <button
@@ -464,7 +465,7 @@ export function DocumentConnectionView({
                     {selectedDb}.{selectedCollection}
                   </span>
                   <span className="text-edge">|</span>
-                  <span className="text-xs text-fg-muted">{t('mongo.filter')}</span>
+                  <span className="text-xs text-fg-muted">{t('docView.filter')}</span>
                   <Input
                     value={filterText}
                     onChange={(e) => setFilterText(e.target.value)}
@@ -480,7 +481,7 @@ export function DocumentConnectionView({
                     onClick={handleApplyFilter}
                     disabled={docsLoading}
                   >
-                    {t('mongo.applyFilter')}
+                    {t('docView.applyFilter')}
                   </Button>
                   <Button
                     variant="secondary"
@@ -489,11 +490,11 @@ export function DocumentConnectionView({
                     disabled={docsLoading || mutating}
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    {t('mongo.insert')}
+                    {t('docView.insert')}
                   </Button>
                   {result && (
                     <span className="text-xs text-fg-muted">
-                      {t('mongo.docCount', { count: result.rows.length })}
+                      {t('docView.docCount', { count: result.rows.length })}
                     </span>
                   )}
                 </div>
@@ -513,7 +514,7 @@ export function DocumentConnectionView({
                   <div className="flex min-w-0 flex-1 flex-col">
                     {docsLoading ? (
                       <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-                        <Loader2 className="h-5 w-5 animate-spin" />
+                        <Spinner size="xl" />
                         {t('common.loading')}
                       </div>
                     ) : result ? (
@@ -524,7 +525,7 @@ export function DocumentConnectionView({
                       />
                     ) : (
                       <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
-                        {t('mongo.noDocuments')}
+                        {t('docView.noDocuments')}
                       </div>
                     )}
                   </div>
@@ -550,7 +551,7 @@ export function DocumentConnectionView({
               <div className="flex flex-1 items-center justify-center text-fg-muted">
                 <div className="text-center">
                   <FileJson className="mx-auto h-10 w-10 opacity-20" />
-                  <div className="mt-3 text-sm">{t('mongo.selectCollection')}</div>
+                  <div className="mt-3 text-sm">{t('docView.selectCollection')}</div>
                 </div>
               </div>
             )}
@@ -601,7 +602,7 @@ function DocumentDetailEditor({
     <div className="flex w-[420px] shrink-0 flex-col border-l border-edge">
       <div className="flex shrink-0 items-center gap-1 border-b border-edge bg-surface-alt px-2 py-1.5">
         <span className="min-w-0 flex-1 truncate px-1 text-xs font-medium text-fg">
-          {insertMode ? t('mongo.insert') : t('mongo.documentDetail')}
+          {insertMode ? t('docView.insert') : t('docView.documentDetail')}
         </span>
         <Button
           variant={insertMode ? 'primary' : 'secondary'}
@@ -609,12 +610,8 @@ function DocumentDetailEditor({
           onClick={insertMode ? onInsert : onInsertNew}
           disabled={mutating}
         >
-          {mutating && insertMode ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Plus className="h-3.5 w-3.5" />
-          )}
-          {t('mongo.insert')}
+          {mutating && insertMode ? <Spinner size="md" /> : <Plus className="h-3.5 w-3.5" />}
+          {t('docView.insert')}
         </Button>
         {!insertMode && (
           <Button
@@ -622,9 +619,9 @@ function DocumentDetailEditor({
             className="h-7 px-2 text-xs"
             onClick={onSave}
             disabled={mutating || !canSave}
-            title={!canSave ? t('mongo.noIdHint') : undefined}
+            title={!canSave ? t('docView.noIdHint') : undefined}
           >
-            {mutating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('common.save')}
+            {mutating ? <Spinner size="md" /> : t('common.save')}
           </Button>
         )}
         {!insertMode && (
@@ -648,7 +645,7 @@ function DocumentDetailEditor({
       </div>
       {!canSave && !insertMode && (
         <div className="shrink-0 border-b border-edge/50 bg-surface-raised/30 px-3 py-1.5 text-[11px] text-fg-muted">
-          {t('mongo.noIdHint')}
+          {t('docView.noIdHint')}
         </div>
       )}
       {editError && (
@@ -831,7 +828,7 @@ function DocumentQueryPanelInner({
         >
           {t('query.execute')}
         </Button>
-        <span className="text-[11px] text-fg-muted">⌘+Enter — {t('mongo.queries')}</span>
+        <span className="text-[11px] text-fg-muted">⌘+Enter — {t('docView.queries')}</span>
         <div className="flex-1" />
         {exec.executionTimeMs != null && (
           <span className="text-[11px] text-fg-muted">{exec.executionTimeMs} ms</span>
@@ -851,7 +848,7 @@ function DocumentQueryPanelInner({
       <div className="flex min-h-0 flex-1 flex-col">
         {exec.running && results.length === 0 && (
           <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <Spinner size="xl" />
             {t('query.executing')}
           </div>
         )}
@@ -900,7 +897,7 @@ function DocumentQueryPanelInner({
         )}
         {results.length === 0 && !exec.running && !exec.error && (
           <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
-            {t('mongo.queryHint')}
+            {t('docView.queryHint')}
           </div>
         )}
       </div>

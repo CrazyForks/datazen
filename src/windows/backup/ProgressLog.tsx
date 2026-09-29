@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Copy } from 'lucide-react';
+import { useCopyFeedback } from '../../components/ui/useCopyFeedback';
 import { useI18n } from '../../hooks/useI18n';
 
 export interface ProgressLogProps {
@@ -9,11 +10,13 @@ export interface ProgressLogProps {
 
 const ROW_HEIGHT = 20;
 
+/** How long the "log copied" label stays before reverting. */
+const COPIED_FEEDBACK_MS = 1500;
+
 export function ProgressLog({ lines }: ProgressLogProps) {
   const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [copied, setCopied] = useState(false);
-  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
   const shouldAutoScroll = useRef(true);
 
   const virtualizer = useVirtualizer({
@@ -39,25 +42,11 @@ export function ProgressLog({ lines }: ProgressLogProps) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [lines.length]);
 
-  useEffect(
-    () => () => {
-      if (copiedTimer.current) clearTimeout(copiedTimer.current);
-    },
-    [],
-  );
-
-  const copyAll = useCallback(async () => {
+  const copyAll = useCallback(() => {
     const text = lines.join('\n');
     if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      if (copiedTimer.current) clearTimeout(copiedTimer.current);
-      copiedTimer.current = setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
-      console.warn(e);
-    }
-  }, [lines]);
+    copy(text);
+  }, [copy, lines]);
 
   const items = virtualizer.getVirtualItems();
 
@@ -68,7 +57,7 @@ export function ProgressLog({ lines }: ProgressLogProps) {
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-raised hover:text-fg"
-          onClick={() => void copyAll()}
+          onClick={copyAll}
           data-testid="backup-progress-log-copy"
         >
           <Copy className="h-3 w-3" />

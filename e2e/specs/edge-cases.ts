@@ -127,7 +127,9 @@ describe('边缘用例 (TC-EDGE-001/002/004/008)', () => {
     await waitForNewQueryButton(20000);
     await openQueryTab();
     await setEditorContent('SELECT 1 AS rapid');
-    const execSel = `button*=${t('query.execute')}`;
+    // The execute control is an icon-only toolbar button, so it carries no
+    // text node to match on — locate it by its testid like the other specs.
+    const execSel = '[data-testid="editor-execute-button"]';
     for (let i = 0; i < 5; i++) {
       // Re-query each iteration: the result grid re-renders after each run, so a
       // cached element reference goes stale and WebKit WebDriver throws a JS

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type MouseEvent } from 'react';
-import { Check, Copy, Loader2 } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import { fetchRelationDdl, copyToClipboard } from '../../lib/fetchRelationDdl';
 import { SqlCodeBlock } from '../../components/SqlCodeBlock';
 import { Button } from '../../components/ui/Button';
@@ -8,6 +8,7 @@ import { CopyableError } from '../../components/ui/CopyableError';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
 import { showNativeContextMenu } from '../../lib/nativeContextMenu';
 import type { DatabaseType } from '../../types';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface DDLViewProps {
   dbSessionId: string;
@@ -89,7 +90,7 @@ export function DDLView({ dbSessionId, tableName, database, databaseType, isView
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-        <Loader2 className="h-5 w-5 animate-spin" />
+        <Spinner size="xl" />
         {t('ddl.generating')}
       </div>
     );

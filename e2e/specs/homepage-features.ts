@@ -221,11 +221,20 @@ describe('主页 TablePlus 风格 (HOME)', () => {
   });
 
   it('HOME-031: 连接树滚动容器存在', async () => {
-    const hasContainer = await browser.execute(() => {
-      const scrollArea = document.querySelector('.flex-1.min-h-0.overflow-y-auto');
-      return scrollArea instanceof HTMLElement;
+    // Assert the container by its testid, and by what actually makes it the
+    // *scroll* container, rather than by a raw Tailwind class string that any
+    // styling change would silently invalidate.
+    const scrollArea = await browser.execute(() => {
+      const el = document.querySelector('[data-testid="navigator-tree"]');
+      if (!(el instanceof HTMLElement)) return null;
+      return {
+        overflowY: getComputedStyle(el).overflowY,
+        scrollable: el.scrollHeight > el.clientHeight,
+      };
     });
-    expect(hasContainer).toBe(true);
+    expect(scrollArea).not.toBeNull();
+    expect(scrollArea?.overflowY).toMatch(/^(auto|scroll)$/);
+    expect(typeof scrollArea?.scrollable).toBe('boolean');
   });
 
   // ── Double-click to connect ──────────────────────────────────────

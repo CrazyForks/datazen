@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Completion, CompletionContext } from '@codemirror/autocomplete';
+import { EditorState } from '@codemirror/state';
+import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
+import { schemaCompletionSource, sql, type SQLConfig } from '@codemirror/lang-sql';
 import {
   filterCompletionsByKind,
   filterKeywordsByKind,
@@ -81,6 +83,76 @@ describe('filterCompletionsByKind', () => {
     const filtered = filterCompletionsByKind(options, 'column');
     expect(filtered.map((o) => o.label)).toEqual(['price']);
     expect(filtered[0]?.boost).toBe(5);
+  });
+
+  // The three cases above hand-build `type: 'type'` / `type: 'property'`
+  // options, so they agree with the filter by construction and can never catch
+  // a mismatch with the real producer. These two run the real
+  // `schemaCompletionSource` from `@codemirror/lang-sql` and feed its output
+  // through the filter unchanged, which is the only way the contract between
+  // the producer and the filter is actually checked.
+  describe('against the real @codemirror/lang-sql producer', () => {
+    const sqlConfig: SQLConfig = {
+      defaultSchema: 'public',
+      schema: {
+        public: {
+          customers: ['id', 'name'],
+          products: ['id', 'price'],
+        },
+      },
+    };
+
+    const runSource = (doc: string) => {
+      // The SQL language must be installed: lang-sql reads the syntax tree to
+      // decide what kind of name is expected here, and returns null without it.
+      const state = EditorState.create({
+        doc,
+        extensions: [sql()],
+        selection: { anchor: doc.length },
+      });
+      const result = schemaCompletionSource(sqlConfig)({
+        state,
+        pos: doc.length,
+        explicit: false,
+      } as CompletionContext);
+      expect(result).not.toBe(null);
+      return (result as CompletionResult).options;
+    };
+
+    // The hand-built cases at the top of this describe block cannot catch a
+    // mismatch with the real producer: they construct `type: 'type'` and
+    // `type: 'property'` options themselves, so they agree with the filter by
+    // construction. These run the actual `schemaCompletionSource` from
+    // `@codemirror/lang-sql` and feed its untouched output through the filter,
+    // which is the only way the producer/filter contract is really checked.
+    it('keeps the tables the real producer emits in FROM context', () => {
+      const options = runSource('SELECT * FROM cust');
+      expect(options.map((o) => o.label)).toEqual(['public', 'customers', 'products']);
+      // The real producer's marker, recorded so a future change to lang-sql
+      // that renames it shows up here instead of silently emptying every
+      // completion popup.
+      expect(Array.from(new Set(options.map((o) => String(o.type))))).toEqual(['type']);
+      expect(filterCompletionsByKind(options, 'table').map((o) => o.label)).toEqual([
+        'public',
+        'customers',
+        'products',
+      ]);
+    });
+
+    it('keeps the columns the real producer emits', () => {
+      // Columns are offered once the statement qualifies them. In a bare
+      // `WHERE ` the source still answers with tables — that is lang-sql
+      // behaviour, not something this filter decides.
+      const options = runSource('SELECT * FROM customers WHERE customers.');
+      // `type: 'property'` is the column contract. If a lang-sql upgrade
+      // renames it, this fails here instead of silently emptying every column
+      // popup in the product.
+      expect(options.map((o) => o.type)).toEqual(['property', 'property']);
+      expect(filterCompletionsByKind(options, 'column').map((o) => o.label)).toEqual([
+        'id',
+        'name',
+      ]);
+    });
   });
 });
 

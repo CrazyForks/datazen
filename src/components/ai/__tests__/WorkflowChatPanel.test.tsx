@@ -151,6 +151,21 @@ describe('WorkflowChatPanel', () => {
     expect(openSettingsWindow).toHaveBeenCalledWith('ai');
   });
 
+  // Regression: a hook declared below the `!isConfigured` early return made the
+  // component call one extra hook once the AI store hydrated and `isConfigured`
+  // flipped true, which React rejects with "Rendered more hooks than during the
+  // previous render" (#310). A fresh `render()` cannot catch this — only a
+  // re-render of the same mounted instance can, because that is what carries the
+  // previous render's hook list.
+  it('keeps hook order stable when isConfigured flips after mount', () => {
+    aiState.isConfigured = false;
+    const { rerender } = render(<WorkflowChatPanel connections={CONNECTIONS} />);
+    expect(aiState.isConfigured).toBe(false);
+
+    aiState.isConfigured = true;
+    expect(() => rerender(<WorkflowChatPanel connections={CONNECTIONS} />)).not.toThrow();
+  });
+
   it('sends message with selected connection', () => {
     const { getByTestId } = render(<WorkflowChatPanel connections={CONNECTIONS} />);
     fireEvent.change(getByTestId('conn-select'), { target: { value: 'c1' } });

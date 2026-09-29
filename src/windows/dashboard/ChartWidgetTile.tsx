@@ -5,7 +5,6 @@ import {
   BarChart3,
   History,
   LineChart as LineChartIcon,
-  Loader2,
   Maximize2,
   Minimize2,
   Pencil,
@@ -27,6 +26,7 @@ import { cn } from '../../lib/cn';
 import { useI18n } from '../../hooks/useI18n';
 import type { DashboardWidget, ViewMode, WidgetRun } from '../../types/dashboard';
 import type { ChartConfig, ChartType } from '../../types/chart';
+import { Spinner } from '../../components/ui/Spinner';
 
 const CHART_TYPE_ICONS: { type: ChartType; icon: React.ElementType; labelKey: string }[] = [
   { type: 'bar', icon: BarChart3, labelKey: 'chart.type.bar' },
@@ -158,11 +158,7 @@ export function ChartWidgetTile({
           disabled={busy}
           onClick={onRefresh}
         >
-          {busy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5" />
-          )}
+          {busy ? <Spinner size="md" /> : <RefreshCw className="h-3.5 w-3.5" />}
         </Button>
         <Button
           variant="ghost"
@@ -209,7 +205,7 @@ export function ChartWidgetTile({
       <div className="relative min-h-0 flex-1">
         {busy && !run && (
           <div className="absolute inset-0 flex items-center justify-center text-xs text-fg-muted">
-            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            <Spinner size="lg" className="mr-1.5" />
             {t('dashboard.running')}
           </div>
         )}

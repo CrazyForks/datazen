@@ -82,7 +82,7 @@ class ErrorBoundaryInner extends Component<BoundaryProps, State> {
               <button
                 type="button"
                 onClick={this.handleDismiss}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-fg-secondary hover:bg-surface-alt"
+                className="rounded-lg border border-edge px-4 py-2 text-sm text-fg-secondary hover:bg-surface-alt"
               >
                 {this.props.t('common.close')}
               </button>

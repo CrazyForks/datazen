@@ -29,7 +29,7 @@ import {
   dropWorkerDatabase,
   seedDefaultPgConnection,
 } from './lib/testDataLifecycle.js';
-import { ensureMainWindowForIpc, invokeBackend } from './helpers.js';
+import { ensureMainWindowForIpc, ensureSeededPgSessionFresh, invokeBackend } from './helpers.js';
 import { browser } from '@wdio/globals';
 
 const WD_PORT = parseInt(process.env.E2E_WD_PORT || '4445', 10);
@@ -175,6 +175,15 @@ async function runSessionBootstrap() {
 
   await seedDefaultPgConnection(browser, _workerDb);
 
+  // The Tauri process (and its ConnectionManager) is reused across spec files,
+  // so the live `conn_e2e_pg` session can still be bound to the previous
+  // worker's database, which `after` just dropped. Backend `connect` hands that
+  // still-alive session back unchanged, so specs that connect through the raw
+  // IPC path (no workspace connect) would run against a database that no longer
+  // exists. Specs that drive the workspace UI already re-bind via their own
+  // connect; this covers the rest.
+  await ensureSeededPgSessionFresh();
+
   // Reload page so the new language and seeded connections take effect
   await browser.execute(() => location.reload());
   await browser.pause(2000);
@@ -275,6 +284,7 @@ export const config: WebdriverIO.Config = {
       './specs/window-operations.ts',
       './specs/unified-tab-bar.ts',
       './specs/wapps.spec.ts',
+      './specs/ui-extract-dialogs.ts',
     ],
     // Real-DB Host specs incl. the host contract matrix (was `pnpm e2e:db`)
     db: [
@@ -309,6 +319,35 @@ export const config: WebdriverIO.Config = {
     contract: ['./specs/host-contract-matrix.ts'],
     // Redis driver's own E2E, not part of default full run (`pnpm e2e:redis`)
     redis: ['../packages/drivers/redis/e2e/*.ts'],
+    // Host-owned SQL editor gestures: Mod+D, multi-cursor, rectangular
+    // selection (`pnpm e2e:sql-editor-prod`). Both specs are Community
+    // behaviour, so this suite runs on any build. The Pro-only counterparts
+    // (paste-as-IN, schema-tree drop) live in the Pro package's own e2e dir
+    // and are covered by `pro-sql-editor` above.
+    'sql-editor-prod': [
+      './specs/sql-editor-productivity.ts',
+      './specs/sql-editor-multicursor-gestures.ts',
+    ],
+    // SQL editor intelligence (completion, hover, inlay hints, star expansion)
+    // and the AI error-diagnosis journey. These two specs were written but never
+    // listed in any suite, so 27 cases had never executed — and 11 of their
+    // assertions read `expect(typeof x).toBe('boolean')`, which holds for any
+    // value, so even a run would have proved nothing. Whether the completion
+    // popup opened had never actually been checked. They are listed now.
+    //
+    // Kept out of `sql-editor-prod` on purpose: that suite promises Community
+    // behaviour. What remains here after the split is completion only — alias,
+    // FROM-table and WHERE-column — all implemented in the host. The Pro half
+    // (intentions, inlay hints, hover, definition navigation, FK JOIN
+    // completion) has moved next to its implementation, to
+    // `packages/pro-extensions/sql-editor-pro/e2e/specs/sql-editor-intelligence.ts`,
+    // and is picked up by the `pro-sql-editor` glob above. This suite therefore
+    // needs a Pro build too, because the AI error-diagnosis journey alongside it
+    // asserts Pro behaviour: `pnpm e2e:pro:skip-build -- --suite sql-editor-intelligence`.
+    'sql-editor-intelligence': [
+      './specs/sql-editor-intelligence.ts',
+      './specs/sql-editor-ai-error.ts',
+    ],
     // SQL Editor Pro enhanced features (S4-A statement frame/gutter, S5-B bind-param panel),
     // migrated to the Pro extension's own e2e dir — requires a Pro build:
     // `pnpm e2e:pro:sql-editor`. Not part of the default Community run.

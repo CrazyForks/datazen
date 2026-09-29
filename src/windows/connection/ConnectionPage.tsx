@@ -54,6 +54,7 @@ import { SettingsContent } from '../settings/SettingsContent';
 import { WorkspaceView } from '../workspace/WorkspaceView';
 import { WappManagementPage } from '../wapps/WappManagementPage';
 import { WorkspaceModeSidebar } from './WorkspaceModeSidebar';
+import { Spinner } from '../../components/ui/Spinner';
 
 export function ConnectionPage() {
   useSettings();
@@ -810,7 +811,7 @@ export function ConnectionPage() {
 
           {activeTab?.status === 'connecting' && !activePanel && (
             <div className="flex flex-1 flex-col items-center justify-center gap-4">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+              <Spinner variant="ring" size="2xl" tone="accent" />
               <div className="text-sm text-fg-muted">{t('conn.connecting')}</div>
             </div>
           )}

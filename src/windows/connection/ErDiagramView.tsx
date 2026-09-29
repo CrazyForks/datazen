@@ -18,7 +18,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { toPng, toSvg } from 'html-to-image';
-import { Download, Loader2, Search } from 'lucide-react';
+import { Download, Search } from 'lucide-react';
 import { databaseCommands } from '../../commands/database';
 import { fileCommands } from '../../commands/file';
 import { Button } from '../../components/ui/Button';
@@ -44,6 +44,7 @@ import { toPredictionTablesFromSchemas } from '../../lib/relationPrediction/from
 import { predictRelations } from '../../lib/relationPrediction/predictRelations';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { TableSchema } from '../../types';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface ErDiagramViewProps {
   dbSessionId: string;
@@ -393,7 +394,7 @@ function ErDiagramInner({
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-fg-muted" />
+        <Spinner size="2xl" tone="muted" />
         <span className="ml-2 text-sm text-fg-muted">{t('erDiagram.loading')}</span>
       </div>
     );

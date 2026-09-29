@@ -443,6 +443,17 @@ export function SchemaDiffWindow() {
     setImportConfigOpen(true);
   };
 
+  // All hooks above. Gate the body on the `sync` locale pack so the UI
+  // never renders raw/un-translated keys before it loads.
+  if (!localesReady) {
+    return <LocaleDomainLoading testId="schema-diff-locale-loading" />;
+  }
+
+  // Kept below the `localesReady` gate, which stops rendering but not
+  // evaluation. `isCrossDialect` only turns true once the user picks endpoints
+  // (MigrationEndpointsBar's Select, or applyImportedConfig), and that is always
+  // after the lazy pack has loaded — so today this emits no false positive, and
+  // the move is a zero-cost guard against a future prefill/first-frame path.
   const endpointsCrossDialectNote = endpoints.isCrossDialect ? (
     <span
       data-testid="schema-diff-cross-dialect-note"
@@ -451,12 +462,6 @@ export function SchemaDiffWindow() {
       {t('schemaDiff.crossDialectNote')}
     </span>
   ) : undefined;
-
-  // All hooks above. Gate the body on the `sync` locale pack so the UI
-  // never renders raw/un-translated keys before it loads.
-  if (!localesReady) {
-    return <LocaleDomainLoading testId="schema-diff-locale-loading" />;
-  }
 
   return (
     <div

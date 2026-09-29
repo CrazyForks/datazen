@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, RotateCw } from 'lucide-react';
+import { RotateCw } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { useI18n } from '../../hooks/useI18n';
@@ -11,6 +11,7 @@ import { attachBridge, type WappBridgeHandle } from '../../lib/wappBridge';
 import type { WappPermission } from '../../types/wapp';
 import type { WorkspaceTab } from '../../stores/workspaceTabsStore';
 import { WappIcon } from './WappIcon';
+import { Spinner } from '../../components/ui/Spinner';
 
 const LOAD_TIMEOUT_MS = 10_000;
 
@@ -234,7 +235,7 @@ export function WappPageShell({ tab, active }: WappPageShellProps) {
             data-testid="wapp-shell-loading"
             className="flex h-full items-center justify-center text-fg-muted"
           >
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <Spinner size="xl" />
           </div>
         )}
       </div>

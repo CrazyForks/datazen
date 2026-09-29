@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  contractTableDdl,
   dataSeedSql,
   DEFAULT_MATRIX_DRIVERS,
   filterSeedSql,
@@ -84,6 +85,29 @@ describe('seed helpers', () => {
     const f = getFixture('postgres');
     expect(seedTableName(f, 'filter')).toBe('_e2e_hc_pg_filter');
     expect(seedTableName(f, 'bad-name!')).toBe('_e2e_hc_pg_bad_name_');
+  });
+
+  it('rebuilds a dropped contract table per dialect', () => {
+    // seedContractTable calls this when a table another process dropped mid-run
+    // makes the DELETE fail, so it must be idempotent and match the setup
+    // script's shape (seed.ts inserts name/status on pg+mysql, name/email/age
+    // on sqlite).
+    const pg = contractTableDdl(getFixture('postgres'), 'e2e_contract_filter');
+    expect(pg).toMatch(/^CREATE TABLE IF NOT EXISTS/);
+    expect(pg).toContain('"e2e_contract_filter"');
+    expect(pg).toMatch(/SERIAL/);
+    expect(pg).toContain('status');
+
+    const my = contractTableDdl(getFixture('mysql'), 'e2e_contract_filter');
+    expect(my).toContain('`e2e_contract_filter`');
+    expect(my).toMatch(/AUTO_INCREMENT/);
+    expect(my).toContain('status');
+
+    const lt = contractTableDdl(getFixture('sqlite'), 'e2e_contract_filter');
+    expect(lt).toContain('"e2e_contract_filter"');
+    expect(lt).toMatch(/AUTOINCREMENT/);
+    expect(lt).toContain('email');
+    expect(lt).toContain('age');
   });
 
   it('emits dialect-specific filter seed SQL', () => {

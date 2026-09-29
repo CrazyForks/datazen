@@ -131,7 +131,7 @@ async function edgeDashOf(edgeId: string): Promise<string | null> {
   }, edgeId);
 }
 
-describe('ER 图功能 E2E 测试 (ER-001~ER-008)', () => {
+describe('ER 图功能 E2E 测试 (ER-001~ER-013)', () => {
   let mainWindow: string;
 
   before(async () => {
@@ -418,6 +418,15 @@ describe('ER 图功能 E2E 测试 (ER-001~ER-008)', () => {
     // units against screen pixels and measure the viewport transform instead.
     await browser.switchToWindow(mainWindow);
     await ensureErDiagramVisible();
+    // The two tables are related only by naming convention, so the edge measured
+    // below is an *inferred* one. Prediction is opt-in and ER-009 leaves it off,
+    // so re-enable it through the diagram's own toggle and wait for the edge
+    // itself — waiting on the node proves nothing, because nodes render either way.
+    await setErPrediction(true);
+    await browser.waitUntil(async () => (await findPredictedEdgeId()) !== null, {
+      timeout: 15000,
+      timeoutMsg: 'ER-011: 开启智能预测后未画出推测关系',
+    });
 
     const result = await browser.execute(
       (member: string, owner: string) => {
@@ -479,105 +488,119 @@ describe('ER 图功能 E2E 测试 (ER-001~ER-008)', () => {
   it('ER-012: 悬停表节点应强调其关联边、压暗无关节点', async () => {
     await browser.switchToWindow(mainWindow);
     await ensureErDiagramVisible();
+    // er_pred_owner/er_pred_member are related only by naming convention, so the
+    // edge under test is an *inferred* one. Prediction is opt-in (it walks every
+    // table in the database) and ER-009/ER-011 leave it off, so switch it back on
+    // through the diagram's own toggle and wait for the edge itself: the node
+    // renders whether or not prediction is on, so waiting on it proves nothing.
+    await setErPrediction(true);
+    try {
+      await browser.waitUntil(async () => (await findPredictedEdgeId()) !== null, {
+        timeout: 15000,
+        timeoutMsg: 'ER-012: 开启智能预测后未画出推测关系',
+      });
 
-    const node = await $(`.react-flow__node[data-id="${PRED_MEMBER}"]`);
-    await node.waitForDisplayed({ timeout: 10000 });
+      const node = await $(`.react-flow__node[data-id="${PRED_MEMBER}"]`);
+      await node.waitForDisplayed({ timeout: 10000 });
 
-    // The hover is driven by a dispatched bubbling `mouseover` rather than by
-    // moving the WebDriver pointer. Measured: a real pointer move reaches this
-    // WebKit webview as no mouseover at all, so the pointer path cannot observe
-    // the behaviour — while React synthesises `onMouseEnter` from exactly this
-    // event. The assertion below is therefore about the wiring and the styling,
-    // in the real DOM and the real CSS.
-    // `dimmed` renders as an opacity class on the node element itself
-    // (`[data-testid="er-table-node"]`), not on React Flow's `.react-flow__node`
-    // wrapper, so the wrapper always reports opacity 1.
-    const countDimmed = () =>
-      browser.execute(
-        () =>
-          Array.from(document.querySelectorAll('[data-testid="er-table-node"]')).filter(
-            (el) => Number(getComputedStyle(el).opacity) < 1,
-          ).length,
+      // The hover is driven by a dispatched bubbling `mouseover` rather than by
+      // moving the WebDriver pointer. Measured: a real pointer move reaches this
+      // WebKit webview as no mouseover at all, so the pointer path cannot observe
+      // the behaviour — while React synthesises `onMouseEnter` from exactly this
+      // event. The assertion below is therefore about the wiring and the styling,
+      // in the real DOM and the real CSS.
+      // `dimmed` renders as an opacity class on the node element itself
+      // (`[data-testid="er-table-node"]`), not on React Flow's `.react-flow__node`
+      // wrapper, so the wrapper always reports opacity 1.
+      const countDimmed = () =>
+        browser.execute(
+          () =>
+            Array.from(document.querySelectorAll('[data-testid="er-table-node"]')).filter(
+              (el) => Number(getComputedStyle(el).opacity) < 1,
+            ).length,
+        );
+      const before = await countDimmed();
+
+      const enter = await browser.execute((member: string) => {
+        const host = document.querySelector(`.react-flow__node[data-id="${member}"]`);
+        if (!host) return { error: 'node missing' };
+        const target = host.querySelector('[data-testid="er-table-node"]') ?? host;
+        target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+        return { ok: true };
+      }, PRED_MEMBER);
+      expectTrue(!('error' in enter), `悬停目标节点不存在: ${JSON.stringify(enter)}`);
+      await browser.pause(400);
+
+      const hovered = await browser.execute(
+        (member: string, owner: string) => {
+          const edgeEls = Array.from(document.querySelectorAll('.react-flow__edge'));
+          const predicted = edgeEls.find((el) => {
+            const id = el.getAttribute('data-id') ?? '';
+            return id.startsWith('predicted-') && id.includes(member) && id.includes(owner);
+          });
+          const path = predicted?.querySelector('path');
+          const nodeEls = Array.from(document.querySelectorAll('[data-testid="er-table-node"]'));
+          const opacityOf = (id: string) => {
+            const el = document.querySelector(
+              `.react-flow__node[data-id="${id}"] [data-testid="er-table-node"]`,
+            );
+            return el ? Number(getComputedStyle(el).opacity) : null;
+          };
+          return {
+            incidentStrokeWidth: path ? getComputedStyle(path).strokeWidth : null,
+            hoveredOpacity: opacityOf(member),
+            relatedOpacity: opacityOf(owner),
+            dimmedNodes: nodeEls.filter((el) => Number(getComputedStyle(el).opacity) < 1).length,
+            totalNodes: nodeEls.length,
+          };
+        },
+        PRED_MEMBER,
+        PRED_OWNER,
       );
-    const before = await countDimmed();
 
-    const enter = await browser.execute((member: string) => {
-      const host = document.querySelector(`.react-flow__node[data-id="${member}"]`);
-      if (!host) return { error: 'node missing' };
-      const target = host.querySelector('[data-testid="er-table-node"]') ?? host;
-      target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
-      return { ok: true };
-    }, PRED_MEMBER);
-    expectTrue(!('error' in enter), `悬停目标节点不存在: ${JSON.stringify(enter)}`);
-    await browser.pause(400);
-
-    const hovered = await browser.execute(
-      (member: string, owner: string) => {
-        const edgeEls = Array.from(document.querySelectorAll('.react-flow__edge'));
-        const predicted = edgeEls.find((el) => {
-          const id = el.getAttribute('data-id') ?? '';
-          return id.startsWith('predicted-') && id.includes(member) && id.includes(owner);
-        });
-        const path = predicted?.querySelector('path');
-        const nodeEls = Array.from(document.querySelectorAll('[data-testid="er-table-node"]'));
-        const opacityOf = (id: string) => {
-          const el = document.querySelector(
-            `.react-flow__node[data-id="${id}"] [data-testid="er-table-node"]`,
-          );
-          return el ? Number(getComputedStyle(el).opacity) : null;
-        };
-        return {
-          incidentStrokeWidth: path ? getComputedStyle(path).strokeWidth : null,
-          hoveredOpacity: opacityOf(member),
-          relatedOpacity: opacityOf(owner),
-          dimmedNodes: nodeEls.filter((el) => Number(getComputedStyle(el).opacity) < 1).length,
-          totalNodes: nodeEls.length,
-        };
-      },
-      PRED_MEMBER,
-      PRED_OWNER,
-    );
-
-    expectTrue(
-      Number.parseFloat(String(hovered.incidentStrokeWidth)) > 2,
-      `悬停后关联边未加粗（strokeWidth=${String(hovered.incidentStrokeWidth)}）`,
-    );
-    // The hovered table and the table it relates to stay legible...
-    expectTrue(
-      hovered.hoveredOpacity === 1,
-      `被悬停的表自身被压暗了（opacity=${String(hovered.hoveredOpacity)}）`,
-    );
-    expectTrue(
-      hovered.relatedOpacity === 1,
-      `与被悬停表相关的表被压暗了（opacity=${String(hovered.relatedOpacity)}）`,
-    );
-    // ...while everything unrelated recedes.
-    expectTrue(
-      hovered.dimmedNodes > 0,
-      `悬停后没有任何节点被压暗（共 ${hovered.totalNodes} 个节点）`,
-    );
-    expectTrue(
-      hovered.dimmedNodes === hovered.totalNodes - 2,
-      `应压暗 ${hovered.totalNodes - 2} 个无关节点，实际 ${hovered.dimmedNodes}`,
-    );
-    expectTrue(before === 0, `悬停前已有 ${before} 个节点被压暗`);
-
-    // Moving off the node must restore every node.
-    await browser.execute((member: string) => {
-      const host = document.querySelector(`.react-flow__node[data-id="${member}"]`);
-      if (!host) return;
-      const target = host.querySelector('[data-testid="er-table-node"]') ?? host;
-      target.dispatchEvent(
-        new MouseEvent('mouseout', {
-          bubbles: true,
-          cancelable: true,
-          relatedTarget: document.body,
-        }),
+      expectTrue(
+        Number.parseFloat(String(hovered.incidentStrokeWidth)) > 2,
+        `悬停后关联边未加粗（strokeWidth=${String(hovered.incidentStrokeWidth)}）`,
       );
-    }, PRED_MEMBER);
-    await browser.pause(400);
-    const restored = await countDimmed();
-    expectTrue(restored === 0, `移开后仍有 ${restored} 个节点保持压暗`);
+      // The hovered table and the table it relates to stay legible...
+      expectTrue(
+        hovered.hoveredOpacity === 1,
+        `被悬停的表自身被压暗了（opacity=${String(hovered.hoveredOpacity)}）`,
+      );
+      expectTrue(
+        hovered.relatedOpacity === 1,
+        `与被悬停表相关的表被压暗了（opacity=${String(hovered.relatedOpacity)}）`,
+      );
+      // ...while everything unrelated recedes.
+      expectTrue(
+        hovered.dimmedNodes > 0,
+        `悬停后没有任何节点被压暗（共 ${hovered.totalNodes} 个节点）`,
+      );
+      expectTrue(
+        hovered.dimmedNodes === hovered.totalNodes - 2,
+        `应压暗 ${hovered.totalNodes - 2} 个无关节点，实际 ${hovered.dimmedNodes}`,
+      );
+      expectTrue(before === 0, `悬停前已有 ${before} 个节点被压暗`);
+
+      // Moving off the node must restore every node.
+      await browser.execute((member: string) => {
+        const host = document.querySelector(`.react-flow__node[data-id="${member}"]`);
+        if (!host) return;
+        const target = host.querySelector('[data-testid="er-table-node"]') ?? host;
+        target.dispatchEvent(
+          new MouseEvent('mouseout', {
+            bubbles: true,
+            cancelable: true,
+            relatedTarget: document.body,
+          }),
+        );
+      }, PRED_MEMBER);
+      await browser.pause(400);
+      const restored = await countDimmed();
+      expectTrue(restored === 0, `移开后仍有 ${restored} 个节点保持压暗`);
+    } finally {
+      await setErPrediction(false);
+    }
   });
 
   it('ER-013: 重新布局按钮应可用且不破坏画布', async () => {

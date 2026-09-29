@@ -60,6 +60,11 @@ vi.mock('../../../commands/query', () => ({
       rollbackSessionTransaction(...args),
     getExplain: (...args: Parameters<typeof getExplain>) => getExplain(...args),
     clearQueryHistory: vi.fn().mockResolvedValue(undefined),
+    // The favorites panel rescans on open and on window focus. Without these
+    // the panel throws an unhandled rejection on every mount, which vitest
+    // reports as an error even when the test itself passes.
+    refreshFavorites: vi.fn().mockResolvedValue([]),
+    getFavoritesRoot: vi.fn().mockResolvedValue('/tmp/favorites'),
   },
 }));
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Label } from '@datazen/ui';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
 import { Input } from '../../components/ui/Input';
 import { tunnelCommands } from '../../commands/tunnel';
 import { useI18n } from '../../hooks/useI18n';
@@ -141,9 +142,9 @@ export function TunnelTestDialog({ open, tunnel, onClose }: TunnelTestDialogProp
           </p>
         ) : null}
         {error ? (
-          <p role="alert" className="text-xs text-red-400" data-testid="tunnel-test-error">
+          <ErrorBanner as="p" data-testid="tunnel-test-error">
             {t('settings.tunnels.test.failed', { error })}
-          </p>
+          </ErrorBanner>
         ) : null}
         {hostMissing || portMissing ? (
           <p className="text-[11px] text-fg-muted" data-testid="tunnel-test-target-hint">
