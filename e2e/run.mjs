@@ -303,6 +303,11 @@ function startAppInstance({ binaryPath, dataDir, port, workerIndex, onOutput }) 
     env: {
       ...process.env,
       DATAZEN_DATA_DIR: dataDir,
+      // 每次 E2E 都是全新的 data dir，本地没有 `.key` 兜底；走系统钥匙串会在
+      // macOS 上弹出「找不到钥匙串 login / 还原为默认」模态框并阻塞 security
+      // CLI，钥匙串搜索列表一旦异常（Module Directory Service error）必弹。
+      // 主密钥改落临时目录里的 `.key`，E2E 也不该碰用户真实钥匙串。
+      DATAZEN_KEYRING: process.env.DATAZEN_KEYRING ?? 'file',
       TAURI_WEBDRIVER_PORT: String(port),
       E2E_WD_PORT: String(port),
       E2E_WORKER_INDEX: String(workerIndex ?? 0),
