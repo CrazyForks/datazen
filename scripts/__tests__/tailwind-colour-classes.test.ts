@@ -446,6 +446,26 @@ function inComment(ranges: CommentRange[], offset: number): boolean {
 }
 
 /**
+ * The character offset of a match.
+ *
+ * `matchAll` always sets `index`, but the result type declares it optional, so it
+ * has to be narrowed rather than asserted. Narrowing is also the safer reading:
+ * a missing index would be fed to `inComment` as `NaN`, every comparison against
+ * it is false, and the guard would answer "not in a comment" for a class that may
+ * well be in one. Throwing is deliberate — an offset we cannot compute is not
+ * something to skip over, because skipping is exactly how a class stops being
+ * checked.
+ */
+function offsetOf(match: RegExpMatchArray): number {
+  if (match.index === undefined) {
+    throw new Error(
+      'regex match has no index, so the comment lookup would be reading the wrong offset',
+    );
+  }
+  return match.index;
+}
+
+/**
  * The guard's whole decision, over an arbitrary file list.
  *
  * Split out from {@link deadColourClasses} so the false-positive fixes can be
@@ -474,7 +494,7 @@ function findDeadColourClasses(scan: ScannedFile[]): string[] {
       const matches = candidates.get(index);
       if (matches) {
         for (const m of matches) {
-          if (inComment(comments, lineStart + m.index)) continue;
+          if (inComment(comments, lineStart + offsetOf(m))) continue;
           if (!resolve(m[2], m[3])) {
             dead.push(`${relative(process.cwd(), path)}:${index + 1} \`${m[1]}\``);
           }
