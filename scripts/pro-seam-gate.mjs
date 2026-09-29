@@ -114,16 +114,22 @@ export function inspectProCheckout(root) {
  *
  * ⚠️ "every Pro-dependent guard" was the wording here until a review caught it,
  * and it was wrong in the same way a comment in `pack-ep.test.ts` was wrong.
- * `packages/extension-points/src/__tests__/security.test.ts` IS a Pro-dependent
- * gate and it does NOT make this decision — it never reads
- * `DATAZEN_ALLOW_MISSING_PRO` (0 occurrences; line 474 calls
- * `readFileSync(PRO_MANIFEST_PATH)` bare) and ENOENTs on a Pro-less checkout.
- * It is outside this family and is not covered by anything below. Do not read
- * this JSDoc as claiming otherwise, and do not "fix" that ENOENT by teaching
- * that file to check the opt-out: doing so turns the host unit-test step green,
- * and a green unit-test step is the signal a maintainer reads as "the Pro
- * guards are fine" — at which point all three guards below skip at once.
+ * `packages/extension-points/src/__tests__/security.test.ts` was the fourth:
+ * a Pro-dependent gate that made its own decision, never reading
+ * `DATAZEN_ALLOW_MISSING_PRO` (it called `readFileSync(PRO_MANIFEST_PATH)`
+ * bare) and ENOENTing on a Pro-less checkout. Four guards, one opt-out, and one
+ * of them outside the family.
  *
+ * It now fetches this verdict over the `--verdict` process boundary, so the
+ * family is whole. What that buys, and what it does not: the host unit-test step
+ * goes green on a Pro-less checkout because all four guards now skip — and a
+ * green unit-test step is the signal a maintainer reads as "the Pro guards are
+ * fine". They are not; they did not run. That is why the skips are *visible*
+ * (`it.skip` with the reason in the test NAME, so the reporter prints it) and
+ * why `scripts/run-pro-guards.mjs` runs the family in its own step with a
+ * `PRO-GUARDS state=...` summary line. A green `pnpm test:unit` and a green
+ * Pro-seam verdict are two different claims; do not read one as the other, and
+ * do not let the opt-out outlive a CI checkout that can obtain the Pro.
  * Three states, mutually exclusive and exhaustive over any checkout:
  *   'present' — usable; the Pro-dependent checks must RUN.
  *   'partial' — directory here, key files missing. NEVER skippable: a checkout
@@ -207,16 +213,18 @@ export function runProGate(opts = {}) {
     // checkout; `DATAZEN_ALLOW_MISSING_PRO=1` exists for "there is no Pro here",
     // and honouring it here is what previously turned a partial Pro into a
     // silent green skip in two of the three guards.
-    error([
-      '',
-      `  ✖ Pro checkout is PRESENT BUT INCOMPLETE (state=partial). Missing:`,
-      ...state.missing.map((m) => `      · ${m}`),
-      '',
-      '    This is not a "no Pro checkout" situation and cannot be waived with',
-      '    DATAZEN_ALLOW_MISSING_PRO=1 — that variable means "this checkout is',
-      '    knowingly Pro-less", which is false here. A partial Pro is a broken',
-      '    checkout: repairing it (or removing it) is the only correct action.',
-    ].join('\n'));
+    error(
+      [
+        '',
+        `  ✖ Pro checkout is PRESENT BUT INCOMPLETE (state=partial). Missing:`,
+        ...state.missing.map((m) => `      · ${m}`),
+        '',
+        '    This is not a "no Pro checkout" situation and cannot be waived with',
+        '    DATAZEN_ALLOW_MISSING_PRO=1 — that variable means "this checkout is',
+        '    knowingly Pro-less", which is false here. A partial Pro is a broken',
+        '    checkout: repairing it (or removing it) is the only correct action.',
+      ].join('\n'),
+    );
     return 1;
   }
 

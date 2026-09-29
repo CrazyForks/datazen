@@ -8,13 +8,13 @@
  * absent, `DATAZEN_ALLOW_MISSING_PRO=1`): the full host suite was **5 red, exit
  * 1**, and every one of those 5 came from somewhere else — 4 ENOENTs in
  * `packages/extension-points/src/__tests__/security.test.ts` (a file this track
- * never touched, and which does not consult the opt-out at all) plus the
+ * never touched, and which did not consult the opt-out at all) plus the
  * pre-existing `sqlSnippetsLifecycleJourney` flake.
  *
  * So "the Pro guards went red" and "something else went red" were the SAME
- * signal, and the new `env:` block could not change that step's exit code at
- * all. A real Pro regression would have been indistinguishable from a pre-existing
- * red — which is the same defect one level up: reporting an outcome that does not
+ * signal, and the `env:` block could not change that step's exit code at all. A
+ * real Pro regression would have been indistinguishable from a pre-existing red —
+ * which is the same defect one level up: reporting an outcome that does not
  * correspond to the check that produced it.
  *
  * This runner separates them: it runs only the Pro-dependent files, so its exit
@@ -22,11 +22,20 @@
  * It is a reporting step, not a replacement — those files still run inside
  * `pnpm test:unit` too.
  *
+ * `security.test.ts` is listed here for the same reason the `env:` block exists.
+ * It used to be a Pro-dependent file that ran OUTSIDE this family — it ENOENTed
+ * on the Pro-less CI checkout and reported a failure nobody could attribute — so
+ * it now reads the shared verdict and downgrades to a visible skip. That skip is
+ * only observable here; leaving the file off this list would hide two of the
+ * suite's known coverage gaps behind a summary line that claims to enumerate
+ * them.
+ *
  * ── The opt-out is a decision, never a green light ──────────────────────────────
  * `DATAZEN_ALLOW_MISSING_PRO=1` acknowledges a checkout with NO Pro. It is
  * deliberately not consulted for `state=partial` (directory here, key files
- * missing): that is a broken checkout, and acknowledging it here is what turned
- * a partial Pro into a silent green skip in two of the three guards.
+ * missing): that is a broken checkout, and acknowledging it is what turns a
+ * partial Pro into a silent green skip. Every guard in `PRO_GUARD_FILES` now
+ * applies the same rule, so a partial Pro is red in all of them at once.
  *
  * ⚠️ The `state=` field in the summary line is the thing to read. A green exit
  * code with `state=ABSENT` means "not tested", NOT "passed".
@@ -39,6 +48,7 @@ import { proVerdict } from './pro-seam-gate.mjs';
 export const PRO_GUARD_FILES = [
   'scripts/__tests__/pack-ep.test.ts',
   'src/components/sql-editor/__tests__/proSettingsSeam.test.ts',
+  'packages/extension-points/src/__tests__/security.test.ts',
 ];
 
 /**
