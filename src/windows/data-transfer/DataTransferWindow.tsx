@@ -35,6 +35,7 @@ import {
   setTransferLimitationsDismissed,
 } from '../../lib/transferLimitationsPrefs';
 import { isTransferTargetSupported, resolveTransferPairing } from '../../lib/transferPairing';
+import { isVerifiedMigrationPair } from '../../lib/migrationVerification';
 import type { ConnectionConfig } from '../../types';
 import { LimitationsDialog } from '../../components/ui/LimitationsDialog';
 import { TRANSFER_LIMITATION_KEYS } from './transferLimitationKeys';
@@ -204,15 +205,23 @@ export function DataTransferWindow() {
 
   const targetOptions = useMemo(() => {
     const hint = t('common.unsupportedPair');
+    const experimentalHint = t('common.experimentalPairHint');
     const srcType = sourceConn?.databaseType;
     return connections.map((c) => {
       const unsupported = Boolean(srcType && !isTransferTargetSupported(srcType, c.databaseType));
       const base = `${c.name} (${c.databaseType})`;
+      const experimental = Boolean(
+        srcType && !unsupported && !isVerifiedMigrationPair(srcType, c.databaseType),
+      );
       return {
         value: c.id,
-        label: unsupported ? `${base} — ${hint}` : base,
+        label: unsupported
+          ? `${base} — ${hint}`
+          : experimental
+            ? `${base} — ${experimentalHint}`
+            : base,
         disabled: unsupported,
-        title: unsupported ? hint : undefined,
+        title: unsupported ? hint : experimental ? experimentalHint : undefined,
       };
     });
   }, [connections, sourceConn?.databaseType, t]);
@@ -1072,6 +1081,15 @@ export function DataTransferWindow() {
                   footerNote={
                     pairing && !pairing.supported ? (
                       <TransferPairingNote reason={pairing.reason} />
+                    ) : sourceConn &&
+                      targetConn &&
+                      !isVerifiedMigrationPair(sourceConn.databaseType, targetConn.databaseType) ? (
+                      <span
+                        data-testid="data-transfer-experimental-pair"
+                        className="text-xs text-amber-600 dark:text-amber-400"
+                      >
+                        {t('common.experimentalPairHint')}
+                      </span>
                     ) : undefined
                   }
                 />

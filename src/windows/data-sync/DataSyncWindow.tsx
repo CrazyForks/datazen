@@ -45,6 +45,7 @@ import {
   type DedicatedSideSession,
 } from '../../lib/dedicatedDbSession';
 import { useSyncPairingState } from '../../lib/syncPairing';
+import { isVerifiedMigrationPair } from '../../lib/migrationVerification';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
 import { MigrationRunHistoryDialog } from '../../components/migration/MigrationRunHistoryDialog';
 import type { MigrationRunRecord } from '../../commands/history';
@@ -265,17 +266,28 @@ export function DataSyncWindow() {
 
   const targetOptions = useMemo(() => {
     const hint = t('common.unsupportedPair');
+    const experimentalHint = t('common.experimentalPairHint');
     const srcType = sourceConn?.databaseType;
     return connections.map((c) => {
       const unsupported = Boolean(
         srcType && Object.hasOwn(targetSupport, c.id) && !targetSupport[c.id],
       );
       const base = `${c.name} (${c.databaseType})`;
+      const experimental = Boolean(
+        srcType &&
+          !unsupported &&
+          Object.hasOwn(targetSupport, c.id) &&
+          !isVerifiedMigrationPair(srcType, c.databaseType),
+      );
       return {
         value: c.id,
-        label: unsupported ? `${base} — ${hint}` : base,
+        label: unsupported
+          ? `${base} — ${hint}`
+          : experimental
+            ? `${base} — ${experimentalHint}`
+            : base,
         disabled: unsupported,
-        title: unsupported ? hint : undefined,
+        title: unsupported ? hint : experimental ? experimentalHint : undefined,
       };
     });
   }, [connections, sourceConn?.databaseType, targetSupport, t]);
@@ -2161,6 +2173,12 @@ export function DataSyncWindow() {
                 connOptions={connOptions}
                 targetOptions={targetOptions}
                 activePairing={activePairing}
+                experimental={Boolean(
+                  sourceConn &&
+                    targetConn &&
+                    activePairing?.supported &&
+                    !isVerifiedMigrationPair(sourceConn.databaseType, targetConn.databaseType),
+                )}
                 busy={busy}
                 compareDisabled={compareDisabled}
                 sourceSessionError={sourceSessionError}

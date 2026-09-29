@@ -20,6 +20,7 @@ interface EndpointsBarProps {
   showSwap?: boolean;
   showCompare?: boolean;
   activePairing: SyncPairingResult | null;
+  experimental?: boolean;
   busy: boolean;
   compareDisabled?: boolean;
   targetReadOnly?: boolean;
@@ -37,22 +38,25 @@ interface EndpointsBarProps {
 
 export function EndpointsBar(props: EndpointsBarProps) {
   const { t } = useI18n();
-  const { activePairing, layout = 'bar', ...rest } = props;
+  const { activePairing, experimental, layout = 'bar', ...rest } = props;
 
   const actionNote =
     activePairing != null ? (
       <span
         data-testid="data-sync-path"
+        title={experimental ? t('common.experimentalPairHint') : undefined}
         className={cn(
           'text-[10px] font-medium uppercase tracking-wide',
           activePairing.supported ? 'text-fg-muted' : 'text-amber-600 dark:text-amber-400',
         )}
       >
-        {activePairing.supported
-          ? activePairing.path === 'direct'
-            ? t('sync.pathDirect')
-            : t('sync.pathIr')
-          : t('sync.useTransferHint')}
+        {activePairing.supported && experimental
+          ? t('common.experimentalPair')
+          : activePairing.supported
+            ? activePairing.path === 'direct'
+              ? t('sync.pathDirect')
+              : t('sync.pathIr')
+            : t('sync.useTransferHint')}
       </span>
     ) : undefined;
 
