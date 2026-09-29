@@ -150,7 +150,7 @@ describe('零连接工作区空状态 (ZERO-001 ~ ZERO-005)', () => {
     await $('[data-testid="new-connection-button"]').click();
     await waitForNewConnectionDialog();
 
-    const nameInput = await $('input[placeholder="例如：主数据库"]');
+    const nameInput = await $('[data-testid="new-conn-name"]');
     await nameInput.setValue(zeroConnName);
     await clickNewConnectionSave();
 
@@ -163,7 +163,13 @@ describe('零连接工作区空状态 (ZERO-001 ~ ZERO-005)', () => {
     const nav = await $('[data-testid="workspace-nav-databases"]');
     await nav.waitForDisplayed({ timeout: 15000 });
     await expect(nav).toBeDisplayed();
-    expect(await $('[data-testid="new-connection-button"]').isExisting()).toBe(false);
+    // `[data-testid="new-connection-button"]` cannot express "the zero state is
+    // gone": the navigator toolbar's own "+" carries the same testid and is
+    // rendered first, so it always exists. Assert on the empty-state-only
+    // testids instead — they exist only while the workspace still has no
+    // connections, and the card list's CTA appears once it has one.
+    expect(await $('[data-testid="import-connections-button"]').isExisting()).toBe(false);
+    await $('[data-testid="empty-new-connection-button"]').waitForDisplayed({ timeout: 15000 });
 
     await browser.waitUntil(async () => (await $$('[data-conn-item]')).length > 0, {
       timeout: 10000,

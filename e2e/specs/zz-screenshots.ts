@@ -235,7 +235,7 @@ async function waitResults(minRows = 1, timeout = 20000) {
         bodyHasEmptyState: /没有数据|暂无数据|无数据|no data|empty/i.test(
           (document.body.textContent || '').slice(0, 4000),
         ),
-        errorBanner: Array.from(document.querySelectorAll('[role="alert"], .text-destructive'))
+        errorBanner: Array.from(document.querySelectorAll('[role="alert"]'))
           .map((n) => (n.textContent || '').trim().slice(0, 80))
           .filter(Boolean)
           .slice(0, 3),

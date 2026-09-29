@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Plus, Trash2, AlertTriangle, Pencil } from 'lucide-react';
+import { Plus, Trash2, AlertTriangle, Pencil } from 'lucide-react';
 import { databaseCommands } from '../../commands/database';
 import { getCachedTableSchema, invalidateSchemaCache } from '../../lib/schemaCache';
 import type { IndexInfo, TableSchema, ColumnSchema, DatabaseType } from '../../types';
@@ -14,6 +14,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { suggestedIndexName } from './structure/StructureIndexTable';
 import { dataTypeTextClass } from '../../lib/dataTypeColors';
 import { useSchemaStore } from '../../stores/schemaStore';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface IndexesViewProps {
   dbSessionId: string;
@@ -212,11 +213,7 @@ function CreateIndexDialog({
             {t('common.cancel')}
           </Button>
           <Button onClick={handleSubmit} disabled={selectedCols.length === 0 || submitting}>
-            {submitting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Plus className="h-4 w-4" />
-            )}
+            {submitting ? <Spinner size="lg" /> : <Plus className="h-4 w-4" />}
             {t('indexes.createIndex')}
           </Button>
         </div>
@@ -255,11 +252,7 @@ function DeleteConfirmDialog({ indexName, onConfirm, onCancel, submitting }: Del
             {t('common.cancel')}
           </Button>
           <Button variant="danger" onClick={onConfirm} disabled={submitting}>
-            {submitting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Trash2 className="h-4 w-4" />
-            )}
+            {submitting ? <Spinner size="lg" /> : <Trash2 className="h-4 w-4" />}
             {t('common.delete')}
           </Button>
         </div>
@@ -366,7 +359,7 @@ export function IndexesView({
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-        <Loader2 className="h-5 w-5 animate-spin" />
+        <Spinner size="xl" />
         {t('indexes.loading')}
       </div>
     );

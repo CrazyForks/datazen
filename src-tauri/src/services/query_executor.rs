@@ -4,6 +4,7 @@ use crate::cache::SchemaCache;
 use crate::db::{
     ColumnSchema, ConnectionHandle, DatabaseDriver, DriverError, SqlTarget, TableDataResult, Value,
 };
+use datazen_driver_api::PaginationSyntax;
 use std::sync::Arc;
 
 /// Single filter for table data APIs.
@@ -95,13 +96,14 @@ impl QueryExecutor {
         let data_sql = Self::build_select_sql(
             &cached.table_name,
             &cached.columns,
-            page,
-            page_size,
             filters.clone(),
             order_by,
             &qi,
             &format_lit,
-            driver.supports_offset(),
+            &driver.pagination_syntax(
+                page_size as u64,
+                (page as u64).saturating_mul(page_size as u64),
+            ),
             filter_logic,
         );
 
@@ -187,13 +189,11 @@ impl QueryExecutor {
     fn build_select_sql(
         table_name: &str,
         columns: &[ColumnSchema],
-        page: u32,
-        page_size: u32,
         filters: Option<Vec<FilterCondition>>,
         order_by: Option<OrderBy>,
         qi: &dyn Fn(&str) -> String,
         format_lit: &dyn Fn(&Value) -> String,
-        supports_offset: bool,
+        pagination: &PaginationSyntax,
         filter_logic: Option<&str>,
     ) -> String {
         let mut sql = String::new();
@@ -224,12 +224,14 @@ impl QueryExecutor {
             }
         }
 
+        let mut has_order_by = false;
         if let Some(order) = order_by {
             sql.push_str(&format!(
                 " ORDER BY {} {}",
                 qi(&order.column),
                 if order.descending { "DESC" } else { "ASC" }
             ));
+            has_order_by = true;
         } else {
             let pk_cols: Vec<&str> = columns
                 .iter()
@@ -250,14 +252,25 @@ impl QueryExecutor {
                     .map(|c| format!("{} ASC", qi(c)))
                     .collect();
                 sql.push_str(&format!(" ORDER BY {}", parts.join(", ")));
+                has_order_by = true;
             }
         }
 
-        if supports_offset {
-            let offset = page.saturating_mul(page_size);
-            sql.push_str(&format!(" LIMIT {page_size} OFFSET {offset}"));
-        } else {
-            sql.push_str(&format!(" LIMIT {page_size}"));
+        // Dialects whose pagination clause is only legal after `ORDER BY`
+        // (T-SQL `OFFSET … FETCH`) supply their own neutral ordering. Gated on
+        // `requires_order_by` so a dialect that merely offers a fallback is not
+        // forced into an ordering it did not ask for.
+        if !has_order_by && pagination.requires_order_by {
+            if let Some(fallback) = pagination.order_by_fallback {
+                sql.push_str(&format!(" ORDER BY {fallback}"));
+            }
+        }
+
+        // The clause belongs to the driver: `LIMIT … OFFSET …` on PostgreSQL,
+        // `OFFSET … ROWS FETCH NEXT … ROWS ONLY` on SQL Server.
+        if !pagination.clause.is_empty() {
+            sql.push(' ');
+            sql.push_str(&pagination.clause);
         }
         sql
     }
@@ -385,6 +398,88 @@ mod tests {
         }
     }
 
+    /// Pagination as the default (LIMIT/OFFSET) dialects report it.
+    fn limit_syntax(page: u32, page_size: u32) -> PaginationSyntax {
+        PaginationSyntax {
+            clause: format!(
+                "LIMIT {page_size} OFFSET {}",
+                page.saturating_mul(page_size)
+            ),
+            requires_order_by: false,
+            order_by_fallback: None,
+        }
+    }
+
+    /// Pagination of a dialect without `OFFSET` support (e.g. Presto/Hive).
+    fn limit_only_syntax(page_size: u32) -> PaginationSyntax {
+        PaginationSyntax {
+            clause: format!("LIMIT {page_size}"),
+            requires_order_by: false,
+            order_by_fallback: None,
+        }
+    }
+
+    /// Pagination exactly as the SQL Server driver reports it.
+    fn tsql_syntax(page: u32, page_size: u32) -> PaginationSyntax {
+        PaginationSyntax {
+            clause: format!(
+                "OFFSET {} ROWS FETCH NEXT {page_size} ROWS ONLY",
+                page.saturating_mul(page_size)
+            ),
+            requires_order_by: true,
+            order_by_fallback: Some("(SELECT NULL)"),
+        }
+    }
+
+    /// Regression for the SQL Server `LIMIT` failure: the host must emit the
+    /// driver's clause verbatim and add an `ORDER BY` when the read is unordered
+    /// (`SELECT *` with no columns), because T-SQL `OFFSET … FETCH` requires one.
+    #[test]
+    fn tsql_pagination_emits_offset_fetch_and_never_limit() {
+        let sql = QueryExecutor::build_select_sql(
+            "events",
+            &[],
+            None,
+            None,
+            &simple_qi,
+            &simple_lit,
+            &tsql_syntax(3, 25),
+            None,
+        );
+        assert!(
+            sql.contains("OFFSET 75 ROWS FETCH NEXT 25 ROWS ONLY"),
+            "expected T-SQL paging clause, got: {sql}"
+        );
+        assert!(
+            sql.contains("ORDER BY (SELECT NULL)"),
+            "unordered read must get the driver's ORDER BY fallback, got: {sql}"
+        );
+        assert!(!sql.contains("LIMIT"), "T-SQL has no LIMIT; got: {sql}");
+    }
+
+    /// A table read that already orders by PK must not receive a second ORDER BY.
+    #[test]
+    fn tsql_pagination_keeps_pk_order_without_fallback() {
+        let columns = vec![make_column("id", true)];
+        let sql = QueryExecutor::build_select_sql(
+            "orders",
+            &columns,
+            None,
+            None,
+            &simple_qi,
+            &simple_lit,
+            &tsql_syntax(0, 50),
+            None,
+        );
+        assert!(sql.contains("ORDER BY \"id\" ASC"), "got: {sql}");
+        assert!(!sql.contains("(SELECT NULL)"), "got: {sql}");
+        assert!(
+            sql.contains("OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY"),
+            "got: {sql}"
+        );
+        assert!(!sql.contains("LIMIT"), "got: {sql}");
+    }
+
     #[test]
     fn no_explicit_sort_uses_primary_key_order() {
         let columns = vec![
@@ -395,13 +490,11 @@ mod tests {
         let sql = QueryExecutor::build_select_sql(
             "orders",
             &columns,
-            0,
-            50,
             None,
             None,
             &simple_qi,
             &simple_lit,
-            true,
+            &limit_syntax(0, 50),
             None,
         );
         assert!(
@@ -420,13 +513,11 @@ mod tests {
         let sql = QueryExecutor::build_select_sql(
             "order_items",
             &columns,
-            0,
-            50,
             None,
             None,
             &simple_qi,
             &simple_lit,
-            true,
+            &limit_syntax(0, 50),
             None,
         );
         assert!(
@@ -445,13 +536,11 @@ mod tests {
         let sql = QueryExecutor::build_select_sql(
             "users",
             &columns,
-            0,
-            50,
             None,
             Some(order),
             &simple_qi,
             &simple_lit,
-            true,
+            &limit_syntax(0, 50),
             None,
         );
         assert!(
@@ -470,13 +559,11 @@ mod tests {
         let sql = QueryExecutor::build_select_sql(
             "no_pk_table",
             &columns,
-            0,
-            50,
             None,
             None,
             &simple_qi,
             &simple_lit,
-            true,
+            &limit_syntax(0, 50),
             None,
         );
         assert!(
@@ -496,13 +583,11 @@ mod tests {
         let sql = QueryExecutor::build_select_sql(
             "t",
             &columns,
-            0,
-            10,
             Some(filters),
             None,
             &simple_qi,
             &simple_lit,
-            true,
+            &limit_syntax(0, 10),
             None,
         );
         assert!(
@@ -548,13 +633,11 @@ mod tests {
         let sql = QueryExecutor::build_select_sql(
             "users",
             &columns,
-            0,
-            10,
             Some(filters),
             None,
             &simple_qi,
             &simple_lit,
-            true,
+            &limit_syntax(0, 10),
             Some("or"),
         );
         assert!(
@@ -605,13 +688,11 @@ mod tests {
         let sql = QueryExecutor::build_select_sql(
             "users",
             &columns,
-            2,
-            25,
             None,
             None,
             &simple_qi,
             &simple_lit,
-            false,
+            &limit_only_syntax(25),
             None,
         );
         assert!(sql.contains("LIMIT 25"));
@@ -651,13 +732,11 @@ mod tests {
         let sql = QueryExecutor::build_select_sql(
             "users",
             &columns,
-            0,
-            50,
             Some(filters),
             None,
             &simple_qi,
             &simple_lit,
-            true,
+            &limit_syntax(0, 50),
             None,
         );
         assert!(
@@ -684,13 +763,11 @@ mod tests {
         let sql = QueryExecutor::build_select_sql(
             "users",
             &columns,
-            0,
-            50,
             Some(filters),
             None,
             &simple_qi,
             &simple_lit,
-            true,
+            &limit_syntax(0, 50),
             Some("and"),
         );
         assert!(

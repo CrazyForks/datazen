@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, screen } from '@testing-library/react';
 import { useState as reactUseState } from 'react';
 import { SshTunnelFields } from '../SshTunnelFields';
-import type { ConnectionFormState } from '../useConnectionForm';
+import { noopTabFill, type SshTunnelFieldsValue } from '../tunnelFieldContracts';
 import type { SshAuthMethod } from '../../../types';
 
 vi.mock('../../../hooks/useI18n', () => ({
@@ -75,8 +75,12 @@ function Harness({ supportsSSH = true }: { supportsSSH?: boolean }) {
     setSshJumpKeyPath,
     sshJumpPassphrase,
     setSshJumpPassphrase,
-    tabFill: () => undefined,
-  } as unknown as ConnectionFormState;
+    tabFill: noopTabFill,
+    // `SshTunnelFields` takes the `SshTunnelFieldsValue` subset, so the harness
+    // is typed as that subset directly — no cast, and a field added to the
+    // contract fails here instead of being laundered through one.
+    pickPath: vi.fn(async () => null),
+  } satisfies SshTunnelFieldsValue;
   return <SshTunnelFields form={form} />;
 }
 

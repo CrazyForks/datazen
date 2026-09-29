@@ -181,6 +181,7 @@ jobs:
             drivers: "basic"
             edition: "pro"
             variant_suffix: ""
+            variant: "basic"
             needs_git: false
             needs_pro: true
           - platform: macos-latest
@@ -189,6 +190,7 @@ jobs:
             drivers: "basic"
             edition: "pro"
             variant_suffix: ""
+            variant: "basic"
             needs_git: false
             needs_pro: true
           - platform: macos-latest
@@ -197,6 +199,7 @@ jobs:
             drivers: "basic"
             edition: "pro"
             variant_suffix: ""
+            variant: "basic"
             needs_git: false
             needs_pro: true
           - platform: ubuntu-22.04
@@ -205,6 +208,7 @@ jobs:
             drivers: "basic"
             edition: "pro"
             variant_suffix: ""
+            variant: "basic"
             needs_git: false
             needs_pro: true
           # ── DataZen (All)：全原生驱动版（全部原生驱动 + SQL Editor 增强）──
@@ -214,6 +218,7 @@ jobs:
             drivers: "all"
             edition: "pro"
             variant_suffix: "-all"
+            variant: "all"
             needs_git: false
             needs_pro: true
           - platform: macos-latest
@@ -222,6 +227,7 @@ jobs:
             drivers: "all"
             edition: "pro"
             variant_suffix: "-all"
+            variant: "all"
             needs_git: false
             needs_pro: true
           - platform: macos-latest
@@ -230,6 +236,7 @@ jobs:
             drivers: "all"
             edition: "pro"
             variant_suffix: "-all"
+            variant: "all"
             needs_git: false
             needs_pro: true
           - platform: ubuntu-22.04
@@ -238,6 +245,7 @@ jobs:
             drivers: "all"
             edition: "pro"
             variant_suffix: "-all"
+            variant: "all"
             needs_git: false
             needs_pro: true
           # ── Akulaku：定制驱动部署（全核心 + MongoDB + Kiwi + Superset + Pro；仅 Windows / macOS）──
@@ -247,6 +255,7 @@ jobs:
             drivers: "postgres,mysql,sqlite,redis,mongodb,kiwi,superset"
             edition: "pro"
             variant_suffix: "-akulaku"
+            variant: "akulaku"
             needs_git: true
             needs_pro: true
           - platform: macos-latest
@@ -255,6 +264,7 @@ jobs:
             drivers: "postgres,mysql,sqlite,redis,mongodb,kiwi,superset"
             edition: "pro"
             variant_suffix: "-akulaku"
+            variant: "akulaku"
             needs_git: true
             needs_pro: true
           - platform: macos-latest
@@ -263,6 +273,7 @@ jobs:
             drivers: "postgres,mysql,sqlite,redis,mongodb,kiwi,superset"
             edition: "pro"
             variant_suffix: "-akulaku"
+            variant: "akulaku"
             needs_git: true
             needs_pro: true
 
@@ -308,7 +319,8 @@ jobs:
             librsvg2-dev \
             libssl-dev \
             patchelf \
-            libfuse2
+            libfuse2 \
+            desktop-file-utils
 
       - name: Cache Rust compilation
         uses: swatinem/rust-cache@v2
@@ -416,15 +428,21 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
-      - name: Configure updater signing (Default Pro only)
-        if: matrix.variant_suffix == ''
+      - name: Configure updater signing (every SKU)
+        # Every SKU publishes its own signed channel (latest.json /
+        # latest-all.json / latest-akulaku.json). Gating this on the Basic
+        # variant — as it was — left -all / -akulaku with no signed artifacts at
+        # all, so the only manifest they could reach was Basic's: an in-app
+        # update silently replaced the variant with Basic and dropped the extra
+        # drivers. The signing key is shared, and the pubkey compiled into
+        # tauri.conf.json is identical across SKUs, so one key signs them all.
         shell: bash
         run: |
           if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "TAURI signing key present — updater artifacts will be generated"
+            echo "TAURI signing key present — updater artifacts will be generated for variant '${{ matrix.variant }}'"
             echo "UPDATER_BUILD=1" >> "$GITHUB_ENV"
           else
-            echo "::warning::TAURI_SIGNING_PRIVATE_KEY not set — skipping updater artifact generation for Pro build"
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY not set — skipping updater artifact generation for variant '${{ matrix.variant }}'"
             echo "UPDATER_BUILD=0" >> "$GITHUB_ENV"
           fi
 
@@ -452,13 +470,16 @@ jobs:
           fi
           # The signed Pro extension is already staged under builtin-ep from the
           # prepare-pro-extension artifact, so resolve-pro uses it verbatim.
-          node scripts/with-driver-inject.mjs --drivers="${{ matrix.drivers }}" ${EDITION_FLAG} -- node scripts/ci-tauri-build.mjs --target=${{ matrix.target }} ${UPDATER_FLAG} ${EDITION_FLAG}
+          node scripts/with-driver-inject.mjs --drivers="${{ matrix.drivers }}" --variant="${{ matrix.variant }}" ${EDITION_FLAG} -- node scripts/ci-tauri-build.mjs --target=${{ matrix.target }} ${UPDATER_FLAG} ${EDITION_FLAG}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DATAZEN_DRIVERS: ${{ matrix.drivers }}
           DATAZEN_EDITION: ${{ matrix.edition || 'community' }}
+          # Release SKU: baked into the frontend codegen (so the runtime updater
+          # gate and the compiled endpoint agree) and used to pick the endpoint.
+          DATAZEN_VARIANT: ${{ matrix.variant }}
           DATAZEN_EP_SIGNING_PRIVATE_KEY: ${{ secrets.DATAZEN_EP_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ matrix.variant_suffix == '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Verify Pro extension is bundled in app
@@ -533,6 +554,38 @@ jobs:
           fi
 
           exit $FAIL
+
+      # The AppImage catalog (appimage.github.io) runs appdir-lint on the mounted
+      # AppImage and FATALs when `.DirIcon` is missing. tauri-bundler creates
+      # `.DirIcon`, the root icon and the root .desktop symlink in the AppDir, but
+      # the linuxdeploy build pinned by the bundler strips them while repacking
+      # (observed with tauri-bundler 2.10.0 + linuxdeploy 07333c6) — so re-inject
+      # them and repack with appimagetool. The repack invalidates the updater
+      # signature, hence the re-sign below.
+      - name: Fix AppDir conventions in the Linux AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          APPIMAGE=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage" -type f | head -1)
+          if [ -z "$APPIMAGE" ]; then
+            echo "::error::no AppImage found in $BUNDLE_DIR/appimage"
+            exit 1
+          fi
+          bash scripts/fix-appimage-appdir.sh "$APPIMAGE"
+
+          # Repack invalidated the `.sig` produced during `tauri build` — re-sign
+          # so latest.json keeps verifying against the updater pubkey.
+          if [ "${UPDATER_BUILD}" = "1" ]; then
+            PASS_ARGS=()
+            if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
+              PASS_ARGS=(-p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD")
+            fi
+            pnpm exec tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" "${PASS_ARGS[@]}" "$APPIMAGE"
+          fi
+        env:
+          BUNDLE_DIR: target/${{ matrix.target }}/release/bundle
+          TAURI_SIGNING_PRIVATE_KEY: ${{ matrix.variant_suffix == '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Download the signed Pro .dzx (Default Pro, once)
         if: matrix.needs_pro && matrix.variant_suffix == '' && matrix.os_label == 'linux-x64'
@@ -658,6 +711,23 @@ jobs:
 
           canonical_name() {
             local ext="$1"
+            # AppImage catalog convention: the file name must not contain
+            # "linux" (every AppImage is for Linux) and spells the arch
+            # x86_64/aarch64 — e.g. DataZen-1.2.3-x86_64.AppImage. All other
+            # artifacts keep the DataZen-{Version}-{Platform}-{Arch} scheme.
+            if [ "$ext" = "AppImage" ]; then
+              local appimage_arch="$ARCH"
+              case "$ARCH" in
+                x64)   appimage_arch="x86_64" ;;
+                arm64) appimage_arch="aarch64" ;;
+              esac
+              if [ -n "$VARIANT" ]; then
+                echo "DataZen-${VERSION}-${appimage_arch}-${VARIANT}.${ext}"
+              else
+                echo "DataZen-${VERSION}-${appimage_arch}.${ext}"
+              fi
+              return
+            fi
             if [ -n "$VARIANT" ]; then
               echo "DataZen-${VERSION}-${PLATFORM}-${ARCH}-${VARIANT}.${ext}"
             else
@@ -826,20 +896,37 @@ jobs:
           gh release download "${GITHUB_REF_NAME}" --dir assets --clobber
           ls -la assets/
 
-      - name: Generate and upload latest.json (Basic updater)
+      - name: Generate and upload updater manifests (one per SKU)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          node scripts/generate-updater-latest-json.mjs \
-            --assets-dir assets \
-            --version "$VERSION" \
-            --tag "${GITHUB_REF_NAME}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --notes "DataZen ${GITHUB_REF_NAME}" \
-            --out latest.json
-          cat latest.json
-          gh release upload "${GITHUB_REF_NAME}" latest.json --clobber
+
+          # One manifest per release SKU. The Tauri updater resolves an entry by
+          # platform only, so a shared manifest means every variant is offered
+          # Basic's bundle: an `-all` / `-akulaku` user would be silently
+          # downgraded to Basic and lose the drivers Basic does not ship.
+          # Basic is first and uploaded on its own so a variant problem can never
+          # stall the channel every existing install already points at.
+          for VARIANT in basic all akulaku; do
+            MANIFEST=$(node -e 'import("./scripts/release-variants.mjs").then((m) => process.stdout.write(m.manifestNameForVariant(process.argv[1]) ?? ""))' "$VARIANT")
+            if [ -z "$MANIFEST" ]; then
+              echo "::error::release variant '$VARIANT' has no manifest name"
+              exit 1
+            fi
+            echo "── $VARIANT → $MANIFEST ──"
+            node scripts/generate-updater-latest-json.mjs \
+              --assets-dir assets \
+              --version "$VERSION" \
+              --tag "${GITHUB_REF_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --notes "DataZen ${GITHUB_REF_NAME}" \
+              --variant "$VARIANT" \
+              --out "$MANIFEST"
+            cat "$MANIFEST"
+            gh release upload "${GITHUB_REF_NAME}" "$MANIFEST" --clobber
+          done
 
   release-checksums:
     needs: [build, release-updater-json]
@@ -874,14 +961,30 @@ jobs:
           found=0
           for f in assets/*; do
             base=$(basename "$f")
-            # Skip variant builds, signatures, and non-installer files
+            # Skip variant builds, signatures, and non-installer files.
+            # Screaming the SKU is not enough on its own: the suffix lands in
+            # different places. `…-macos-arm64-all.tar.gz` and
+            # `…-windows-x64-all.exe` end in `-all.`, while the Windows portable
+            # `…-windows-x64-portable-all.zip` also ends in `-all.` but never
+            # contains `-all-`. The old `*-all-*` glob therefore matched nothing
+            # and let every variant through into the Basic table, whose whole
+            # purpose is to be pasted into Homebrew / WinGet. Both spellings are
+            # kept so a naming change on either side cannot reintroduce the leak.
             case "$base" in
-              *-all-*) continue ;;
-              *-akulaku-*) continue ;;
-              *.sig|latest.json|*.dzx) continue ;;
+              *-all-*|*-all.*) continue ;;
+              *-akulaku-*|*-akulaku.*) continue ;;
+              *.sig|latest.json|latest-*.json|*.dzx) continue ;;
             esac
+            # Match on the canonical names emitted by the rename step above,
+            # which is `<ext>`-based: the Windows installer is
+            # `…-windows-x64.exe`, not `…-windows-x64-nsis.exe` (`installer_type`
+            # gates eligibility but never enters the name), so the previous
+            # `*-windows-*-nsis.exe` alternative silently dropped the one
+            # artifact WinGet needs. AppImages are matched by extension alone:
+            # the AppImage catalog rejects "linux" in the file name, so the
+            # rename step gives them no platform segment.
             case "$base" in
-              *-macos-*.dmg|*-macos-*.tar.gz|*-windows-*-nsis.exe|*-windows-*-portable.zip|*-linux-*.deb|*-linux-*.rpm|*-linux-*.AppImage)
+              *-macos-*.dmg|*-macos-*.tar.gz|*-windows-*.exe|*-windows-*-portable.zip|*-linux-*.deb|*-linux-*.rpm|*.AppImage)
                 sha=$(sha256sum "$f" | awk '{print $1}')
                 echo "| \`$base\` | \`$sha\` |" >> checksums.md
                 found=$((found + 1))

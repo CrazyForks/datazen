@@ -41,10 +41,35 @@ import {
   ROOT as STASH_ROOT,
 } from './driver-file-stash.mjs';
 import { resolvePro } from './resolve-pro.mjs';
+import { hasUpdaterChannel, normalizeVariant } from './release-variants.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = STASH_ROOT;
 const DRIVERS_DIR = resolve(ROOT, 'packages/drivers');
+
+/** CLI flag / env var naming the release SKU this build belongs to. */
+export const VARIANT_FLAG = '--variant';
+export const VARIANT_ENV = 'DATAZEN_VARIANT';
+
+/**
+ * Release SKU for this build.
+ *
+ * `--variant=<sku>` wins over `DATAZEN_VARIANT`; a build that names no SKU is
+ * `custom`, which has no published updater channel and therefore never
+ * self-updates. CI sets this from the release matrix — see
+ * `scripts/release-variants.mjs` for why the app must know its own SKU.
+ *
+ * @param {string[]} [argv]
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+export function parseVariant(argv = process.argv.slice(2), env = process.env) {
+  const flag = argv.find((a) => a.startsWith(`${VARIANT_FLAG}=`));
+  if (flag) {
+    return normalizeVariant(flag.slice(`${VARIANT_FLAG}=`.length));
+  }
+  return normalizeVariant(env[VARIANT_ENV]);
+}
 
 /**
  * Write a generated file only when its content actually changed.
@@ -69,9 +94,9 @@ export function writeIfChanged(absPath, content) {
 }
 
 /** Log whether a generated file was rewritten or was already up to date. */
-function reportWrite(absPath, written) {
+function reportWrite(absPath, written, note = '') {
   console.log(
-    `[resolve-drivers] ${written ? 'wrote' : 'unchanged'} ${absPath}`,
+    `[resolve-drivers] ${written ? 'wrote' : 'unchanged'} ${absPath}${note ? ` ${note}` : ''}`,
   );
   return written;
 }
@@ -465,7 +490,7 @@ const FRONTEND_DRIVER_CONFIG = {
   },
 };
 
-function generateFrontendRegistry(drivers) {
+function generateFrontendRegistry(drivers, variant) {
   const importLines = [];
   const iconImportLines = [];
   const dbEntryLines = [];
@@ -659,6 +684,26 @@ import type { ComponentType } from 'react';
  */
 export const DRIVER_PROTOCOL_VERSION = 1;
 
+/**
+ * Release SKU this build was produced as (\`basic\` / \`all\` / \`akulaku\`), or
+ * \`custom\` for local and private builds.
+ *
+ * The updater needs it because \`tauri.conf.json\` compiles one global endpoint
+ * into every build and Tauri selects a manifest entry by platform alone — with
+ * no SKU in hand, a variant would install the Basic build and lose the drivers
+ * Basic does not ship. \`src/lib/updater.ts\` shows a manual-download card
+ * instead unless this is a SKU with its own published channel. Set by
+ * \`--variant=<sku>\` / \`DATAZEN_VARIANT\`; see scripts/release-variants.mjs.
+ */
+export const DATAZEN_VARIANT: string = '${variant}';
+
+/**
+ * Whether this SKU publishes signed updater artifacts plus its own manifest.
+ * Derived at build time from scripts/release-variants.mjs so the frontend gate
+ * and the release pipeline cannot disagree about which SKUs may self-update.
+ */
+export const DATAZEN_UPDATER_CHANNEL: boolean = ${hasUpdaterChannel(variant)};
+
 /** Database types contributed by active drivers in this build. */
 export type DatabaseType = ${typeUnion};
 
@@ -848,7 +893,7 @@ export function hasDriverCommand(driverId: string, command: string): boolean {
 `;
 
   const outPath = workPath('src/extensions/generated.ts');
-  reportWrite(outPath, writeIfChanged(outPath, content));
+  reportWrite(outPath, writeIfChanged(outPath, content), `(variant: ${variant})`);
 }
 
 /**
@@ -1276,9 +1321,11 @@ function main() {
 
   const registry = loadRegistry();
   const driversArg = parseArgs();
+  const variant = parseVariant();
   const codegenOnly = wantsCodegenOnly();
 
   console.log(`[resolve-drivers] drivers arg: "${driversArg}"`);
+  console.log(`[resolve-drivers] release variant: "${variant}"`);
   if (codegenOnly) {
     console.log('[resolve-drivers] --codegen-only (skip Cargo.toml / capabilities inject)');
   }
@@ -1331,10 +1378,13 @@ function main() {
     // stash restore after a full build.
     syncDriverCapabilities(resolvedDrivers, registry);
 
-    // Write the features file for the build system to consume
+    // Write the features file for the build system to consume.
+    // `variant` is how ci-tauri-build.mjs learns which updater endpoint to
+    // compile in, without re-parsing argv or relying on a second env channel.
     const output = {
       drivers: resolvedDrivers,
       features,
+      variant,
       cargoArgs: features.length > 0
         ? `--features "${features.join(',')}"`
         : '',
@@ -1343,7 +1393,7 @@ function main() {
     const outPath = resolve(ROOT, '.driver-features.json');
     reportWrite(outPath, writeIfChanged(outPath, JSON.stringify(output, null, 2) + '\n'));
 
-    generateFrontendRegistry(resolvedDrivers);
+    generateFrontendRegistry(resolvedDrivers, variant);
     generateRustDriverInit(resolvedDrivers, registry);
     if (!existsSync(resolve(ROOT, 'src/extensions/generated-pro.ts'))) {
       resolvePro({ codegenOnly: true });

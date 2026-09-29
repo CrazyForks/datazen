@@ -58,6 +58,13 @@ impl RowPageSource for DriverKeysetSource {
     ) -> Result<Vec<Row>, DataSyncError> {
         let family = self.family.clone();
         let quote = self.quote;
+        // The dialect owns the clause: SQL Server has no `LIMIT` and pages with
+        // `ORDER BY … OFFSET n ROWS FETCH NEXT m ROWS ONLY` (the PK ordering
+        // below satisfies its `ORDER BY` requirement).
+        let pagination_clause = self
+            .driver
+            .pagination_syntax(u64::from(limit.max(1)), 0)
+            .clause;
         let (sql, params) = build_keyset_select_sql(
             &self.table,
             self.database.as_deref(),
@@ -66,7 +73,7 @@ impl RowPageSource for DriverKeysetSource {
             &self.columns,
             &self.pk_columns,
             after_key,
-            limit,
+            &pagination_clause,
             quote,
             |i| {
                 if family == "mysql" {

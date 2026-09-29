@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Clock, Trash2 } from 'lucide-react';
 import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
+import { useCopyFeedback } from '../ui/useCopyFeedback';
 import { useI18n } from '../../hooks/useI18n';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { queryCommands } from '../../commands/query';
@@ -16,6 +17,9 @@ import {
   truncationNotice,
   type HistoryQueryState,
 } from './historyQuery';
+
+/** How long the per-row "已复制" marker stays before reverting. */
+const COPIED_FEEDBACK_MS = 2000;
 
 export interface GlobalQueryHistoryDialogProps {
   open: boolean;
@@ -55,6 +59,7 @@ export function GlobalQueryHistoryDialog({
   const [query, setQuery] = useState<HistoryQueryState>(DEFAULT_HISTORY_QUERY);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
   const [confirmClear, setConfirmClear] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const debouncedSearch = useDebounced(query.search, SEARCH_DEBOUNCE_MS);
@@ -152,9 +157,8 @@ export function GlobalQueryHistoryDialog({
     async (action: HistoryEntryAction, entry: QueryHistoryEntry) => {
       try {
         if (action === 'copy') {
-          await navigator.clipboard?.writeText(entry.sql);
+          copy(entry.sql);
           setCopiedId(entry.id);
-          setTimeout(() => setCopiedId(null), 2000);
         } else if (action === 'open') {
           onSelectQuery?.(entry);
           onClose();
@@ -177,8 +181,15 @@ export function GlobalQueryHistoryDialog({
         // tear down the dialog.
       }
     },
-    [connectionMap, onClose, onSelectQuery, t],
+    [connectionMap, copy, onClose, onSelectQuery, t],
   );
+
+  /**
+   * `copied` is the shared, request-bound flag; `copiedId` says *which* row it
+   * belongs to. Gating the marker on both means a rolled-back write drops the
+   * marker even though `copiedId` still names the last attempted row.
+   */
+  const copiedRowId = copied ? copiedId : null;
 
   const handleExport = useCallback(async () => {
     const chosen = visible.filter((e) => selected.has(e.id));
@@ -336,7 +347,7 @@ export function GlobalQueryHistoryDialog({
                 selected={selected.has(item.id)}
                 onToggleSelect={toggleSelect}
                 onAction={(action, entry) => void handleAction(action, entry)}
-                copiedId={copiedId}
+                copiedId={copiedRowId}
                 canOpen={Boolean(onSelectQuery)}
               />
             ))

@@ -47,6 +47,7 @@ vi.mock('../../../lib/windowManager', () => ({
 const mockReorderConnections = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockGetOpenDatabases = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const mockSaveConnection = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockCloseDatabase = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const openDataSyncWindowMock = vi.hoisted(() => vi.fn());
 const openSchemaDiffWindowMock = vi.hoisted(() => vi.fn());
 const openDataTransferWindowMock = vi.hoisted(() => vi.fn());
@@ -56,6 +57,7 @@ vi.mock('../../../commands/connection', () => ({
     reorderConnections: (...args: unknown[]) => mockReorderConnections(...args),
     saveConnection: (...args: unknown[]) => mockSaveConnection(...args),
     getOpenDatabases: (...args: unknown[]) => mockGetOpenDatabases(...args),
+    closeDatabase: (...args: unknown[]) => mockCloseDatabase(...args),
   },
 }));
 
@@ -392,6 +394,17 @@ async function triggerDropDatabase(
 ) {
   await waitFor(() => findByText(dbName));
   await triggerContextMenuAction((await findByText(dbName)).closest('button')!, 'drop-database');
+}
+
+async function triggerCloseDatabase(
+  findByText: (text: string) => Promise<HTMLElement>,
+  dbName: string,
+) {
+  await waitFor(() => findByText(dbName));
+  await triggerContextMenuAction(
+    (await findByText(dbName)).closest('button')!,
+    'close-database-connection',
+  );
 }
 
 async function triggerContextMenuRefresh(element: HTMLElement): Promise<void> {
@@ -976,6 +989,44 @@ describe('ConnectionNavigatorTree drop database', () => {
 
     await waitFor(() => {
       expect(onShowMessage).toHaveBeenCalledWith('permission denied', 'error');
+    });
+    expect(mockRemovePanelsForDatabase).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConnectionNavigatorTree close database connection', () => {
+  it('closes tabs bound to the database after closing its connection', async () => {
+    mockRemovePanelsForDatabase.mockClear();
+    mockCloseDatabase.mockClear();
+    const { findByText, queryAllByText } = render(<ConnectionNavigatorTree {...baseProps} />);
+
+    await ensureDbTableVisible(findByText, queryAllByText, 'db_a', 'users');
+    await waitFor(() => {
+      expect(useSchemaStore.getState().currentDatabase).toBe('db_a');
+    });
+
+    await triggerCloseDatabase(findByText, 'db_a');
+
+    await waitFor(() => {
+      expect(mockCloseDatabase).toHaveBeenCalledWith('conn-1', 'db_a');
+    });
+    await waitFor(() => {
+      expect(mockRemovePanelsForDatabase).toHaveBeenCalledWith('cfg-mysql', 'db_a', 'db_a');
+    });
+  });
+
+  it('keeps tabs open when closing the database connection fails', async () => {
+    mockRemovePanelsForDatabase.mockClear();
+    mockCloseDatabase.mockRejectedValueOnce(new Error('release failed'));
+    const onShowMessage = vi.fn();
+    const { findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} onShowMessage={onShowMessage} />,
+    );
+
+    await triggerCloseDatabase(findByText, 'db_a');
+
+    await waitFor(() => {
+      expect(onShowMessage).toHaveBeenCalledWith('release failed', 'error');
     });
     expect(mockRemovePanelsForDatabase).not.toHaveBeenCalled();
   });

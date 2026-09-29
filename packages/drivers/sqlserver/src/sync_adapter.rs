@@ -75,6 +75,34 @@ fn base_type(raw: &str) -> String {
 // ── SyncSourceAdapter ──────────────────────────────────────────────
 
 impl SyncSourceAdapter for SqlServerSyncAdapter {
+    /// Rebuild the declared type (length / precision / scale) of every column.
+    ///
+    /// `INFORMATION_SCHEMA.COLUMNS.DATA_TYPE` reports only the bare type name, so
+    /// without this a `NVARCHAR(100)` column migrates as `NVARCHAR(MAX)` and a
+    /// `DECIMAL(10,2)` as `DECIMAL(38,18)` — a silently widened copy.
+    fn full_column_types_query(&self, table: &str) -> Option<String> {
+        let escaped = table.replace('\'', "''");
+        Some(format!(
+            "SELECT c.name AS col_name, \
+                    t.name + CASE \
+                      WHEN t.name IN ('nvarchar','nchar') THEN \
+                        '(' + CASE WHEN c.max_length = -1 THEN 'max' \
+                                   ELSE CAST(c.max_length / 2 AS varchar(10)) END + ')' \
+                      WHEN t.name IN ('varchar','char','varbinary','binary') THEN \
+                        '(' + CASE WHEN c.max_length = -1 THEN 'max' \
+                                   ELSE CAST(c.max_length AS varchar(10)) END + ')' \
+                      WHEN t.name IN ('decimal','numeric') THEN \
+                        '(' + CAST(c.precision AS varchar(10)) + ',' + CAST(c.scale AS varchar(10)) + ')' \
+                      WHEN t.name IN ('datetime2','datetimeoffset','time') THEN \
+                        '(' + CAST(c.scale AS varchar(10)) + ')' \
+                      ELSE '' END AS full_type \
+             FROM sys.columns c \
+             JOIN sys.types t ON t.user_type_id = c.user_type_id \
+             WHERE c.object_id = OBJECT_ID('{escaped}') \
+             ORDER BY c.column_id"
+        ))
+    }
+
     fn column_to_ir(&self, column: &ColumnSchema, native_full_type: Option<&str>) -> IRColumn {
         let raw = native_full_type.unwrap_or(&column.data_type);
         let lower = base_type(raw);
@@ -238,6 +266,31 @@ impl SyncTargetAdapter for SqlServerSyncAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_column_types_query_reads_declared_length_and_precision() {
+        let sql = SqlServerSyncAdapter
+            .full_column_types_query("dbo.users")
+            .expect("sqlserver must reconstruct declared column types");
+        assert!(sql.contains("sys.columns"), "reads the catalog: {sql}");
+        assert!(
+            sql.contains("OBJECT_ID('dbo.users')"),
+            "targets the table: {sql}"
+        );
+        assert!(
+            sql.contains("c.max_length / 2"),
+            "nvarchar length is in bytes: {sql}"
+        );
+        assert!(
+            sql.contains("c.precision"),
+            "decimal precision is reported: {sql}"
+        );
+        // A quote in the table name must not break out of the literal.
+        let quoted = SqlServerSyncAdapter
+            .full_column_types_query("dbo.o'brien")
+            .unwrap();
+        assert!(quoted.contains("OBJECT_ID('dbo.o''brien')"), "{quoted}");
+    }
 
     fn col(name: &str, data_type: &str) -> ColumnSchema {
         ColumnSchema {

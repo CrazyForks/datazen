@@ -594,6 +594,19 @@ export function DataTransferWindow() {
     );
   };
 
+  // All hooks above. Gate the body on the `sync` locale pack so the UI
+  // never renders raw/un-translated keys before it is loaded.
+  if (!localesReady) {
+    return <LocaleDomainLoading testId="data-transfer-locale-loading" />;
+  }
+
+  // Built AFTER the `localesReady` gate on purpose: this is a plain
+  // component-body array literal, so its four `t('transfer.mode.*')` calls run
+  // on *every* render, used or not — the gate only stops the tree from being
+  // rendered, and `useLocaleDomains` always reports not-ready on the first
+  // frame. Building it above the gate made every fresh window open emit four
+  // bogus dev-only "[i18n] Missing translation" lines for keys that are
+  // perfectly well registered in the lazy `sync` pack. Keep it below the gate.
   const modeOptions: { value: TransferMode; label: string; hint: string; testId: string }[] = [
     {
       value: 'data',
@@ -614,12 +627,6 @@ export function DataTransferWindow() {
       testId: 'data-transfer-mode-both',
     },
   ];
-
-  // All hooks above. Gate the body on the `sync` locale pack so the UI
-  // never renders raw/un-translated keys before it is loaded.
-  if (!localesReady) {
-    return <LocaleDomainLoading testId="data-transfer-locale-loading" />;
-  }
 
   return (
     <div data-testid="data-transfer-window" className="flex h-screen flex-col bg-surface text-fg">

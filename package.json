@@ -106,6 +106,7 @@
     "test:pro-seam": "node scripts/pro-seam-gate.mjs",
     "test:pro-guards": "node scripts/run-pro-guards.mjs",
     "test:version": "node scripts/check-version-consistency.mjs",
+    "test:release-variants": "node scripts/check-release-variants.mjs",
     "test:scripts": "vitest run scripts/__tests__",
     "test:rust:backup-i18n": "cargo test -p datazen --lib app_data_archive && cargo test -p datazen --lib i18n_locale && cargo test -p datazen --lib store::tests",
     "prepare": "husky && node scripts/ensure-generated-drivers.mjs && node scripts/generate-builtin-locales.mjs",

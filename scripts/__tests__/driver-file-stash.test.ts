@@ -56,6 +56,43 @@ describe('createDriverFileStash', () => {
     }
   });
 
+  it('restore drops the lockfile cargo rewrote while injected features were on', () => {
+    // The reported defect: enabling driver features makes cargo append the
+    // driver crate to the `datazen` package's dependency list, and nothing
+    // used to put that back — the build exited leaving Cargo.lock dirty.
+    stash.stashManagedFiles();
+    writeManagedFiles(root, INJECTED_CONTENTS);
+    expect(readManaged(root, 'Cargo.lock')).toContain('datazen-plugin-kiwi');
+
+    stash.restoreManagedFiles();
+    expect(readManaged(root, 'Cargo.lock')).toBe(CLEAN_CONTENTS['Cargo.lock']);
+    expect(readManaged(root, 'Cargo.lock')).not.toContain('datazen-plugin-kiwi');
+  });
+
+  it('a dependency bump made before the build survives restore', () => {
+    // Cargo.lock has no injection markers, so the pre-build copy is the
+    // authority: a real user edit must not be discarded along with the
+    // build's residue.
+    const bumped = CLEAN_CONTENTS['Cargo.lock'].replace(
+      '"datazen-driver-pg",',
+      '"datazen-driver-pg",\n "serde",',
+    );
+    writeFileSync(join(root, 'Cargo.lock'), bumped);
+    stash.stashManagedFiles();
+    writeFileSync(join(root, 'Cargo.lock'), INJECTED_CONTENTS['Cargo.lock']);
+
+    stash.restoreManagedFiles();
+    expect(readManaged(root, 'Cargo.lock')).toBe(bumped);
+    expect(readManaged(root, 'Cargo.lock')).toContain('"serde",');
+  });
+
+  it('leaves the lockfile alone when no stash copy exists to restore from', () => {
+    const dirty = INJECTED_CONTENTS['Cargo.lock'];
+    writeFileSync(join(root, 'Cargo.lock'), dirty);
+    stash.restoreManagedFiles();
+    expect(readManaged(root, 'Cargo.lock')).toBe(dirty);
+  });
+
   it('errors when stash already exists', () => {
     stash.stashManagedFiles();
     writeManagedFiles(root, CLEAN_CONTENTS); // recreate work files

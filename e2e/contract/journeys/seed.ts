@@ -1,7 +1,8 @@
 import { browser } from '@wdio/globals';
-import { executeSQL, expandConnectedConnectionInNavigator, openQueryTab } from '../../helpers.js';
+import { executeSQLChecked, openQueryTab } from '../../helpers.js';
+import { contractTableDdl } from '../fixtures.js';
 import type { ContractConnCtx } from '../open-fixture';
-import { focusContractCtx } from '../open-fixture';
+import { focusContractConnection, focusContractCtx } from '../open-fixture';
 
 const CONTRACT_TABLES = {
   postgres: {
@@ -33,6 +34,28 @@ const CONTRACT_TABLES = {
   },
 } as const;
 
+/**
+ * Empty one contract table, recreating it first if it is gone.
+ *
+ * The table is part of the schema snapshot the app loaded when it connected, so
+ * a table that another process dropped mid-run only needs to exist again — no
+ * driver-specific schema refresh. Any other SQL error is rethrown untouched.
+ */
+async function deleteRows(ctx: ContractConnCtx, table: string): Promise<void> {
+  const sql = `DELETE FROM ${table} WHERE 1 = 1`;
+  try {
+    await executeSQLChecked(sql);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/42S02|doesn't exist|no such table|does not exist|不存在/i.test(message)) throw err;
+    // `teardown-e2e-env.sh` drops every `e2e%` object, so a second run.mjs
+    // sharing this MySQL/PostgreSQL server can delete the contract tables while
+    // this matrix is still seeding them. Put the one table back and retry.
+    await executeSQLChecked(contractTableDdl(ctx.fixture, table));
+    await executeSQLChecked(sql);
+  }
+}
+
 type ContractJourneySuffix = keyof (typeof CONTRACT_TABLES)['postgres'];
 
 /** Seed a table for a contract journey and return the table name to open. */
@@ -58,7 +81,13 @@ export async function seedContractTable(
     await browser.pause(250);
   }
   await browser.pause(300);
-  await expandConnectedConnectionInNavigator();
+  // Target THIS fixture's connection by name. The matrix runs postgres, then
+  // mysql, then sqlite in one Tauri process, and `after` only closes extra OS
+  // windows — the previous fixture's session stays live in the navigator. The
+  // no-argument form expands the *first* connected item, which by then is the
+  // leftover MySQL connection, so the seeded SQL ran through the MySQL driver
+  // (`INSERT INTO \`datazen_test\`...`) and the table view loaded 0 rows.
+  await focusContractConnection(ctx.fixture.displayName);
   const table = CONTRACT_TABLES[ctx.fixture.id][suffix];
   await openQueryTab();
 
@@ -66,18 +95,34 @@ export async function seedContractTable(
   // would require a driver-specific schema-cache refresh and is unnecessary
   // for these contract journeys. Safe Mode permits DELETE only when it has a
   // WHERE clause.
+  //
+  // Seed through `executeSQLChecked`, not `executeSQL`: a plain `executeSQL`
+  // swallows driver errors, so a contract table that setup did not create (or
+  // that a concurrent run's teardown-e2e-env.sh dropped mid-run) let this
+  // DELETE/INSERT fail silently and only surfaced ~10s later as an opaque
+  // `Table '<db>.<tbl>' doesn't exist` raised from get_table_data inside the
+  // journey. Throwing here points at the seed that actually broke.
   if (ctx.fixture.id === 'sqlite') {
-    await executeSQL(`DELETE FROM ${table} WHERE 1 = 1`);
-    const rows = suffix === 'data'
-      ? Array.from({ length: 60 }, (_, i) => `('user_${i + 1}', 'user_${i + 1}@e2e.test', ${i + 1})`)
-      : ["('alpha', 'alpha@e2e.test', 10)", "('beta', 'beta@e2e.test', 20)", "('gamma', 'gamma@e2e.test', 30)"];
-    await executeSQL(`INSERT INTO ${table} (name, email, age) VALUES ${rows.join(', ')}`);
+    await deleteRows(ctx, table);
+    const rows =
+      suffix === 'data'
+        ? Array.from(
+            { length: 60 },
+            (_, i) => `('user_${i + 1}', 'user_${i + 1}@e2e.test', ${i + 1})`,
+          )
+        : [
+            "('alpha', 'alpha@e2e.test', 10)",
+            "('beta', 'beta@e2e.test', 20)",
+            "('gamma', 'gamma@e2e.test', 30)",
+          ];
+    await executeSQLChecked(`INSERT INTO ${table} (name, email, age) VALUES ${rows.join(', ')}`);
   } else {
-    await executeSQL(`DELETE FROM ${table} WHERE 1 = 1`);
-    const rows = suffix === 'data'
-      ? Array.from({ length: 60 }, (_, i) => `('user_${i + 1}', 'active')`)
-      : ["('alpha', 'active')", "('beta', 'active')", "('gamma', 'active')"];
-    await executeSQL(`INSERT INTO ${table} (name, status) VALUES ${rows.join(', ')}`);
+    await deleteRows(ctx, table);
+    const rows =
+      suffix === 'data'
+        ? Array.from({ length: 60 }, (_, i) => `('user_${i + 1}', 'active')`)
+        : ["('alpha', 'active')", "('beta', 'active')", "('gamma', 'active')"];
+    await executeSQLChecked(`INSERT INTO ${table} (name, status) VALUES ${rows.join(', ')}`);
   }
 
   return table;

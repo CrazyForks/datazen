@@ -189,3 +189,9 @@ datazen-redis-work/
 # 推广/发布文案本地存档（Product Hunt、V2EX、头条、各版本发布说明与配图）。
 # 属于一次性对外物料，不是仓库资产：不提交、不参与构建、不被 CI 校验。
 /posts/
+
+# 边界守卫的变异探针：scripts/__tests__/boundaryMutation.ts 会把违规文件真写进
+# packages/ui/ 树，跑完再删。被 SIGKILL 打断时 `finally` 不会执行，靠下一次
+# 运行清扫；这些名字由 withTempSourceFiles 强制保留，不会命中任何真实源码。
+__boundaryProbe__*
+__uiBoundaryProbe__*

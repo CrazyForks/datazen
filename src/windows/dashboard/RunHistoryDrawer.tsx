@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Loader2, X } from 'lucide-react';
+import { AlertTriangle, X } from 'lucide-react';
 import { ChartCanvas } from '../../components/chart/ChartCanvas';
 import { DataTable } from '../../components/DataTable/DataTable';
 import type { ColumnDef } from '../../components/DataTable/TableHeader';
@@ -10,6 +10,7 @@ import { hasRenderableChart, widgetRunToChartData } from '../../lib/dashboard/ru
 import { cn } from '../../lib/cn';
 import { useI18n } from '../../hooks/useI18n';
 import type { DashboardWidget, RunIndexEntry, ViewMode, WidgetRun } from '../../types/dashboard';
+import { Spinner } from '../../components/ui/Spinner';
 
 const HISTORY_LIMIT = 50;
 
@@ -158,7 +159,7 @@ export function RunHistoryDrawer({
           <div className="flex w-56 shrink-0 flex-col border-r border-edge">
             {loadingIndex && (
               <div className="flex flex-1 items-center justify-center text-xs text-fg-muted">
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                <Spinner size="lg" className="mr-1.5" />
                 {t('common.loading')}
               </div>
             )}
@@ -235,7 +236,7 @@ export function RunHistoryDrawer({
               )}
               {loadingRun && (
                 <div className="absolute inset-0 flex items-center justify-center text-xs text-fg-muted">
-                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  <Spinner size="lg" className="mr-1.5" />
                   {t('common.loading')}
                 </div>
               )}

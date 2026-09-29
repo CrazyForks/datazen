@@ -114,14 +114,36 @@ export async function expandNewConnectionAdvanced() {
   await browser.pause(300);
 }
 
-/** Expand the SSH tunnel section inside Advanced Settings (PostgreSQL/MySQL etc.). */
+/**
+ * Reveal the SSH tunnel fields inside Advanced Settings of the new-connection
+ * dialog, leaving `[data-testid="new-conn-ssh-tunnel-checkbox"]` visible.
+ *
+ * There is no `new-conn-ssh-toggle` any more: the advanced section exposes a
+ * single *tunnel* section, and the SSH fields live behind its source control
+ * (selecting the "inline" source turns `sshEnabled` on with it). The step
+ * between the section and the fields is the same one `new-connection.ts`
+ * walks, so both specs now share it.
+ */
 export async function expandNewConnectionSshSection() {
   await expandNewConnectionAdvanced();
-  const sshToggle = await $('[data-testid="new-conn-ssh-toggle"]');
-  const expanded = await sshToggle.getAttribute('aria-expanded').catch(() => null);
-  if (expanded === 'true') return;
-  await sshToggle.waitForDisplayed({ timeout: 8000 });
-  await sshToggle.click();
+  const tunnelToggle = await $('[data-testid="new-conn-tunnel-toggle"]');
+  await tunnelToggle.waitForDisplayed({ timeout: 8000 });
+  if ((await tunnelToggle.getAttribute('aria-expanded').catch(() => null)) !== 'true') {
+    await tunnelToggle.click();
+    await browser.pause(300);
+  }
+  // Reach inline configuration: with no saved tunnels the empty hint offers a
+  // one-click entry; otherwise pick the "none" source option directly.
+  const createEntry = await $('[data-testid="new-conn-tunnel-create-entry"]');
+  if (await createEntry.isExisting().catch(() => false)) {
+    await createEntry.click();
+  } else if (
+    !(await $('[data-testid="new-conn-inline-tunnel"]')
+      .isExisting()
+      .catch(() => false))
+  ) {
+    await selectDzOptionInWrap('new-conn-tunnel-source', t('newConn.savedTunnelNone'));
+  }
   await browser.pause(300);
 }
 
@@ -335,7 +357,7 @@ export async function expandConnectedConnectionInNavigator(nameFragment?: string
  * the subsequent UI connect performs a real `connect` bound to the current
  * config. The healthy path costs two IPC round-trips and touches nothing.
  */
-async function ensureSeededPgSessionFresh(): Promise<void> {
+export async function ensureSeededPgSessionFresh(): Promise<void> {
   try {
     const conns = await invokeBackend<Array<{ id: string; database?: string }>>('get_connections');
     const cfg = conns.find((c) => c.id === E2E_PG_CONNECTION_ID);
@@ -458,7 +480,7 @@ export async function createAndConnectMySQL(
   await browser.pause(300);
 
   // Fill form fields
-  const nameInput = await $('input[placeholder="例如：主数据库"]');
+  const nameInput = await $('[data-testid="new-conn-name"]');
   await nameInput.setValue(name);
 
   const hostInput = await $('input[placeholder="prod-db.example.com"]');
@@ -1403,8 +1425,13 @@ export async function executeSQLChecked(sql: string) {
   // The regular executeSQL swallows errors; re-read the result panel for
   // any SQL error text that appeared after execution.
   const errorText = await browser.execute(() => {
-    // Look for the error panel/result message in the DOM.
+    // Look for the error panel/result message in the DOM. `query-error-message`
+    // is first because it is the only structural signal: QueryResultsPane renders
+    // QueryErrorPanel only while `exec.error` is set, and every execution resets
+    // that field, so its presence after a statement means THAT statement failed.
+    // The remaining selectors are older class-based guesses kept as a backstop.
     const selectors = [
+      '[data-testid="query-error-message"]',
       '[data-testid="result-message-content"]',
       '[data-testid="result-panel"] [class*="text-red"]',
       '[class*="result"][class*="error"]',
@@ -1508,7 +1535,11 @@ async function executeSqlInEditor(sql: string) {
       });
       if (curTotal && curTotal !== prevTotal) return true;
       // Fast queries can keep the same "总耗时 0 ms" label; settle after click.
-      if (elapsed > 900 && curTotal && !(await execBtn.getAttribute('disabled'))) return true;
+      // QueryEditorSection swaps the execute button for QueryExecutionStatus
+      // while a query runs, so the button's *existence* is the idle signal — it
+      // is never rendered with `disabled`, and getAttribute on the absent node
+      // throws for exactly the window this branch polls.
+      if (elapsed > 900 && curTotal && (await execBtn.isExisting())) return true;
       if (elapsed > 1200 && /\d+\s*(行|rows?)\b/i.test(body)) return true;
       return false;
     },

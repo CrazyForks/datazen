@@ -14,10 +14,11 @@
  *    newer confirmation, a second click inheriting a shortened window, and a
  *    timer outliving the component).
  *
- * Why a probe locale: `Dialog`'s own default is `closeLabel = 'Close'` and the
- * English `common.close` is also `'Close'`, so an English-only assertion cannot
- * distinguish "the caller overrode it" from "it fell back and happened to match".
- * `CUSTOM::Close` differs from both the probe copy and every library default.
+ * Why a probe locale: the pre-i18n `closeLabel = 'Close'` literal `Dialog.tsx`
+ * still falls back to when the registry holds no `common.close` is also what the
+ * English `common.close` says, so an English-only assertion cannot distinguish
+ * "the caller overrode it" from "it fell back and happened to match".
+ * `CUSTOM::Close` differs from both the probe copy and that fallback.
  *
  * These cases arrived as `it.fails` while the races above were still broken
  * and flipped to `it` once the components were corrected; they stay as `it` so

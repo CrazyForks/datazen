@@ -3,6 +3,7 @@ import type { TranslationKey } from '../../locales';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Select } from '../ui/Select';
 import { Button } from '../ui/Button';
+import { ErrorBanner } from '../ui/ErrorBanner';
 import { useI18n } from '../../hooks/useI18n';
 import { cn } from '../../lib/cn';
 import { openSettingsWindow } from '../../lib/windowManager';
@@ -217,6 +218,9 @@ export function ConnectionAdvancedSettings({
           data-testid="new-conn-tunnel-panel"
         >
           {form.tunnelRefMissing && (
+            /* Deliberately not an ErrorBanner: an amber notice is a *warning*
+               ("you picked a tunnel that no longer exists"), announced as one.
+               Routing it through the error component would mislabel it. */
             <div
               role="alert"
               data-testid="new-conn-tunnel-missing"
@@ -304,11 +308,7 @@ export function ConnectionAdvancedSettings({
                   {t('newConn.tunnelUnbind')}
                 </Button>
               )}
-              {form.tunnelError && (
-                <div role="alert" className="text-xs text-red-400">
-                  {form.tunnelError}
-                </div>
-              )}
+              {form.tunnelError && <ErrorBanner>{form.tunnelError}</ErrorBanner>}
             </div>
           )}
 
@@ -342,11 +342,7 @@ export function ConnectionAdvancedSettings({
                 >
                   {t('newConn.tunnelSaveAs')}
                 </Button>
-                {form.tunnelError && (
-                  <span role="alert" className="text-xs text-red-400">
-                    {form.tunnelError}
-                  </span>
-                )}
+                {form.tunnelError && <ErrorBanner as="span">{form.tunnelError}</ErrorBanner>}
               </div>
             </div>
           )}

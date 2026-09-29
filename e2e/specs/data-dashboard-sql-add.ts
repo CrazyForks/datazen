@@ -68,11 +68,12 @@ describe('数据看板 SQL 添加 (UJ-03, UJ-13)', () => {
     await refreshAll.waitForDisplayed({ timeout: 5000 });
     await refreshAll.click();
 
+    // Assert the product's own chart hook, not recharts' internal class: the
+    // ResponsiveContainer inside ChartCanvas renders nothing at all when its
+    // measured box is non-positive, so a third-party wrapper class is not a
+    // reliable "the chart rendered" signal.
     await browser.waitUntil(
-      async () => {
-        const charts = await $$('[class*="recharts-wrapper"]');
-        return charts.length >= 1;
-      },
+      async () => (await $('[data-testid="dashboard-tile-chart"]')).isDisplayed(),
       { timeout: 60000, timeoutMsg: '等待看板图表渲染超时' },
     );
 

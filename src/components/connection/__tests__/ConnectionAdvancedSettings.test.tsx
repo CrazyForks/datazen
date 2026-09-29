@@ -146,6 +146,7 @@ function createMockForm(overrides: Partial<ConnectionFormState> = {}): Connectio
     validate: () => true,
     options: {},
     setOptions: vi.fn(),
+    pickPath: vi.fn(async () => null),
 
     ...overrides,
   };

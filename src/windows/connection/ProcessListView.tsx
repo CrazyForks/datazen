@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, RefreshCw, Skull } from 'lucide-react';
+import { RefreshCw, Skull } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { DataTable } from '../../components/DataTable/DataTable';
 import type { ColumnDef } from '../../components/DataTable/TableHeader';
@@ -9,6 +9,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { driverCommands } from '../../commands/driver';
 import { commandResultColumns, commandResultRows } from '../../lib/processListResult';
 import type { QueryResult, Value, ColumnInfo } from '../../types';
+import { Spinner } from '../../components/ui/Spinner';
 
 export interface ProcessListCache {
   rows: (string | number | boolean | null)[][];
@@ -160,11 +161,7 @@ export function ProcessListView({
           disabled={loading}
           onClick={() => void load()}
         >
-          {loading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5" />
-          )}
+          {loading ? <Spinner size="md" /> : <RefreshCw className="h-3.5 w-3.5" />}
         </Button>
         <Button
           variant="ghost"
@@ -173,11 +170,7 @@ export function ProcessListView({
           disabled={killing || highlightedRow == null || pidColumnIndex < 0}
           onClick={() => void handleKill()}
         >
-          {killing ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Skull className="h-3.5 w-3.5" />
-          )}
+          {killing ? <Spinner size="md" /> : <Skull className="h-3.5 w-3.5" />}
           {t('processList.kill')}
         </Button>
       </div>

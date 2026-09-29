@@ -8,15 +8,11 @@
 //! （切键/切页签/刷新前的拦截真值源），保存时**先**发布 clean 再 `onSaved()`。
 
 import { useEffect, useRef, useState } from 'react';
-import { Button, useI18n } from '@datazen/ui';
+import { Button, ErrorBanner, useI18n } from '@datazen/ui';
 import type { KeyDetail, ValueFrame } from '../shared/types';
 import { formatSize } from '../shared/formatSize';
 import type { GateWriteFn } from '../shared/useRedisGate';
-import {
-  isLeavePending,
-  publishDraftDirty,
-  settleDraftLeave,
-} from '../shared/draftGuard';
+import { isLeavePending, publishDraftDirty, settleDraftLeave } from '../shared/draftGuard';
 import {
   initialStringEditorValue,
   looksLikeJsonText,
@@ -26,12 +22,7 @@ import {
   type DecompressResult,
 } from './stringKeyValue';
 import { JsonModeBar } from './JsonModeBar';
-import {
-  formatJson,
-  JSON_TEXT_MODES,
-  type JsonDisplayMode,
-  type JsonTextMode,
-} from './jsonModes';
+import { formatJson, JSON_TEXT_MODES, type JsonDisplayMode, type JsonTextMode } from './jsonModes';
 import { invokeSetString } from './keyEditorsInvokes';
 import { ValueViewer } from './ValueViewer';
 import { DraftLeaveDialog } from './DraftLeaveDialog';
@@ -294,14 +285,25 @@ export function StringEditor({
       )}
       {/* BUG-003: rejected `set_string` — visible feedback, draft stays live. */}
       {saveError && (
-        <div
-          className="rounded-md border border-danger/20 bg-danger/10 px-2 py-1.5 text-danger"
+        <ErrorBanner
+          variant="boxed"
+          // Colour comes wholly from the `boxed` variant, which is on the
+          // `danger` token; only padding is restated, because the variant
+          // hard-codes `p-2`. Checked class-by-class against the
+          // `decompError` box a few lines below, the two agree on rounded-md /
+          // border / border-danger/20 / bg-danger/10 / text-danger / px-2 /
+          // py-1.5. The two remaining differences are both inert: this box
+          // also carries the variant's `p-2` (nothing here conflicts with it,
+          // and px-2/py-1.5 already cover both axes), and it carries `text-xs`
+          // explicitly where `decompError` inherits that same 12px from
+          // KeyEditors' root. The font equivalence is proved through the real
+          // tree in __tests__/stringEditorFontInheritance.test.tsx.
+          className="px-2 py-1.5"
           data-testid="redis-string-save-error"
           data-i18n-key="redis.detail.saveFailed"
-          role="alert"
         >
           {t('redis.detail.saveFailed').replace('{error}', saveError)}
-        </div>
+        </ErrorBanner>
       )}
       <DraftLeaveDialog onDiscard={restoreServerValue} />
       {decompError && (

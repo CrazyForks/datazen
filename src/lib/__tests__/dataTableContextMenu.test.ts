@@ -4,11 +4,14 @@ import {
   formatRowAsSqlInsert,
   formatRowAsSqlUpdate,
   formatRowAsSqlDelete,
+  formatRowsAsSqlInsert,
+  formatRowsAsSqlUpdate,
   resolveDataTableCellFromEvent,
   resolveDataTableHeaderColFromEvent,
   rowToNamedRecord,
   serializeDataTableColumnValues,
   serializeDataTableRowsAsCsv,
+  serializeDataTableRowsAsJson,
   serializeDataTableRowsAsTsv,
   type DataTableContextMenuLabels,
 } from '../dataTableContextMenu';
@@ -72,6 +75,63 @@ describe('serializeDataTableRowsAsCsv', () => {
         ],
       ),
     ).toBe('id,name\n1,Ada\n2,"O""Brien, Jr"');
+  });
+});
+
+describe('serializeDataTableRowsAsJson', () => {
+  it('serializes every row as an array of named records', () => {
+    expect(
+      serializeDataTableRowsAsJson(
+        ['id', 'name'],
+        [
+          [1, 'Ada'],
+          [2, null],
+        ],
+      ),
+    ).toBe(
+      JSON.stringify(
+        [
+          { id: 1, name: 'Ada' },
+          { id: 2, name: null },
+        ],
+        null,
+        2,
+      ),
+    );
+  });
+});
+
+describe('formatRowsAsSqlInsert / formatRowsAsSqlUpdate', () => {
+  it('emits one statement per row', () => {
+    expect(
+      formatRowsAsSqlInsert(
+        'users',
+        ['id', 'name'],
+        [
+          [1, 'Ada'],
+          [2, 'Bob'],
+        ],
+        'postgresql',
+      ),
+    ).toBe(
+      `INSERT INTO "users" ("id", "name") VALUES (1, 'Ada');\n` +
+        `INSERT INTO "users" ("id", "name") VALUES (2, 'Bob');`,
+    );
+    expect(
+      formatRowsAsSqlUpdate(
+        'users',
+        ['id', 'name'],
+        [
+          [1, 'Ada'],
+          [2, 'Bob'],
+        ],
+        ['id'],
+        'postgresql',
+      ),
+    ).toBe(
+      `UPDATE "users" SET "name" = 'Ada' WHERE "id" = 1;\n` +
+        `UPDATE "users" SET "name" = 'Bob' WHERE "id" = 2;`,
+    );
   });
 });
 
@@ -385,9 +445,9 @@ describe('buildDataTableContextMenuItems', () => {
       canDelete: true,
       exportEnabled: true,
     });
-    expect(rootItemIds(items)).toEqual(['delete-row', 'export']);
+    expect(rootItemIds(items)).toEqual(['copy-selected-rows', 'delete-row', 'export']);
     expect(findSubmenu(items, 'more-actions')?.items.map((i) => i.kind === 'item' && i.id)).toEqual(
-      ['copy-selected-rows', 'copy-as-csv'],
+      ['copy-as-csv'],
     );
 
     expect(
@@ -438,6 +498,74 @@ describe('buildDataTableContextMenuItems', () => {
     });
     expect(rootItemIds(items)).toEqual(['copy']);
     expect(rootItemIds(items)).not.toContain('filter-by-value');
+  });
+
+  it('drops single-row actions when the menu targets a multi-row selection', () => {
+    const handlers = {
+      onCopy: vi.fn(),
+      onCopyRow: vi.fn(),
+      onCopyAsJson: vi.fn(),
+      onCopyAsSqlInsert: vi.fn(),
+      onCopyAsUpdate: vi.fn(),
+      onCopyAsCsv: vi.fn(),
+      onCopyColumnName: vi.fn(),
+      onCopyColumnData: vi.fn(),
+      onSetNull: vi.fn(),
+      onFilterByValue: vi.fn(),
+      onCopySelectedRows: vi.fn(),
+      onDeleteRow: vi.fn(),
+      onExport: vi.fn(),
+    };
+    const items = buildDataTableContextMenuItems({
+      labels,
+      handlers,
+      hasCellContext: true,
+      multiRowSelection: true,
+      hasSelectedRows: true,
+      exportEnabled: true,
+      canFilterByValue: true,
+      canSetNull: true,
+      canDelete: true,
+    });
+
+    // Cell/row-scoped actions cannot act on several rows, so they are gone.
+    expect(rootItemIds(items)).toEqual([
+      'copy-selected-rows',
+      'filter-by-value',
+      'delete-row',
+      'export',
+    ]);
+    expect(rootItemIds(items)).not.toContain('copy');
+    expect(rootItemIds(items)).not.toContain('copy-row');
+    expect(rootItemIds(items)).not.toContain('set-null');
+
+    const more = findSubmenu(items, 'more-actions');
+    expect(more?.items.filter((i) => i.kind === 'item').map((i) => i.id)).toEqual([
+      'copy-as-csv',
+      'copy-as-json',
+      'copy-as-sql-insert',
+      'copy-as-update',
+      'copy-column-name',
+      'copy-column-data',
+    ]);
+
+    for (const it of items) {
+      if (it.kind === 'item') it.action();
+    }
+    for (const it of more?.items ?? []) {
+      if (it.kind === 'item') it.action();
+    }
+    expect(handlers.onCopy).not.toHaveBeenCalled();
+    expect(handlers.onCopyRow).not.toHaveBeenCalled();
+    expect(handlers.onSetNull).not.toHaveBeenCalled();
+    expect(handlers.onCopySelectedRows).toHaveBeenCalledOnce();
+    expect(handlers.onCopyAsJson).toHaveBeenCalledOnce();
+    expect(handlers.onCopyAsSqlInsert).toHaveBeenCalledOnce();
+    expect(handlers.onCopyAsUpdate).toHaveBeenCalledOnce();
+    expect(handlers.onCopyAsCsv).toHaveBeenCalledOnce();
+    expect(handlers.onFilterByValue).toHaveBeenCalledOnce();
+    expect(handlers.onDeleteRow).toHaveBeenCalledOnce();
+    expect(handlers.onExport).toHaveBeenCalledOnce();
   });
 
   it('with header context only, shows copy column name and copy column data at root', () => {

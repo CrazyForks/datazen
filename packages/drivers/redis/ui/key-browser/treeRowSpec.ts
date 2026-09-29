@@ -1,3 +1,11 @@
+import {
+  ancestorIndexes,
+  firstChildIndex as sharedFirstChildIndex,
+  indentOf,
+  nextNavigableIndex as sharedNextNavigableIndex,
+  parentIndexOf as sharedParentIndexOf,
+  stepIndex,
+} from '@datazen/ui';
 import type { KeyTreeRow } from './keyTree';
 
 /**
@@ -11,14 +19,47 @@ import type { KeyTreeRow } from './keyTree';
  * The spec is deliberately *tight*: 30 px rows and a 4 + depth×10 px indent.
  * The previous 8 + depth×16 indent burned a third of the tree column on nesting
  * before the key name was readable.
+ *
+ * Indent and the index walks are the shared tree core's, not this file's: the
+ * connection navigator asks the same questions over the same flat pre-order
+ * shape, and keeping private copies is what let the two drift. What stays here
+ * is what is genuinely the key browser's own — the row height, the pixel scale
+ * the indent is expressed in, the scroll maths that depends on a fixed-height
+ * virtualizer, and the keyboard map.
  */
 export const ROW_HEIGHT = 30;
 export const INDENT_BASE = 4;
 export const INDENT_STEP = 10;
 
+/** A `folder` row owns a child list; a `key` row never does. */
+const isFolder = (row: KeyTreeRow): boolean => row.kind === 'folder';
+
+/** The same predicate, for the shared tree shell's `isBranch` probe. */
+export const isFolderRow = isFolder;
+
+/**
+ * Stable identity of a row, derived from the row itself and never from its
+ * position.
+ *
+ * The renderer used to build these keys inline while mapping the virtual
+ * window, which put the key contract one indentation level away from the data
+ * that has to satisfy it — and left the *folder* keys unprefixed while the key
+ * rows used the raw Redis name, so a key literally called `folder:app` and a
+ * folder at `app` produced the same React key.
+ *
+ * The prefix matters because a virtualizer recycles DOM nodes by key: a key
+ * that changes when a sibling is inserted, removed, expanded or collapsed
+ * silently re-points a live node (and its focus, its checkbox state and its
+ * in-flight click) at a different row. `path` and `entry.key` are the row's
+ * own identity, so neither fold nor filter nor scroll can change them.
+ */
+export function keyTreeRowKey(row: KeyTreeRow): string {
+  return row.kind === 'folder' ? `folder:${row.path}` : `key:${row.entry.key}`;
+}
+
 /** Left padding of a row at `depth` (root rows are depth 0). */
 export function rowIndent(depth: number): number {
-  return INDENT_BASE + Math.max(0, depth) * INDENT_STEP;
+  return indentOf(depth, INDENT_BASE, INDENT_STEP);
 }
 
 /** Row index sitting at the top of the viewport for a uniform-height list. */
@@ -38,17 +79,10 @@ export function firstVisibleIndex(scrollTop: number, rowCount: number): number {
  * the folder scrolls above the top edge; exit: it scrolls back below it).
  *
  * Rows are pre-order (a folder is always followed by its expanded children), so
- * a running stack with "pop everything at my depth or deeper" is exact.
+ * the running stack behind this is exact.
  */
 export function stickyFolderChain(rows: KeyTreeRow[], topIndex: number): KeyTreeRow[] {
-  const stack: KeyTreeRow[] = [];
-  const limit = Math.max(0, Math.min(topIndex, rows.length));
-  for (let i = 0; i < limit; i++) {
-    const row = rows[i]!;
-    while (stack.length > 0 && stack[stack.length - 1]!.depth >= row.depth) stack.pop();
-    if (row.kind === 'folder') stack.push(row);
-  }
-  return stack;
+  return ancestorIndexes(rows, topIndex, isFolder).map((index) => rows[index]!);
 }
 
 /**
@@ -58,9 +92,7 @@ export function stickyFolderChain(rows: KeyTreeRow[], topIndex: number): KeyTree
  * viewport to the other end of a 10k-key tree.
  */
 export function nextActiveIndex(from: number, offset: number, rowCount: number): number {
-  if (rowCount <= 0) return -1;
-  const next = from < 0 ? (offset > 0 ? 0 : rowCount - 1) : from + offset;
-  return Math.max(0, Math.min(rowCount - 1, next));
+  return stepIndex(from, offset, rowCount);
 }
 
 /**
@@ -69,13 +101,7 @@ export function nextActiveIndex(from: number, offset: number, rowCount: number):
  * root row has nowhere to go and returns `from`.
  */
 export function parentIndexOf(rows: KeyTreeRow[], from: number): number {
-  const row = rows[from];
-  if (!row || row.depth === 0) return from;
-  for (let i = from - 1; i >= 0; i--) {
-    const candidate = rows[i]!;
-    if (candidate.kind === 'folder' && candidate.depth === row.depth - 1) return i;
-  }
-  return from;
+  return sharedParentIndexOf(rows, from, isFolder);
 }
 
 /**
@@ -84,10 +110,7 @@ export function parentIndexOf(rows: KeyTreeRow[], from: number): number {
  * instead of doing nothing.
  */
 export function firstChildIndex(rows: KeyTreeRow[], from: number): number {
-  const row = rows[from];
-  if (!row || row.kind !== 'folder') return -1;
-  const next = rows[from + 1];
-  return next && next.depth === row.depth + 1 ? from + 1 : -1;
+  return sharedFirstChildIndex(rows, from, isFolder);
 }
 
 /* ── I-9 keyboard map ─────────────────────────────────────────────────────── */
@@ -158,7 +181,5 @@ export function nextNavigableIndex(
   rowCount: number,
   isNavigable: (index: number) => boolean,
 ): number {
-  let index = first;
-  while (index >= 0 && index < rowCount && !isNavigable(index)) index += direction;
-  return index >= 0 && index < rowCount ? index : -1;
+  return sharedNextNavigableIndex(first, direction, rowCount, isNavigable);
 }

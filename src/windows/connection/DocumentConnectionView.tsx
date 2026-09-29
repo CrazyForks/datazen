@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Database, FileJson, Loader2, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { Database, FileJson, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Button } from '../../components/ui/Button';
 import { CopyableError } from '../../components/ui/CopyableError';
@@ -25,6 +25,7 @@ import {
 } from '../../../packages/drivers/mongodb/ui/mongodbFind';
 import type { ConnectionViewProps } from '../../lib/connectionViews/types';
 import type { StatementResult, TableInfo } from '../../types';
+import { Spinner } from '../../components/ui/Spinner';
 
 const ROW_HEIGHT = 32;
 const DEFAULT_LIMIT = 50;
@@ -388,7 +389,7 @@ export function DocumentConnectionView({
               </div>
               {loading && (
                 <div className="flex items-center gap-2 py-1 text-xs text-fg-muted">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Spinner size="md" />
                   {t('common.loading')}
                 </div>
               )}
@@ -430,7 +431,7 @@ export function DocumentConnectionView({
               </div>
               {collectionsLoading && (
                 <div className="flex items-center gap-2 px-2 py-1 text-xs text-fg-muted">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Spinner size="md" />
                   {t('common.loading')}
                 </div>
               )}
@@ -513,7 +514,7 @@ export function DocumentConnectionView({
                   <div className="flex min-w-0 flex-1 flex-col">
                     {docsLoading ? (
                       <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-                        <Loader2 className="h-5 w-5 animate-spin" />
+                        <Spinner size="xl" />
                         {t('common.loading')}
                       </div>
                     ) : result ? (
@@ -609,11 +610,7 @@ function DocumentDetailEditor({
           onClick={insertMode ? onInsert : onInsertNew}
           disabled={mutating}
         >
-          {mutating && insertMode ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Plus className="h-3.5 w-3.5" />
-          )}
+          {mutating && insertMode ? <Spinner size="md" /> : <Plus className="h-3.5 w-3.5" />}
           {t('docView.insert')}
         </Button>
         {!insertMode && (
@@ -624,7 +621,7 @@ function DocumentDetailEditor({
             disabled={mutating || !canSave}
             title={!canSave ? t('docView.noIdHint') : undefined}
           >
-            {mutating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('common.save')}
+            {mutating ? <Spinner size="md" /> : t('common.save')}
           </Button>
         )}
         {!insertMode && (
@@ -851,7 +848,7 @@ function DocumentQueryPanelInner({
       <div className="flex min-h-0 flex-1 flex-col">
         {exec.running && results.length === 0 && (
           <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <Spinner size="xl" />
             {t('query.executing')}
           </div>
         )}

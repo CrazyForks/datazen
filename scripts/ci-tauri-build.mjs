@@ -21,6 +21,7 @@ import { tmpdir } from 'os';
 import { resolve, dirname, join, basename } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { stagingMarkerPath } from './pack-ep.mjs';
+import { DEFAULT_REPO, manifestUrlForVariant, normalizeVariant } from './release-variants.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -105,6 +106,51 @@ export function writeUpdaterConfigFile(dir = join(tmpdir(), 'datazen-ci-tauri'))
 }
 
 /**
+ * Build the `--config` overlay for this variant.
+ *
+ * The updater endpoint lives in `tauri.conf.json`, which is shipped once for
+ * every SKU — so left alone, an `-all` / `-akulaku` build would read the Basic
+ * manifest and install a Basic build over itself (losing every driver Basic
+ * does not ship). For SKUs that publish their own manifest we therefore
+ * override `plugins.updater.endpoints` here.
+ *
+ * Tauri merges `--config` with JSON Merge Patch (RFC 7396) — `json_patch::merge`
+ * called from tauri-utils `config::parse::read_from` — which recurses into
+ * objects and *replaces* arrays. Emitting only `endpoints` therefore swaps just
+ * the URL list and keeps `pubkey` and `windows.installMode` from the base
+ * config; emitting a whole `plugins.updater` object is what would silently break
+ * signature verification the moment it drifted from the base file.
+ *
+ * Basic gets no override: its endpoint is already the one in the base config,
+ * so Basic builds stay byte-identical to what shipped before — which is what
+ * lets already-installed Basic users keep updating.
+ *
+ * `variant` accepts the release-matrix spelling (`-all`); `repo` only affects
+ * the URL text and is never resolved over the network here.
+ */
+export function updaterConfigOverlay(variant, repo = DEFAULT_REPO) {
+  const endpoints = updaterEndpointsForVariant(variant, repo);
+  return endpoints ? { plugins: { updater: { endpoints } } } : null;
+}
+
+/**
+ * Endpoint list for a SKU, or `null` when the SKU must not override anything
+ * (Basic) or has no published channel at all (`custom` and unknown SKUs).
+ *
+ * @param {string | null | undefined} variant
+ * @param {string} [repo]
+ * @returns {string[] | null}
+ */
+export function updaterEndpointsForVariant(variant, repo = DEFAULT_REPO) {
+  const name = normalizeVariant(variant);
+  // Basic already points at `latest.json` in tauri.conf.json — no overlay, so
+  // the base config stays the single definition of the default channel.
+  if (name === 'basic') return null;
+  const url = manifestUrlForVariant(name, repo);
+  return url ? [url] : null;
+}
+
+/**
  * Write the Tauri `--config` override that carries the updater block and the
  * injected build hook. `dir` is an override so tests do not share a temp path.
  *
@@ -119,12 +165,14 @@ export function writeTauriConfigFile({
   updater = false,
   isPro = false,
   beforeBuildCommand = null,
+  variant = null,
   dir = join(tmpdir(), 'datazen-ci-tauri'),
 } = {}) {
   mkdirSync(dir, { recursive: true });
+  const sku = normalizeVariant(variant);
   const file = join(
     dir,
-    `config-${isPro ? 'pro' : 'base'}-${updater ? 'updater' : 'plain'}${
+    `config-${isPro ? 'pro' : 'base'}-${updater ? 'updater' : 'plain'}-${sku}${
       beforeBuildCommand ? '-fastfe' : ''
     }.json`,
   );
@@ -134,6 +182,10 @@ export function writeTauriConfigFile({
   }
   if (isPro) {
     Object.assign(config, PRO_CONFIG);
+  }
+  const overlay = updaterConfigOverlay(sku);
+  if (overlay) {
+    Object.assign(config, overlay);
   }
   if (beforeBuildCommand) {
     config.build = { beforeBuildCommand };
@@ -162,6 +214,7 @@ export function buildTauriArgs({
   configPath = null,
   updaterConfigPath = null,
   beforeBuildCommand = null,
+  variant = null,
   extraArgs = [],
 } = {}) {
   const args = ['build'];
@@ -169,12 +222,15 @@ export function buildTauriArgs({
     args.push('--target', target);
   }
   const isPro = edition === 'pro';
-  if (updater || isPro || beforeBuildCommand) {
+  // A non-Basic SKU needs a config overlay even without `--updater`: the
+  // endpoint must never point at another SKU's manifest.
+  const needsVariantOverlay = updaterConfigOverlay(variant) != null;
+  if (updater || isPro || beforeBuildCommand || needsVariantOverlay) {
     args.push(
       '--config',
       configPath ??
         updaterConfigPath ??
-        writeTauriConfigFile({ updater, isPro, beforeBuildCommand }),
+        writeTauriConfigFile({ updater, isPro, beforeBuildCommand, variant }),
     );
   }
   if (Array.isArray(features) && features.length > 0) {
@@ -206,6 +262,7 @@ function main() {
   const argv = process.argv.slice(2);
   const targetArg = argv.find((a) => a.startsWith('--target='));
   const target = targetArg ? targetArg.slice('--target='.length) : null;
+  const variantArg = argv.find((a) => a.startsWith('--variant='));
   const beforeBuildCommand =
     process.env[TYPECHECK_ONCE_ENV] === '1' ? FAST_FRONTEND_BUILD_COMMAND : null;
   const isPro =
@@ -214,7 +271,7 @@ function main() {
     process.env.DATAZEN_EDITION === 'pro';
   const edition = isPro ? 'pro' : 'community';
 
-  const knownPrefixes = ['--target=', '--edition='];
+  const knownPrefixes = ['--target=', '--edition=', '--variant='];
   const knownFlags = new Set(['--pro', '--community', '--updater']);
   const extraArgs = argv.filter((a) => {
     if (knownFlags.has(a)) return false;
@@ -228,7 +285,17 @@ function main() {
     process.exit(1);
   }
 
-  const { features } = JSON.parse(readFileSync(featuresPath, 'utf-8'));
+  const { features, variant: featuresVariant } = JSON.parse(readFileSync(featuresPath, 'utf-8'));
+
+  // The release SKU decides which updater endpoint this build compiles in.
+  // resolve-drivers stamps it into .driver-features.json; an explicit
+  // --variant= wins, and DATAZEN_VARIANT covers a features file written before
+  // that field existed.
+  const variantArgValue = variantArg ? variantArg.slice('--variant='.length) : null;
+  const variant = normalizeVariant(
+    variantArgValue ?? featuresVariant ?? process.env.DATAZEN_VARIANT,
+  );
+  console.log(`[ci-tauri-build] release variant: ${variant}`);
 
   // Fail fast: a missing staged tree means the .deb/.app would ship without
   // the Pro extension — better to stop here than after a 10-min build.
@@ -243,12 +310,21 @@ function main() {
     }
   }
 
+  // A SKU with its own channel must never be built against another SKU's
+  // manifest. Getting the endpoint wrong is silent and only shows up as a
+  // downgraded install on a user's machine, so it is logged loudly here.
+  const endpoints = updaterEndpointsForVariant(variant);
+  if (endpoints) {
+    console.log(`[ci-tauri-build] updater endpoint: ${endpoints[0]}`);
+  }
+
   const args = buildTauriArgs({
     target,
     updater: argv.includes('--updater'),
     edition,
     features,
     beforeBuildCommand,
+    variant,
     extraArgs,
   });
   const result = spawnTauri(args);

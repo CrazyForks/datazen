@@ -64,14 +64,11 @@ async function openSqlite(fixture: DriverFixtureDefinition, mainWindow: string) 
   try {
     await browser.waitUntil(
       async () =>
-        browser.execute(
-          (name: string) => {
-            const home = document.querySelector('[data-testid="connection-workspace-home"]');
-            const text = home?.textContent ?? '';
-            return text.includes(name) && /SQLite/i.test(text);
-          },
-          fixture.displayName,
-        ),
+        browser.execute((name: string) => {
+          const home = document.querySelector('[data-testid="connection-workspace-home"]');
+          const text = home?.textContent ?? '';
+          return text.includes(name) && /SQLite/i.test(text);
+        }, fixture.displayName),
       { timeout: 20000, timeoutMsg: `等待 SQLite 连接 "${fixture.displayName}" 激活超时` },
     );
   } catch (error) {
@@ -81,7 +78,8 @@ async function openSqlite(fixture: DriverFixtureDefinition, mainWindow: string) 
       body: document.body.innerText.slice(0, 1800),
       connections: Array.from(document.querySelectorAll('[data-conn-item]')).map((item) => ({
         name: item.getAttribute('data-conn-name') || item.textContent?.trim() || '',
-        expanded: item.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded') ?? null,
+        expanded:
+          item.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded') ?? null,
       })),
     }));
     throw new Error(
@@ -123,4 +121,57 @@ export async function openFixtureConnection(
 
 export async function focusContractCtx(ctx: ContractConnCtx) {
   await browser.switchToWindow(ctx.connWindow);
+}
+
+/**
+ * Make `name` the one and only expanded connection in the navigator, and make
+ * it the active one.
+ *
+ * The matrix runs postgres, then mysql, then sqlite inside a single Tauri
+ * process, and every fixture leaves its connection live: the `after` hook only
+ * closes extra OS windows. All three databases carry identically named
+ * `e2e_contract_*` tables, so a merely-*expanded* leftover connection renders
+ * duplicate `[data-testid="schema-tree-node"][data-item-name=...]` rows. A
+ * `clickTableInSidebar` lookup returns the first match and therefore opened the
+ * table panel against the wrong driver — seeded rows in SQLite, a `rows=0` read
+ * from `datazen_test`. Collapsing every other connection first removes the
+ * ambiguity; the row click then re-activates this connection, because
+ * ConnectionPage derives the active dbSession from the active tab/panel.
+ */
+export async function focusContractConnection(name: string) {
+  await browser.waitUntil(
+    async () =>
+      browser.execute((conn: string) => {
+        const items = Array.from(document.querySelectorAll('[data-conn-item]'));
+        return items.some((el) => (el.textContent || '').includes(conn));
+      }, name),
+    { timeout: 15000, timeoutMsg: `等待连接 "${name}" 出现在导航树超时` },
+  );
+  await browser.execute((conn: string) => {
+    const items = Array.from(document.querySelectorAll('[data-conn-item]'));
+    for (const item of items) {
+      const isTarget = (item.textContent || '').includes(conn);
+      const chevron = item.querySelector('button[aria-expanded]') as HTMLElement | null;
+      if (!chevron) continue;
+      const expanded = chevron.getAttribute('aria-expanded') === 'true';
+      if (isTarget && !expanded) chevron.click();
+      else if (!isTarget && expanded) chevron.click();
+    }
+  }, name);
+  await browser.pause(500);
+  // Activate the connection: ConnectionPage derives the active dbSessionId from
+  // the active tab/panel, so a new query tab inherits this connection only once
+  // it has been clicked open.
+  await browser.execute((conn: string) => {
+    const item = Array.from(document.querySelectorAll('[data-conn-item]')).find((el) =>
+      (el.textContent || '').includes(conn),
+    );
+    if (!item) return;
+    const candidates = Array.from(item.querySelectorAll('button, [role="treeitem"]'));
+    const row = candidates.find((c) => !c.querySelector('button[aria-expanded]')) as
+      | HTMLElement
+      | undefined;
+    (row ?? (item as unknown as HTMLElement)).click();
+  }, name);
+  await browser.pause(500);
 }
