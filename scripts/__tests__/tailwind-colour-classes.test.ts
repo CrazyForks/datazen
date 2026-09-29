@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import type { Dirent } from 'node:fs';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { isSkippedPath, readScannedIfPresent } from '../lib/scanTargets.mjs';
+import { SKIP_DIR_NAMES, isSkippedPath, readScannedIfPresent } from '../lib/scanTargets.mjs';
 
 // The extension is deliberate. Extensionless, this resolves through Vite's
 // `resolve.extensions` where `.js` precedes `.ts` — so it silently loaded
@@ -169,7 +169,13 @@ const NON_COLOUR_ARGUMENTS = new Set([
 ]);
 
 const SCAN_ROOTS = ['src', 'packages', 'e2e'];
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.git', 'target', 'coverage']);
+// The shared set, not a local copy. The four guards that police this repository
+// must agree on what "source" means: an independent list here is a place where
+// a directory could be added to the shared set, picked up by two guards and
+// silently missed by this one — which reads as a colour-class guard that
+// stopped seeing the very tree it was pointed at. The extension set is
+// deliberately narrower than the shared `SCAN_EXTENSIONS` because this guard
+// only cares about files that can carry Tailwind class names.
 
 /** A source file plus its contents, captured in one pass. */
 type ScannedFile = { path: string; content: string };
@@ -202,7 +208,7 @@ function walk(dir: string, out: ScannedFile[] = []): ScannedFile[] {
     throw e;
   }
   for (const entry of entries) {
-    if (SKIP_DIRS.has(entry.name)) continue;
+    if (SKIP_DIR_NAMES.has(entry.name)) continue;
     const full = join(dir, entry.name);
     // Some filesystems report DT_UNKNOWN, which leaves both predicates false;
     // fall back to a stat only in that case, so the common path stays windowless.
