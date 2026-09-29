@@ -112,18 +112,14 @@ export function ChartView({
     return { ...config, yAxes: seriesKeys, groupBy: null };
   }, [config, seriesKeys]);
 
-  if (result.rows.length === 0) {
-    return <ChartEmptyState reason="noData" />;
-  }
-
-  if (fields.filter((f) => f.inferredType === 'numeric').length === 0) {
-    return <ChartEmptyState reason="noNumericField" />;
-  }
-
   const showEmptyCanvas = config.yAxes.length === 0;
 
   const showSplit = splitView && config.yAxes.length > 1;
 
+  // Declared above the `noData` / `noNumericField` early returns on purpose:
+  // a hook placed after an early return makes this component call one extra
+  // hook as soon as the chart goes from empty to populated, which React rejects
+  // with "Rendered more hooks than during the previous render" (#310).
   const splitConfigs = useMemo<ChartConfig[]>(() => {
     if (!showSplit) return [];
     return config.yAxes.map((yKey) => ({
@@ -131,6 +127,14 @@ export function ChartView({
       yAxes: [yKey],
     }));
   }, [showSplit, config.yAxes, renderConfig]);
+
+  if (result.rows.length === 0) {
+    return <ChartEmptyState reason="noData" />;
+  }
+
+  if (fields.filter((f) => f.inferredType === 'numeric').length === 0) {
+    return <ChartEmptyState reason="noNumericField" />;
+  }
 
   return (
     <div className="flex flex-1 flex-col min-h-0">

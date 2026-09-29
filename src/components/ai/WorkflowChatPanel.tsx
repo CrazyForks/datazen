@@ -144,6 +144,21 @@ export function WorkflowChatPanel({ connections, onSaved, onBack }: WorkflowChat
     [t, onSaved],
   );
 
+  // Hold AI-generated workflows to the same multi-db rule the form enforces:
+  // a step on a multi-db connection with no default must name a database.
+  // Declared above the `!isConfigured` early return on purpose: a hook placed
+  // after an early return makes this component call one extra hook as soon as
+  // the AI store hydrates and `isConfigured` flips true, which React rejects
+  // with "Rendered more hooks than during the previous render" (#310).
+  const validationConnections = useMemo(
+    () =>
+      connections.map((c) => ({
+        id: c.id,
+        requiresExplicitDatabase: connectionAllowsMultiDb(c),
+      })),
+    [connections],
+  );
+
   if (!isConfigured) {
     return (
       <div className="flex h-full items-center justify-center p-4">
@@ -162,17 +177,6 @@ export function WorkflowChatPanel({ connections, onSaved, onBack }: WorkflowChat
       </div>
     );
   }
-
-  // Hold AI-generated workflows to the same multi-db rule the form enforces:
-  // a step on a multi-db connection with no default must name a database.
-  const validationConnections = useMemo(
-    () =>
-      connections.map((c) => ({
-        id: c.id,
-        requiresExplicitDatabase: connectionAllowsMultiDb(c),
-      })),
-    [connections],
-  );
 
   const connectionOptions = [
     { value: '', label: t('workflows.aiCreate.noConnection') },
