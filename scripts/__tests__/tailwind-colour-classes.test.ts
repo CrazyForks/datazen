@@ -12,9 +12,15 @@ import { describe, expect, it } from 'vitest';
 import type { Dirent } from 'node:fs';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { readScannedIfPresent } from '../lib/scanTargets.mjs';
+import { SKIP_DIR_NAMES, isSkippedPath, readScannedIfPresent } from '../lib/scanTargets.mjs';
 
-import tailwindConfig from '../../tailwind.config';
+// The extension is deliberate. Extensionless, this resolves through Vite's
+// `resolve.extensions` where `.js` precedes `.ts` — so it silently loaded
+// `tailwind.config.js` whenever `tsc -b` had sprayed that compiled copy into the
+// repo root (tsconfig.node.json is a composite project over these two files, and
+// a composite project must emit). This guard is only as trustworthy as the file
+// it reads, so it names the source file outright.
+import tailwindConfig from '../../tailwind.config.ts';
 
 /** Utilities that take a colour argument. */
 const COLOUR_UTILITIES = [
@@ -160,17 +166,16 @@ const NON_COLOUR_ARGUMENTS = new Set([
   '40',
   '48',
   '64',
-  // English words that appear after these prefixes in comments and identifiers
-  // rather than in a class string ("text-ish field", "text-focused surfaces").
-  'color',
-  'colour',
-  'selectable',
-  'focused',
-  'ish',
 ]);
 
 const SCAN_ROOTS = ['src', 'packages', 'e2e'];
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.git', 'target', 'coverage']);
+// The shared set, not a local copy. The four guards that police this repository
+// must agree on what "source" means: an independent list here is a place where
+// a directory could be added to the shared set, picked up by two guards and
+// silently missed by this one — which reads as a colour-class guard that
+// stopped seeing the very tree it was pointed at. The extension set is
+// deliberately narrower than the shared `SCAN_EXTENSIONS` because this guard
+// only cares about files that can carry Tailwind class names.
 
 /** A source file plus its contents, captured in one pass. */
 type ScannedFile = { path: string; content: string };
@@ -203,13 +208,21 @@ function walk(dir: string, out: ScannedFile[] = []): ScannedFile[] {
     throw e;
   }
   for (const entry of entries) {
-    if (SKIP_DIRS.has(entry.name)) continue;
+    if (SKIP_DIR_NAMES.has(entry.name)) continue;
     const full = join(dir, entry.name);
     // Some filesystems report DT_UNKNOWN, which leaves both predicates false;
     // fall back to a stat only in that case, so the common path stays windowless.
     const isDir = entry.isDirectory() || (!entry.isFile() && statSync(full).isDirectory());
-    if (isDir) walk(full, out);
-    else if (/\.(ts|tsx|js|jsx|css)$/.test(entry.name)) {
+    if (isDir) {
+      // `packages/pro-extensions/**` is independently versioned code that no
+      // Host build produces and no Host commit controls — see
+      // `SKIP_PATH_PREFIXES` in scripts/lib/scanTargets.mjs for why this has to
+      // be a path and not a bare directory name. The dead-colour responsibility
+      // for that tree belongs to the extension's own repository, which always
+      // has its own checkout.
+      if (isSkippedPath(relative(process.cwd(), full).split(/[\\/]/).join('/'))) continue;
+      walk(full, out);
+    } else if (/\.(ts|tsx|js|jsx|css)$/.test(entry.name)) {
       const content = readScannedIfPresent(full);
       // Deleted between the directory read and this one: not in the tree, so it
       // has no class names for this guard to have an opinion about.
@@ -276,7 +289,8 @@ const known = new Set<string>([
  * `titlebar-fg-muted` matches the declared `titlebar` tree and `red-400`
  * matches `red`.
  */
-function resolve(token: string): boolean {
+function resolve(utility: string, token: string): boolean {
+  if (utility === 'stroke' && SVG_STROKE_GEOMETRY.has(token)) return true;
   if (NON_COLOUR_ARGUMENTS.has(token)) return true;
   if (NON_COLOUR_ARGUMENTS.has(token.split('-')[0])) return true;
   for (const candidate of known) {
@@ -327,23 +341,193 @@ const BACKTICK = String.fromCharCode(96);
  * repo is free of dead colour classes.
  */
 const COLOUR_PATTERN = new RegExp(
-  `(?:^|[\\s"${BACKTICK}])((?:[a-z-]+:)?(?:${COLOUR_UTILITIES.join('|')})-([a-z][a-z0-9-]*))`,
+  `(?:^|[\\s"${BACKTICK}])((?:[a-z-]+:)?(${COLOUR_UTILITIES.join('|')})-([a-z][a-z0-9-]*))`,
   'g',
 );
 
-function deadColourClasses(): string[] {
+/**
+ * Native SVG presentation attributes that begin with `stroke-`.
+ *
+ * `stroke` is a real Tailwind colour utility, and it is also the head of an SVG
+ * attribute family that hand-built SVG strings write by hand. The guard read
+ * `stroke-width="2"` as "the `stroke` utility, colour `width`" and reported it
+ * as a dead colour class. The distinction is not guessable from the spelling —
+ * `stroke-2` IS a Tailwind width utility while `stroke-width` is not a Tailwind
+ * class at all — so the attribute list is spelled out rather than derived.
+ *
+ * Kept deliberately exhaustive-but-finite: a new `stroke-*` attribute that is
+ * not a Tailwind class should be added here, and adding a *colour* one should
+ * be a conscious act rather than something that silently passes.
+ */
+const SVG_STROKE_GEOMETRY = new Set([
+  'width',
+  'linecap',
+  'linejoin',
+  'miterlimit',
+  'dasharray',
+  'dashoffset',
+  'opacity',
+]);
+
+/** Half-open `[start, end)` character ranges that hold comment text. */
+type CommentRange = readonly [start: number, end: number];
+
+/**
+ * Find every comment span in a source file, without being fooled by comment
+ * markers that live inside string literals.
+ *
+ * The guard scans lines with a regex that has no notion of syntax, so a JSDoc
+ * sentence or a `//` note reads exactly like a class string. The previous
+ * repair for that was an allowlist of English words (`ish`, `focused`,
+ * `selectable`, `colour`) — a word list that silently swallows any *real* class
+ * that happens to be spelled like a word, and that has to grow a new entry for
+ * every new comment someone writes. Locating the comments instead fixes the
+ * class of bug rather than the instances, so the allowlist entries are gone.
+ *
+ * Handles `//`, `/* *\/`, `'…'`, `"…"`, and template literals including
+ * `${…}` interpolations (a class name inside an interpolation is real code and
+ * must still be scanned). Regex literals are the one construct this cannot
+ * disambiguate from division without a parser; a `/bg-dead/` regex literal is
+ * therefore still reported, which is the safe direction to be wrong in.
+ */
+function commentRanges(content: string): CommentRange[] {
+  const ranges: CommentRange[] = [];
+  const stack: { kind: 'template' | 'brace'; depth: number }[] = [];
+  let i = 0;
+  while (i < content.length) {
+    const ch = content[i];
+    const next = content[i + 1];
+    const top = stack[stack.length - 1];
+    if (ch === '/' && next === '/') {
+      const start = i;
+      const newline = content.indexOf('\n', i);
+      i = newline === -1 ? content.length : newline;
+      ranges.push([start, i]);
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      const start = i;
+      const close = content.indexOf('*/', i + 2);
+      i = close === -1 ? content.length : close + 2;
+      ranges.push([start, i]);
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      i = skipQuoted(content, i, ch);
+      continue;
+    }
+    if (ch === BACKTICK) {
+      stack.push({ kind: 'template', depth: 0 });
+      i += 1;
+      continue;
+    }
+    if (top?.kind === 'template') {
+      if (ch === '$' && next === '{') stack.push({ kind: 'brace', depth: 0 });
+      i += ch === '$' ? 2 : 1;
+      continue;
+    }
+    if (top?.kind === 'brace') {
+      if (ch === '{') top.depth += 1;
+      else if (ch === '}') {
+        if (top.depth === 0) stack.pop();
+        else top.depth -= 1;
+      }
+    }
+    i += 1;
+  }
+  return ranges;
+}
+
+/** Index just past the closing quote of a single-line string literal. */
+function skipQuoted(content: string, from: number, quote: string): number {
+  let i = from + 1;
+  while (i < content.length) {
+    const ch = content[i];
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+    if (ch === quote) return i + 1;
+    // An unterminated quote (a stray apostrophe in prose, a template split
+    // across lines) must not swallow the rest of the file.
+    if (ch === '\n') return i;
+    i += 1;
+  }
+  return i;
+}
+
+/** Whether an absolute offset falls inside any comment span. */
+function inComment(ranges: CommentRange[], offset: number): boolean {
+  for (const [start, end] of ranges) {
+    if (offset >= start && offset < end) return true;
+    if (start > offset) return false;
+  }
+  return false;
+}
+
+/**
+ * The character offset of a match.
+ *
+ * `matchAll` always sets `index`, but the result type declares it optional, so it
+ * has to be narrowed rather than asserted. Narrowing is also the safer reading:
+ * a missing index would be fed to `inComment` as `NaN`, every comparison against
+ * it is false, and the guard would answer "not in a comment" for a class that may
+ * well be in one. Throwing is deliberate — an offset we cannot compute is not
+ * something to skip over, because skipping is exactly how a class stops being
+ * checked.
+ */
+function offsetOf(match: RegExpMatchArray): number {
+  if (match.index === undefined) {
+    throw new Error(
+      'regex match has no index, so the comment lookup would be reading the wrong offset',
+    );
+  }
+  return match.index;
+}
+
+/**
+ * The guard's whole decision, over an arbitrary file list.
+ *
+ * Split out from {@link deadColourClasses} so the false-positive fixes can be
+ * pinned with synthetic fixtures. Asserting "the tree is green today" is not
+ * evidence that a scanner bug is fixed: it is equally consistent with the bug
+ * being real and the tree happening not to contain an instance. These
+ * fixtures contain, on purpose, both the shapes that used to be reported
+ * wrongly and the shapes that must still be reported.
+ */
+function findDeadColourClasses(scan: ScannedFile[]): string[] {
   const dead: string[] = [];
-  for (const { path, content } of files) {
+  for (const { path, content } of scan) {
     if (path.endsWith('.css')) continue;
-    content.split('\n').forEach((line, index) => {
-      for (const m of line.matchAll(COLOUR_PATTERN)) {
-        if (!resolve(m[2])) {
-          dead.push(`${relative(process.cwd(), path)}:${index + 1} \`${m[1]}\``);
+    const lines = content.split('\n');
+    // Cheap pre-pass: only pay for the comment scan on files that have at
+    // least one candidate at all.
+    const candidates = new Map<number, RegExpMatchArray[]>();
+    lines.forEach((line, index) => {
+      const matches = [...line.matchAll(COLOUR_PATTERN)];
+      if (matches.length > 0) candidates.set(index, matches);
+    });
+    if (candidates.size === 0) continue;
+    const comments = commentRanges(content);
+    let lineStart = 0;
+    lines.forEach((line, index) => {
+      const matches = candidates.get(index);
+      if (matches) {
+        for (const m of matches) {
+          if (inComment(comments, lineStart + offsetOf(m))) continue;
+          if (!resolve(m[2], m[3])) {
+            dead.push(`${relative(process.cwd(), path)}:${index + 1} \`${m[1]}\``);
+          }
         }
       }
+      lineStart += line.length + 1;
     });
   }
   return dead;
+}
+
+function deadColourClasses(): string[] {
+  return findDeadColourClasses(files);
 }
 
 describe('Tailwind colour utilities reference a colour that exists', () => {
@@ -357,5 +541,92 @@ describe('Tailwind colour utilities reference a colour that exists', () => {
 
   it('finds no dead colour class in the source', () => {
     expect(deadColourClasses()).toEqual([]);
+  });
+
+  // ── The two regressions below, pinned on synthetic input ───────────────────
+  //
+  // Both were found in `packages/pro-extensions/sql-editor-pro`, a separate git
+  // repository that this guard scans because it sits under `packages/`. A fix
+  // that only made the tree green without changing the scanner would have left
+  // both defects live for the next file written into that repo.
+
+  const scanOne = (content: string): string[] =>
+    findDeadColourClasses([{ path: 'synthetic/fixture.tsx', content }]);
+
+  it('still reports a dead colour class in a real class string', () => {
+    // Negative control. If comment-stripping were implemented by deleting
+    // anything that looked prose-ish, this is the assertion that would catch
+    // it having deleted the class strings too.
+    const found = scanOne(
+      [
+        'const a = <div className="border-border p-2" />;',
+        'const b = <div className="text-muted" />;',
+        'const c = <div className="hover:bg-elevated" />;',
+        'const d = <div className="bg-destructive" />;',
+        'const e = <div className="border-edge bg-surface-raised text-fg-muted" />;',
+      ].join('\n'),
+    );
+    expect(found).toEqual([
+      'synthetic/fixture.tsx:1 `border-border`',
+      'synthetic/fixture.tsx:2 `text-muted`',
+      'synthetic/fixture.tsx:3 `hover:bg-elevated`',
+      'synthetic/fixture.tsx:4 `bg-destructive`',
+    ]);
+  });
+
+  it('reports nothing for comment prose, JSX comments, or SVG attributes', () => {
+    // Every line here is one of the 9 false positives this guard used to
+    // produce, in the exact form the Pro sources use them.
+    expect(
+      scanOne(
+        [
+          '/** Polyline path; `stroke-linejoin: round` rounds the corners. */',
+          '/**',
+          ' * Operators that only make sense for text-like columns, following the',
+          " * host's caret-scoped model.",
+          ' */',
+          '{/* Header — accent-tinted (same `bg-accent/15` recipe) */}',
+          '  // TODO: border-border is a typo, should be border-edge',
+          '  /* text-muted in prose, not a class */',
+          'const svg =',
+          '  \'<circle cx="8" stroke="currentColor" stroke-width="2" fill="none" \' +',
+          '  \'stroke-dasharray="28" stroke-dashoffset="8" stroke-linecap="round"/>\' +',
+          '  \'<path stroke-width="3" stroke-linejoin="round"/>\';',
+        ].join('\n'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('is not fooled by comment markers inside string literals', () => {
+    // A `//` inside a URL must not open a comment that eats the rest of the
+    // line — including a real dead class further along it.
+    expect(
+      scanOne(
+        [
+          "const url = 'https://example.test/a/b';",
+          'const link = <a className="bg-destructive">x</a>;',
+        ].join('\n'),
+      ),
+    ).toEqual(['synthetic/fixture.tsx:2 `bg-destructive`']);
+  });
+
+  it('still scans class names inside template-literal interpolations', () => {
+    // `${…}` is code, not prose. A dead class built at runtime is the hardest
+    // kind to notice and must not be skipped as if it were a comment.
+    expect(
+      scanOne(
+        [
+          'const cls = `rounded bg-surface p-2 ${active ? "bg-destructive" : "bg-surface-alt"}`;',
+        ].join('\n'),
+      ),
+    ).toEqual(['synthetic/fixture.tsx:1 `bg-destructive`']);
+  });
+
+  it('does not exempt a non-stroke utility that merely spells an SVG attribute', () => {
+    // The carve-out is scoped to `stroke`. `text-linecap` is still a dead
+    // colour, and a blanket "stroke-ish words are fine" rule would hide it.
+    expect(scanOne('<div className="text-linecap" />;')).toEqual([
+      'synthetic/fixture.tsx:1 `text-linecap`',
+    ]);
   });
 });

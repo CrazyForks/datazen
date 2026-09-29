@@ -32,10 +32,8 @@
     "checking pack-ep.mjs still checks sign-ep.mjs, precisely because the import",
     "runs pack-ep.mjs -> sign-ep.mjs.",
     "",
-    "pro-seam-gate.mjs is in this program for the same reason, and it was added",
-    "only after a review caught that it had shipped 212 unchecked lines: a NEW",
-    ".mjs under scripts/ is covered by NO program (tsconfig.scripts.json covers",
-    "the .ts tests with checkJs:false and never checks a .mjs body;",
+    "A NEW .mjs under scripts/ is covered by NO program (tsconfig.scripts.json",
+    "covers the .ts tests with checkJs:false and never checks a .mjs body;",
     "tsconfig.scripts-checkjs.json is backlog only, wired into nothing). Same root",
     "cause as the hole pack-ep.mjs had. A new script under scripts/ MUST be",
     "added here in the same commit that creates it.",
@@ -79,8 +77,6 @@
   "files": [
     "scripts/pack-ep.mjs",
     "scripts/sign-ep.mjs",
-    "scripts/pro-seam-gate.mjs",
-    "scripts/run-pro-guards.mjs",
     "scripts/mutation-check-pane-focus.mjs",
     "scripts/check-restore-block-guards.mjs"
   ],

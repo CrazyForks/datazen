@@ -6,7 +6,13 @@
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
     "strict": true,
-    "noEmit": false
+    "noEmit": false,
+    "outDir": "./node_modules/.tmp/tsconfig-node",
+    "declarationDir": "./node_modules/.tmp/tsconfig-node",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig-node/tsconfig.node.tsbuildinfo"
   },
-  "include": ["vite.config.ts", "tailwind.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "tailwind.config.ts"
+  ]
 }

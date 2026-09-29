@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { queryCommands } from '../../../commands/query';
 import { usePanelStore } from '../../../stores/panelStore';
 import { paneArgs, paneKey } from '../../../stores/paneKeys';
@@ -82,6 +82,23 @@ export function useQueryExecutionGate({
     target: ResolveExecutionTargetResult;
   } | null>(null);
   const pendingExecuteRef = useRef<PendingExecute | null>(null);
+  // The missing-parameter focus is deferred by one tick so the dialog is mounted
+  // before we reach into it. That deferral is owned here rather than left as a
+  // bare setTimeout: a timer nobody holds fires after the component is gone, and
+  // `document.querySelector` in a torn-down test environment is a ReferenceError
+  // that surfaces as a random suite failure rather than as a real defect. A
+  // second miss also supersedes the first, so scheduling clears whatever is
+  // pending instead of stacking two focus events on the same input.
+  const paramFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (paramFocusTimerRef.current !== null) {
+        clearTimeout(paramFocusTimerRef.current);
+        paramFocusTimerRef.current = null;
+      }
+    },
+    [],
+  );
   const autoCommit = useSettingsStore((s) => s.settings.autoCommit);
   const safeMode = useSettingsStore((s) => s.settings.safeMode);
   const confirmDangerousSetting = useSettingsStore(
@@ -420,7 +437,11 @@ export function useQueryExecutionGate({
           t('query.editor.param.missingValue', { token: firstMissing.label }),
           'error',
         );
-        setTimeout(() => {
+        if (paramFocusTimerRef.current !== null) {
+          clearTimeout(paramFocusTimerRef.current);
+        }
+        paramFocusTimerRef.current = setTimeout(() => {
+          paramFocusTimerRef.current = null;
           const selector = `[data-param-id="${firstMissing.param.stableId}"], [data-param-name="${firstMissing.param.name}"]`;
           const input = document.querySelector(selector) as HTMLInputElement | null;
           input?.focus();

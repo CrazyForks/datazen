@@ -78,7 +78,12 @@ import { readdirSync, existsSync, readFileSync } from 'fs';
 import { dirname, join, posix, relative, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { scanCode } from './lib/scanSourceCode.mjs';
-import { SCAN_EXTENSIONS, SKIP_DIR_NAMES, readScannedIfPresent } from './lib/scanTargets.mjs';
+import {
+  SCAN_EXTENSIONS,
+  SKIP_DIR_NAMES,
+  isSkippedPath,
+  readScannedIfPresent,
+} from './lib/scanTargets.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -369,6 +374,9 @@ function walk(dir, root, out) {
     if (SKIP_DIR_NAMES.has(entry.name)) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
+      // Prune whole subtrees this repository does not own (see
+      // `SKIP_PATH_PREFIXES`) before descending, so none of it is ever read.
+      if (isSkippedPath(toPosix(relative(root, full)))) continue;
       walk(full, root, out);
       continue;
     }

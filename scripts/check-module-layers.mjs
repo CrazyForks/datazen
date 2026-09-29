@@ -41,7 +41,12 @@ import { readFileSync, readdirSync } from 'fs';
 import { resolve, dirname, extname, relative, posix } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { scanCode } from './lib/scanSourceCode.mjs';
-import { SCAN_EXTENSIONS, SKIP_DIR_NAMES, readScannedIfPresent } from './lib/scanTargets.mjs';
+import {
+  SCAN_EXTENSIONS,
+  SKIP_DIR_NAMES,
+  isSkippedPath,
+  readScannedIfPresent,
+} from './lib/scanTargets.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -107,6 +112,8 @@ function collectSourceFiles(dir) {
       if (entry.isDirectory() && SKIP_DIR_NAMES.has(entry.name)) continue;
       const full = resolve(current, entry.name);
       if (entry.isDirectory()) {
+        // Prune subtrees this repository does not own (see `SKIP_PATH_PREFIXES`).
+        if (isSkippedPath(relative(ROOT, full).split(/[\\/]/).join('/'))) continue;
         walk(full);
       } else if (SOURCE_EXTENSIONS.has(extname(entry.name))) {
         const content = readScannedIfPresent(full);
