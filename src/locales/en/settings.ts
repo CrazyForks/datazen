@@ -34,7 +34,7 @@ const pack = {
   'settings.appearance.morePlaceholder':
     'Reserved for future options such as density, font size, and more.',
   'settings.updater.title': 'Updates',
-  'settings.updater.description': 'Check GitHub Releases for signed Basic build updates.',
+  'settings.updater.description': 'Check GitHub Releases for signed updates of this build.',
   'settings.updater.check': 'Check for updates',
   'settings.updater.downloadInstall': 'Download and install',
   'settings.updater.checkOnStartup': 'Check for updates on startup',
@@ -46,6 +46,10 @@ const pack = {
   'settings.updater.installing': 'Installing update…',
   'settings.updater.installed': 'Installed {version} — restarting…',
   'settings.updater.unavailable': 'Auto-update is not available in this build',
+  'settings.updater.manualDescription':
+    'This build has no signed update channel, so it is updated by installing a matching release from GitHub Releases.',
+  'settings.updater.manualVariant': 'Current build: {variant}',
+  'settings.updater.openReleases': 'Open Releases page',
   'settings.language': 'Language',
   'settings.langZh': '简体中文',
   'settings.langEn': 'English',

@@ -10,6 +10,7 @@ import {
   resolveTauriCli,
   REQUIRED_PRO_STAGED_PATHS,
   UPDATER_CONFIG,
+  updaterEndpointsForVariant,
   writeTauriConfigFile,
   writeUpdaterConfigFile,
 } from '../ci-tauri-build.mjs';
@@ -105,6 +106,78 @@ describe('ci-tauri-build typecheck-once override', () => {
       ...UPDATER_CONFIG,
       build: { beforeBuildCommand: 'pnpm build:bundle' },
     });
+  });
+});
+
+describe('ci-tauri-build updater endpoint per SKU', () => {
+  it('leaves Basic on the endpoint compiled into tauri.conf.json', () => {
+    // Already-installed Basic builds have that URL baked in, and Basic is the
+    // default channel, so its build must stay byte-identical.
+    expect(updaterEndpointsForVariant('basic')).toBeNull();
+    expect(updaterEndpointsForVariant(undefined)).toBeNull();
+    expect(updaterEndpointsForVariant('custom')).toBeNull();
+    const file = writeTauriConfigFile({ updater: true, isPro: true, variant: 'basic' });
+    expect(JSON.parse(readFileSync(file, 'utf-8'))).toEqual(UPDATER_CONFIG);
+  });
+
+  it('points each variant at its own manifest', () => {
+    expect(updaterEndpointsForVariant('all')).toEqual([
+      'https://github.com/flyxl/datazen/releases/latest/download/latest-all.json',
+    ]);
+    expect(updaterEndpointsForVariant('akulaku')).toEqual([
+      'https://github.com/flyxl/datazen/releases/latest/download/latest-akulaku.json',
+    ]);
+    // The release matrix spells it `-all`; both must resolve to one channel.
+    expect(updaterEndpointsForVariant('-all')).toEqual(updaterEndpointsForVariant('all'));
+  });
+
+  it('writes an overlay that merges into plugins.updater rather than replacing it', () => {
+    // Tauri merges --config deeply (arrays replace, objects merge), so emitting
+    // only `endpoints` keeps pubkey / windows settings from the base config.
+    const dir = mkdtempSync(join(tmpdir(), 'datazen-ci-tauri-'));
+    const file = writeTauriConfigFile({ updater: true, isPro: false, variant: 'all', dir });
+    expect(JSON.parse(readFileSync(file, 'utf-8'))).toEqual({
+      ...UPDATER_CONFIG,
+      plugins: {
+        updater: {
+          endpoints: ['https://github.com/flyxl/datazen/releases/latest/download/latest-all.json'],
+        },
+      },
+    });
+  });
+
+  it('forces a config file for a variant even without --updater', () => {
+    // The endpoint must never point at another SKU's manifest, whether or not
+    // this particular build is producing updater artifacts.
+    const args = buildTauriArgs({ features: ['driver-redis'], edition: 'pro', variant: 'all' });
+    expect(args).toContain('--config');
+    const config = JSON.parse(readFileSync(args[args.indexOf('--config') + 1], 'utf-8'));
+    expect(config.plugins.updater.endpoints[0]).toContain('latest-all.json');
+
+    // Basic still relies on the base config when nothing else needs an overlay.
+    expect(buildTauriArgs({ features: ['driver-redis'], variant: 'basic' })).toEqual([
+      'build',
+      '-f',
+      'driver-redis',
+    ]);
+  });
+
+  it('keeps an explicit updaterConfigPath override winning over the variant overlay', () => {
+    const args = buildTauriArgs({
+      variant: 'all',
+      updater: true,
+      updaterConfigPath: '/tmp/explicit.json',
+    });
+    expect(args[args.indexOf('--config') + 1]).toBe('/tmp/explicit.json');
+  });
+
+  it('names config files per variant so two SKUs cannot share one overlay', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'datazen-ci-tauri-'));
+    const allFile = writeTauriConfigFile({ isPro: true, variant: 'all', dir });
+    const akulakuFile = writeTauriConfigFile({ isPro: true, variant: 'akulaku', dir });
+    expect(allFile).not.toBe(akulakuFile);
+    expect(allFile).toContain('-all');
+    expect(akulakuFile).toContain('-akulaku');
   });
 });
 

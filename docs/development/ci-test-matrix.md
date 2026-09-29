@@ -122,6 +122,14 @@ cargo test -p datazen-ai-api --lib
 - **Basic**：四平台 × basic 驱动（与 PR CI 同套核心驱动，但做完整 `tauri build`）。
 - **All**：四平台 × 全部 path 驱动（**不进 PR CI** 的集成验证点）。
 - **Akulaku**：三平台（Windows / macOS）× 含 git 私有驱动；Secrets 在 GitHub Environment `release`。
+- **更新通道（每个 SKU 各自独立）**：三个 SKU 都产出签名 updater 产物并各自发布清单
+  `latest.json` / `latest-all.json` / `latest-akulaku.json`；构建时按 `matrix.variant`
+  注入该 SKU 自己的 endpoint（`ci-tauri-build.mjs` 以 JSON Merge Patch 覆盖
+  `plugins.updater.endpoints`）。Tauri updater 只按**平台**在清单里查条目、不认 SKU，
+  因此共用一份清单就等于把变体更新成 Basic（丢掉 Basic 不含的驱动）。SKU 名单、清单名
+  与平台集合的唯一来源是 `scripts/release-variants.mjs`；变体清单缺平台即失败，Basic
+  仅告警。发布前用 `pnpm test:release-variants` 校验矩阵 / `tauri.conf.json` / 清单步骤 /
+  打包模板四方一致（`scripts/check-release-variants.mjs`）。详见 [updater.md](./updater.md)。
 
 ### 6.1 driver union 预热：已撤销（实测）
 

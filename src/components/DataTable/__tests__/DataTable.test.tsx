@@ -237,7 +237,7 @@ describe('DataTable', () => {
       <DataTable
         columns={COLS}
         rows={rows}
-        selectedRows={new Set([0, 1])}
+        selectedRows={new Set([0])}
         onSelectAll={vi.fn()}
         onRowSelect={vi.fn()}
         onAddFilter={vi.fn()}
@@ -305,14 +305,110 @@ describe('DataTable', () => {
     await waitFor(() => expect(showNativeContextMenu).toHaveBeenCalled());
     const menuItems = showNativeContextMenu.mock.calls[0]![0] as ContextMenuTestItem[];
     const more = menuItems.find((i) => i.kind === 'submenu');
-    expect(menuItems.filter((i) => i.kind === 'item').map((i) => i.id)).toEqual(['export']);
+    expect(menuItems.filter((i) => i.kind === 'item').map((i) => i.id)).toEqual([
+      'copy-selected-rows',
+      'export',
+    ]);
     expect(more?.id).toBe('more-actions');
     expect(more?.items?.filter((i) => i.kind === 'item').map((i) => i.id)).toEqual([
-      'copy-selected-rows',
       'copy-as-csv',
+      'copy-as-json',
+      'copy-as-sql-insert',
+      'copy-as-update',
     ]);
-    more?.items?.find((i) => i.id === 'copy-selected-rows')!.action?.();
+    menuItems.find((i) => i.id === 'copy-selected-rows')!.action?.();
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('1\tAlice'));
+  });
+
+  it('targets every selected row when right-clicking inside a multi-row selection', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const onDeleteRows = vi.fn();
+    const onCellEdit = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    const { container } = render(
+      <DataTable
+        columns={COLS}
+        rows={rows}
+        selectedRows={new Set([0, 1])}
+        onSelectAll={vi.fn()}
+        onRowSelect={vi.fn()}
+        onCellEdit={onCellEdit}
+        enableSetNull
+        primaryKeyColumns={['id']}
+        onDeleteRows={onDeleteRows}
+        exportTableName="users"
+      />,
+    );
+    fireEvent.contextMenu(container.querySelector('[data-dt-row="0"][data-dt-col="name"]')!, {
+      clientX: 10,
+      clientY: 10,
+    });
+
+    await waitFor(() => expect(showNativeContextMenu).toHaveBeenCalled());
+    const menuItems = showNativeContextMenu.mock.calls[0]![0] as ContextMenuTestItem[];
+    const rootIds = menuItems.filter((i) => i.kind === 'item').map((i) => i.id);
+    // Single-cell / single-row-only items must not be offered for a multi-selection.
+    expect(rootIds).toEqual(['copy-selected-rows', 'delete-row', 'export']);
+    expect(menuItems.some((i) => i.id === 'copy')).toBe(false);
+    expect(menuItems.some((i) => i.id === 'copy-row')).toBe(false);
+    expect(menuItems.some((i) => i.id === 'set-null')).toBe(false);
+
+    const more = menuItems.find((i) => i.kind === 'submenu');
+    expect(more?.items?.filter((i) => i.kind === 'item').map((i) => i.id)).toEqual([
+      'copy-as-csv',
+      'copy-as-json',
+      'copy-as-sql-insert',
+      'copy-as-update',
+      'copy-column-name',
+      'copy-column-data',
+    ]);
+
+    menuItems.find((i) => i.id === 'copy-selected-rows')!.action?.();
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('1\tAlice\n2\tBob'));
+
+    more?.items?.find((i) => i.id === 'copy-as-sql-insert')!.action?.();
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    const insertSql = writeText.mock.calls.at(-1)![0] as string;
+    expect(insertSql.split('\n')).toEqual([
+      `INSERT INTO "users" ("id", "name") VALUES (1, 'Alice');`,
+      `INSERT INTO "users" ("id", "name") VALUES (2, 'Bob');`,
+    ]);
+
+    more?.items?.find((i) => i.id === 'copy-as-csv')!.action?.();
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('id,name\n1,Alice\n2,Bob'));
+
+    menuItems.find((i) => i.id === 'delete-row')!.action?.();
+    expect(onDeleteRows).toHaveBeenCalledWith([0, 1]);
+    expect(onCellEdit).not.toHaveBeenCalled();
+  });
+
+  it('keeps the single-row cell menu when right-clicking outside a multi-row selection', async () => {
+    Object.assign(navigator, { clipboard: { writeText: vi.fn() } });
+
+    const { container } = render(
+      <DataTable
+        columns={COLS}
+        rows={[
+          [1, 'Alice'],
+          [2, 'Bob'],
+          [3, 'Cara'],
+        ]}
+        selectedRows={new Set([1, 2])}
+        onSelectAll={vi.fn()}
+        onRowSelect={vi.fn()}
+        exportTableName="users"
+      />,
+    );
+    fireEvent.contextMenu(container.querySelector('[data-dt-row="0"][data-dt-col="name"]')!);
+
+    await waitFor(() => expect(showNativeContextMenu).toHaveBeenCalled());
+    const menuItems = showNativeContextMenu.mock.calls[0]![0] as ContextMenuTestItem[];
+    expect(menuItems.filter((i) => i.kind === 'item').map((i) => i.id)).toEqual([
+      'copy',
+      'copy-row',
+      'export',
+    ]);
   });
 
   it('keeps filter unavailable in the context menu while loading', async () => {

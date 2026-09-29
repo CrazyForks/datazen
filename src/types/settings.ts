@@ -52,7 +52,12 @@ export interface AppSettings {
   /** Persistent connection IDs exposed to MCP. Empty = all connections. */
   mcpAllowedConnectionIds: string[];
   contextDir: string;
-  /** Check GitHub for app updates on startup (Basic builds only). Default false. */
+  /**
+   * Check GitHub for app updates on startup. Default false.
+   *
+   * Only honoured by builds whose SKU publishes an updater channel — see
+   * `getUpdateChannel()` in `src/lib/updater.ts`.
+   */
   checkForUpdatesOnStartup: boolean;
   /** Switch to chart view after query when the result is chartable. Default false. */
   autoChartOnQuery: boolean;
