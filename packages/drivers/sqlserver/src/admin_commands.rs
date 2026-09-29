@@ -75,6 +75,9 @@ pub fn sqlserver_admin_command_definitions() -> Vec<DriverCommandDefinition> {
     });
 
     cmds.extend(schema_catalog_command_definitions());
+    // Routines/triggers/sequences/types and view DDL come from the shared
+    // schema-object commands; `driver-api` already ships the T-SQL for them.
+    cmds.extend(schema_object_command_definitions());
     cmds
 }
 

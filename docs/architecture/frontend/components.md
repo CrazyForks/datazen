@@ -99,6 +99,17 @@ const CellRenderer = memo(function CellRenderer({ value, type, isEditing }: Prop
 });
 ```
 
+### 5.3.1 时间值的展示规则
+
+`formatTimestamp` 只对**带时区指示**的文本做归一化；不带时区的 `date` / `time` / `datetime2`
+文本原样展示，绝不经过 `new Date()` + `toISOString()`：
+
+- 数据库返回的是墙上时间。把它当本地时间解析再输出 UTC 字符串，会让每一格整体偏移本地 UTC
+  偏移量（UTC+8 下 `2026-03-01 00:15:30` 显示成 `2026-02-28T16:15:30.000Z`），DATE 列还会被补上
+  `T00:00:00.000Z`。
+- 判据是文本尾部是否存在 `Z` 或 `±HH:MM` 时区指示（`src/lib/formatters.ts::hasZoneDesignator`）；
+  带时区的值仍按原逻辑归一化展示。
+
 ### 5.4 性能关键指标
 
 | 指标 | 目标 | 实现手段 |

@@ -62,6 +62,34 @@ cleanup_query_execution
 
 Host 侧统一用 `ConnectionManager::ensure_active_database`（命令层包装为 `ensure_session_database`）在读取前 pin 会话；漏掉就会从别的库拿到答案（详见 [cache.md](cache.md) §1.8）。彻底解法是给后两个方法补上 database 参数，但那属于 Driver API 契约变更（`PROTOCOL_VERSION` + 所有驱动同步），目前以"调用方 pin + 驱动不静默"为约定。
 
+### 2.2 分页契约（PaginationSyntax）
+
+Host **不拼任何方言分页子句**：每次读取都向驱动要 `pagination_syntax(limit, offset)`。
+
+| 字段 | 含义 |
+| --- | --- |
+| `clause` | 追加在 `ORDER BY` 之后的分页子句 |
+| `requires_order_by` | 该子句是否要求语句已有 `ORDER BY` |
+| `order_by_fallback` | 调用方未指定排序时用于占位的排序表达式 |
+
+- 默认实现输出 `LIMIT {n} OFFSET {m}`；驱动声明 `supports_offset() == false`（`olap`、`superset`）时自动退化为 `LIMIT {n}`。
+- `requires_order_by == true` 时，Host 仅在**调用方没有排序**时补 `order_by_fallback`；用户显式排序优先，不叠加兜底排序。
+- 调用点：`services/query_executor.rs::build_select_sql`、`data_transfer/execute.rs`、`data_sync/keyset.rs`、`commands/sync/keyset_source.rs`。`data_transfer` 仍以 `supports_offset()` 作为翻页循环的终止条件（不能 OFFSET 的引擎不继续翻页），不参与 SQL 拼接。
+- 设置项 `limitSelectResults` 不生成 SQL：它把 `limit` 传给驱动命令，由驱动截断结果集（SQL Server 的做法见 §2.3）。
+
+### 2.3 方言要点：SQL Server
+
+| 主题 | 已实现的行为 |
+| --- | --- |
+| 分页 | 无 `LIMIT`；`OFFSET {o} ROWS FETCH NEXT {l} ROWS ONLY`，`requires_order_by = true`，`order_by_fallback = (SELECT NULL)` |
+| 行数上限 | 命令带入 `limit` 时改写为 `SELECT TOP {n+1}`（多取一行用于判定截断）；语句自带**顶层** `OFFSET` 时不注入 `TOP`——T-SQL 禁止两者同查询（10741），且该语句已由自身 `FETCH NEXT` 界定行数。判定逻辑跳过字符串/注释/标识符并跟踪括号深度，嵌套子查询里的 `OFFSET` 与名为 `offset` 的列都不触发 |
+| 批处理专用语句 | `CREATE`/`ALTER` `SCHEMA`·`VIEW`·`PROCEDURE`·`FUNCTION`·`TRIGGER`、会话级 `SET`（`IDENTITY_INSERT`、`SHOWPLAN_TEXT`）与 `BEGIN TRAN`/`COMMIT`/`ROLLBACK` 必须经 `Client::simple_query` 作为真实 batch 发出；走 `sp_executesql` RPC 会分别报 156 / 544 / 266 |
+| EXPLAIN | `SET SHOWPLAN_TEXT ON` + 语句 + `SET SHOWPLAN_TEXT OFF` 整批执行；经 RPC 传入会**实际执行**被分析的语句 |
+| 时间值 | `date` / `time` / `datetime2` 输出精确文本，`datetimeoffset` 输出带偏移的 RFC3339；不发 Rust Debug 形式（`Date(…)` / `Time { increments: … }`） |
+| 语句切分 | 多语句按引号/注释感知的扫描器切分（`driver-api::sql_split`），不使用裸 `;` |
+| 服务端拒绝的写法 | `FETCH NEXT 0 ROWS ONLY`（10744）、缺少 `ORDER BY` 的 `OFFSET/FETCH`（102）。分页控件对 0 行页给出诊断而不是丢弃子句 |
+| 平台限制 | Azure SQL Database：`BACKUP`/`RESTORE` 40510、`msdb` 跨库名 40515、`CREATE LOGIN` 需 master（5001）、serverless 自动暂停首次登录 40613（需退避重试） |
+
 ## 3. Driver Commands
 
 Driver 可以通过 `command_definitions()` 声明 Command，通过 `execute_command()` 执行。

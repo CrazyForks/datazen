@@ -433,7 +433,21 @@ pub async fn execute_transfer_data(
             }
 
             let sql = if src_driver.supports_offset() {
-                format!("{base_sql} LIMIT {batch} OFFSET {offset}")
+                let pagination = src_driver.pagination_syntax(batch as u64, offset as u64);
+                let mut statement = base_sql.clone();
+                // Dialects whose clause is only legal after `ORDER BY` (T-SQL
+                // `OFFSET … FETCH`) need the driver's neutral ordering here,
+                // because `base_sql` carries no ordering of its own.
+                if pagination.requires_order_by {
+                    if let Some(fallback) = pagination.order_by_fallback {
+                        statement.push_str(&format!(" ORDER BY {fallback}"));
+                    }
+                }
+                if !pagination.clause.is_empty() {
+                    statement.push(' ');
+                    statement.push_str(&pagination.clause);
+                }
+                statement
             } else if offset == 0 {
                 base_sql.clone()
             } else {
