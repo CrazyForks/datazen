@@ -137,6 +137,7 @@ vi.mock('../../../components/StatusBar', () => ({
 }));
 
 import { DataSyncWindow } from '../DataSyncWindow';
+import { clearSyncPairingCache } from '../../../lib/syncPairing';
 
 const pgSrc: ConnectionConfig = {
   id: 'pg-src',
@@ -317,6 +318,9 @@ async function advanceToPreview(targetLabel = 'PG Tgt') {
 
 describe('DataSyncWindow wizard', () => {
   beforeEach(() => {
+    // 端点配对是模块级缓存。不清会让用例继承更早用例的缓存，既掩盖尚未落定的
+    // 异步 effect，也使本文件的通过与否依赖执行顺序。
+    clearSyncPairingCache();
     aiConfiguredRef.value = false;
     urlParamMock.mockReset();
     urlParamMock.mockReturnValue(null);
@@ -1778,9 +1782,18 @@ describe('DataSyncWindow wizard', () => {
     expect(inspectDataSyncMock).not.toHaveBeenCalled();
     expect(compareDataSyncMock).not.toHaveBeenCalled();
 
+    // 「下一步」是否可用还取决于端点配对，而配对由 useSyncPairingState 的异步 effect
+    // 写入（activePairing 初值为 null）。pairingCache 冷启动时每次分类还要多经过一次
+    // await，effect 可能在本用例的同步断言之后才落定，表现为 next 仍是 disabled。
+    // 该用例此前只有在同文件更早的用例预热缓存后才稳定通过，属于顺序依赖。
+    // 先把这段异步落定，之后的断言才能确定地反映「重新确认作用域」这一个变量。
+    await act(async () => {});
+
     fireEvent.click(screen.getByTestId('data-sync-reconfirm-scope'));
     expect(screen.queryByTestId('data-sync-recovery-scope-review')).not.toBeInTheDocument();
-    expect(screen.getByTestId('data-sync-next')).not.toBeDisabled();
+    // Belt-and-braces on the `await act` above: assert the outcome, not the tick,
+    // so this holds regardless of which async settle the button is waiting on.
+    await waitFor(() => expect(screen.getByTestId('data-sync-next')).not.toBeDisabled());
     expect(inspectDataSyncMock).not.toHaveBeenCalled();
     expect(compareDataSyncMock).not.toHaveBeenCalled();
   });
