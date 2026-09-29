@@ -9,5 +9,10 @@
     "esModuleInterop": true,
     "types": ["@wdio/globals/types", "@wdio/mocha-framework"]
   },
-  "include": ["**/*.ts"]
+  // The Pro package's specs import `../../../../../e2e/helpers.js`, so they
+  // belong to this project. They were typechecked by nothing at all before this
+  // entry — `pnpm typecheck` runs the root tsconfig, whose `include` does not
+  // reach `e2e/` — which is how a spec can sit in a suite with a broken import
+  // and still be reported as clean, by never being asked.
+  "include": ["**/*.ts", "../packages/pro-extensions/*/e2e/**/*.ts"]
 }

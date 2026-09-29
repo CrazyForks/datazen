@@ -13,7 +13,6 @@
  * goes through {@link withProbeLock} — an on-disk `mkdir` lock, which is atomic
  * across processes — instead of a per-process mutex that would not help.
  */
-import { execFileSync } from 'child_process';
 import {
   existsSync,
   mkdirSync,
@@ -31,7 +30,6 @@ export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..
 
 /** Lives under `node_modules/` so it can never end up in `git status`. */
 const LOCK_DIR = join(REPO_ROOT, 'node_modules/.cache/dz-boundary-probe.lock');
-const LOCK_OWNER_FILE = join(LOCK_DIR, 'owner.json');
 export const LOCK_TIMEOUT_MS = 60_000;
 /**
  * How long a lock with no readable owner file is given before it is taken over.
@@ -114,18 +112,24 @@ function sleepSync(ms: number) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/** `catch` is `unknown` under this program, so narrow to the errno shape the
+ *  two branches below test instead of casting the unknown. */
+function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
+  return typeof err === 'object' && err !== null && 'code' in err;
+}
+
 /** `process.kill(pid, 0)` reports existence; `EPERM` means alive but unowned. */
-function isProcessAlive(pid: number) {
+function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return /** @type {NodeJS.ErrnoException} */ err.code === 'EPERM';
+    return isErrnoException(err) && err.code === 'EPERM';
   }
 }
 
 /** The pid that created the lock, or `null` if it left no readable owner file. */
-function readLockOwnerPid(lockDir) {
+function readLockOwnerPid(lockDir: string): number | null {
   try {
     const parsed = JSON.parse(readFileSync(join(lockDir, 'owner.json'), 'utf8'));
     return typeof parsed?.pid === 'number' ? parsed.pid : null;
@@ -143,8 +147,8 @@ function readLockOwnerPid(lockDir) {
  * directory is under `node_modules/`, so `git status` never shows it. Recovery
  * therefore has to be the *next* run's job, which is what this decides.
  */
-export function lockIsStale(lockDir, ownerGraceMs = LOCK_OWNER_GRACE_MS) {
-  let age;
+export function lockIsStale(lockDir: string, ownerGraceMs: number = LOCK_OWNER_GRACE_MS): boolean {
+  let age: number;
   try {
     age = Date.now() - statSync(lockDir).mtimeMs;
   } catch {
@@ -167,11 +171,11 @@ export function lockIsStale(lockDir, ownerGraceMs = LOCK_OWNER_GRACE_MS) {
  * Delete probes a previous run left behind, then the empty directories they
  * needed. The lock is held, so anything matching a reserved prefix is debris.
  *
- * @returns {string[]} repo-relative paths removed
+ * @returns repo-relative paths removed
  */
-export function sweepStaleProbes(root = join(REPO_ROOT, PROBE_ROOT)) {
-  const removed = [];
-  const walk = (dir) => {
+export function sweepStaleProbes(root: string = join(REPO_ROOT, PROBE_ROOT)): string[] {
+  const removed: string[] = [];
+  const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -204,11 +208,8 @@ export function sweepStaleProbes(root = join(REPO_ROOT, PROBE_ROOT)) {
  * than waited out, and the probes that run left behind are swept before this
  * run starts.
  *
- * @template T
- * @param {() => T} fn
- * @returns {T}
  */
-export function withProbeLock(fn) {
+export function withProbeLock<T>(fn: () => T): T {
   return withProbeLockAt(LOCK_DIR, join(REPO_ROOT, PROBE_ROOT), fn);
 }
 
@@ -220,21 +221,16 @@ export function withProbeLock(fn) {
  * {@link LOCK_DIR} would break the very mutual exclusion every other guard test
  * depends on.
  *
- * @template T
- * @param {string} lockDir
- * @param {string} probeRoot
- * @param {() => T} fn
  * @param {number} [timeoutMs] how long to wait for a *live* holder before failing
  * @param {number} [ownerGraceMs] how long an ownerless lock is left alone
- * @returns {T}
  */
-export function withProbeLockAt(
-  lockDir,
-  probeRoot,
-  fn,
-  timeoutMs = LOCK_TIMEOUT_MS,
-  ownerGraceMs = LOCK_OWNER_GRACE_MS,
-) {
+export function withProbeLockAt<T>(
+  lockDir: string,
+  probeRoot: string,
+  fn: () => T,
+  timeoutMs: number = LOCK_TIMEOUT_MS,
+  ownerGraceMs: number = LOCK_OWNER_GRACE_MS,
+): T {
   mkdirSync(dirname(lockDir), { recursive: true });
   const deadline = Date.now() + timeoutMs;
   let cleared = 0;
@@ -243,7 +239,7 @@ export function withProbeLockAt(
       mkdirSync(lockDir);
       break;
     } catch (err) {
-      if (/** @type {NodeJS.ErrnoException} */ err.code !== 'EEXIST') throw err;
+      if (!isErrnoException(err) || err.code !== 'EEXIST') throw err;
       if (cleared < MAX_STALE_CLEARANCES && lockIsStale(lockDir, ownerGraceMs)) {
         cleared += 1;
         rmSync(lockDir, { recursive: true, force: true });
@@ -283,7 +279,7 @@ export function withProbeLockAt(
  * reserved prefix is a probe that can outlive the suite and show up in
  * `git status`.
  */
-function assertProbePath(rel) {
+function assertProbePath(rel: string): void {
   const name = rel.slice(rel.lastIndexOf('/') + 1);
   if (PROBE_PREFIXES.some((prefix) => name.startsWith(prefix))) return;
   throw new Error(
@@ -315,13 +311,10 @@ export const PROBE_PATHS = [
  * always removed, including when `run` throws, and an existing file is never
  * overwritten.
  *
- * @template T
  * @param {string} rel repo-relative POSIX path
  * @param {string} contents file body to write
- * @param {() => T} run
- * @returns {T}
  */
-export function withTempSourceFile(rel, contents, run) {
+export function withTempSourceFile<T>(rel: string, contents: string, run: () => T): T {
   return withTempSourceFiles([[rel, contents]], run);
 }
 
@@ -332,15 +325,15 @@ export function withTempSourceFile(rel, contents, run) {
  * directory-skipping behaviour (`dist/`, `node_modules/`, …) without leaving a
  * tree behind or deleting a real one.
  *
- * @template T
  * @param {Array<[string, string]>} entries repo-relative POSIX path → file body
- * @param {() => T} run
- * @returns {T}
  */
-export function withTempSourceFiles(entries, run) {
+export function withTempSourceFiles<T>(
+  entries: ReadonlyArray<readonly [string, string]>,
+  run: () => T,
+): T {
   return withProbeLock(() => {
-    const createdDirs = [];
-    const createdFiles = [];
+    const createdDirs: string[] = [];
+    const createdFiles: string[] = [];
     for (const [rel, contents] of entries) {
       assertProbePath(rel);
       const full = join(REPO_ROOT, rel);
@@ -349,7 +342,7 @@ export function withTempSourceFiles(entries, run) {
         throw new Error(`withTempSourceFiles refused to overwrite a tracked file: ${rel}`);
       }
       let dir = dirname(full);
-      const missing = [];
+      const missing: string[] = [];
       while (!existsSync(dir)) {
         missing.push(dir);
         const parent = dirname(dir);

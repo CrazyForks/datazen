@@ -7,7 +7,7 @@
  * flag is the hook's — so the marker is now also request-bound, and the two
  * are combined into `copiedRowId` for rendering.
  */
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   advanceBy,
@@ -26,8 +26,12 @@ vi.mock('../../../hooks/useI18n', () => ({
 
 vi.mock('../../../commands/query', () => ({
   queryCommands: {
+    getQueryHistoryPage: vi.fn(),
     getQueryHistory: vi.fn(),
     clearQueryHistory: vi.fn(),
+    deleteQueryHistoryEntry: vi.fn(),
+    addFavoriteQuery: vi.fn(),
+    saveSqlFile: vi.fn(),
   },
 }));
 
@@ -57,9 +61,9 @@ const entries: QueryHistoryEntry[] = [
   },
 ];
 
-/** The row's copy button is located through its title; the label is hard-coded. */
+/** The row's copy button, bound through its data attribute rather than a label. */
 function rowCopyButtons(): HTMLElement[] {
-  return screen.getAllByTitle('复制 SQL');
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-history-action="copy"]'));
 }
 
 function confirmed(button: HTMLElement): boolean {
@@ -68,7 +72,10 @@ function confirmed(button: HTMLElement): boolean {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.mocked(queryCommands.getQueryHistory).mockResolvedValue(entries);
+  vi.mocked(queryCommands.getQueryHistoryPage).mockResolvedValue({
+    entries,
+    total: entries.length,
+  });
   useConnectionStore.setState({ connections: [] } as never);
 });
 

@@ -6,7 +6,10 @@ import { undo } from '@codemirror/commands';
 import { extensionRegistry, sqlEditorEnhancedEP } from '@datazen/extension-points';
 import { SqlEditor } from '../SqlEditor';
 import { useSettingsStore } from '../../stores/settingsStore';
-import type { LinterCompartmentOptions } from '../sql-editor/editorExtensions';
+import type {
+  IntentionCompartmentOptions,
+  LinterCompartmentOptions,
+} from '../sql-editor/editorExtensions';
 
 const actionsEnabled = Facet.define<boolean, boolean>({ combine: (values) => values[0] ?? false });
 const diagnosticsEnabled = Facet.define<boolean, boolean>({
@@ -30,7 +33,7 @@ describe('Intention Actions settings journey', () => {
         diagnosticsEnabled.of(true),
         actionsEnabled.of(opts.intentionActions === true),
       ]);
-      const createIntentionExtensions = vi.fn(() => []);
+      const createIntentionExtensions = vi.fn((_opts: IntentionCompartmentOptions) => []);
       const unregister = extensionRegistry.register(sqlEditorEnhancedEP, {
         createLinterExtensions,
         createIntentionExtensions,
@@ -43,7 +46,7 @@ describe('Intention Actions settings journey', () => {
         if (!view) throw new Error('Missing editor view');
         expect(view.state.facet(actionsEnabled)).toBe(false);
         expect(view.state.facet(diagnosticsEnabled)).toBe(true);
-        const initialIntentionsCalls = createIntentionExtensions.mock.calls.length;
+        const initialIntentionOpts = createIntentionExtensions.mock.calls.at(-1)?.[0];
         act(() => {
           view.dispatch({ changes: { from: 7, insert: '*' }, selection: { anchor: 8 } });
         });
@@ -63,7 +66,14 @@ describe('Intention Actions settings journey', () => {
           expect(view.state.doc.toString()).toBe('SELECT *');
           expect(view.state.selection.main.head).toBe(8);
           // Toggling only lightbulbs must not disturb INSERT hints or Alt+Enter.
-          expect(createIntentionExtensions).toHaveBeenCalledTimes(initialIntentionsCalls);
+          // The factory is allowed to re-run — since the generic settings path
+          // every compartment is keyed on the whole bag — so assert the
+          // behaviour it is given, not how often it was called.
+          const latestIntentionOpts = createIntentionExtensions.mock.calls.at(-1)?.[0];
+          expect(latestIntentionOpts?.insertValueHints).toBe(
+            initialIntentionOpts?.insertValueHints,
+          );
+          expect(latestIntentionOpts?.databaseType).toBe(initialIntentionOpts?.databaseType);
         }
         expect(createLinterExtensions.mock.calls.map(([opts]) => opts.intentionActions)).toEqual([
           false,

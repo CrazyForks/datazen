@@ -59,13 +59,17 @@ const driverKeysOf = (locale: string): string[] =>
 /**
  * Registered `mongo.*` keys as an order-independent set.
  *
- * The host ships its own `mongo.*` keys in `src/locales/<loc>/connection.ts`,
- * and it registers before this pack. `registerTranslations()` merges with
- * `Object.assign`, so on a key collision the *host* fixes the insertion slot
- * while *this pack* supplies the final value. Registration order is therefore a
- * merge artifact, not a contract — only the key set is. (The redis sibling
- * suite sidesteps this by comparing lengths; comparing sets keeps the stronger
- * "exactly these keys" guarantee without pinning an incidental order.)
+ * `mongo.*` is driver-owned: the host used to ship a colliding `mongo.*` set in
+ * `src/locales/<loc>/connection.ts`, and because `registerTranslations()` merges
+ * with `Object.assign` the pack (registering second) silently overwrote 9 of
+ * the 15 host values. The host strings now live under `docView.*`, so this pack
+ * is the only definer of `mongo.*` and "exactly these keys" is now a real
+ * equality rather than a set-union coincidence.
+ *
+ * That invariant is NOT enforced from this suite — a re-added host `mongo.*`
+ * key would leave every assertion below green. It is enforced by
+ * `scripts/i18n-key-collision-check.mjs` (host × any driver key overlap), which
+ * names the offending key.
  */
 const driverKeySetOf = (locale: string): string[] => driverKeysOf(locale).sort();
 

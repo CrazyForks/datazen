@@ -4,6 +4,14 @@ import type { DatabaseType } from '../extensions/generated';
 
 import type { HttpProxyTunnelConfig, TunnelKind, WebSocketTunnelConfig } from './tunnel';
 
+/**
+ * Connection-facing types.
+ *
+ * NOTE: most of this module is declared again, identically, in `./index` — and
+ * the app imports the `./index` copies. `FavoriteQuery` had a second copy here
+ * until the §2.6 file-first branch, which is what this note records: keep new
+ * fields in `./index` only, or the two shapes drift apart silently.
+ */
 export type {
   TunnelKind,
   HttpProxyTunnelConfig,
@@ -216,14 +224,6 @@ export interface QueryHistoryEntry {
   rowsAffected?: number;
   success: boolean;
   errorMessage?: string;
-}
-
-export interface FavoriteQuery {
-  id: string;
-  connectionId: string;
-  title: string;
-  sql: string;
-  createdAt: string;
 }
 
 export interface ContextEntry {

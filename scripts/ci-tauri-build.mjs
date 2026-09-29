@@ -18,8 +18,9 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { createRequire } from 'module';
 import { tmpdir } from 'os';
-import { resolve, dirname, join } from 'path';
+import { resolve, dirname, join, basename } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { stagingMarkerPath } from './pack-ep.mjs';
 import { DEFAULT_REPO, manifestUrlForVariant, normalizeVariant } from './release-variants.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,11 +51,7 @@ export const TYPECHECK_ONCE_ENV = 'DATAZEN_CI_TYPECHECK_ONCE';
 export const FAST_FRONTEND_BUILD_COMMAND = 'pnpm build:bundle';
 
 /** Relative paths that must exist under the staged Pro extension tree. */
-export const REQUIRED_PRO_STAGED_PATHS = [
-  'manifest.json',
-  'dist/index.esm.js',
-  'signature.sig',
-];
+export const REQUIRED_PRO_STAGED_PATHS = ['manifest.json', 'dist/index.esm.js', 'signature.sig'];
 
 export function builtinEpStagingDir(root = ROOT) {
   return join(root, 'src-tauri', 'resources', 'builtin-ep', 'sql-editor-pro');
@@ -65,16 +62,27 @@ export function builtinEpStagingDir(root = ROOT) {
  * exists *before* the ~10 min Tauri build starts. Returns the list of missing
  * relative paths (empty = ready). Emits a `::notice::` line per missing file
  * so failures are visible in check-run annotations without admin log access.
+ *
+ * Presence of the three required files is not sufficient on its own: a pack
+ * that failed before its final staging step leaves all three in place, holding
+ * the *previous* build's bytes and signature. The sibling `.incomplete` marker
+ * is what distinguishes that from a tree this build produced, so a marked tree
+ * is reported as not ready rather than shipped.
  */
 export function checkProStagingReady({ root = ROOT, log = console.log } = {}) {
   const staging = builtinEpStagingDir(root);
-  const missing = REQUIRED_PRO_STAGED_PATHS.filter(
-    (rel) => !existsSync(join(staging, rel)),
-  );
-  if (missing.length > 0) {
+  const missing = REQUIRED_PRO_STAGED_PATHS.filter((rel) => !existsSync(join(staging, rel)));
+  const marker = stagingMarkerPath(staging);
+  if (existsSync(marker)) {
+    missing.push(basename(marker));
     log(
-      `::notice::[pro-staging] missing staged files under ${staging}: ${missing.join(', ')}`,
+      `::error::[pro-staging] ${marker} exists — the last pack-ep run over ` +
+        `${staging} failed, so the tree there is stale and must not be shipped. ` +
+        `Re-run 'node scripts/resolve-pro.mjs --edition=pro'.`,
     );
+  }
+  if (missing.length > 0) {
+    log(`::notice::[pro-staging] missing staged files under ${staging}: ${missing.join(', ')}`);
   } else {
     log(`[pro-staging] staged tree ready at ${staging}`);
   }
@@ -134,6 +142,18 @@ export function updaterEndpointsForVariant(variant, repo = DEFAULT_REPO) {
   return url ? [url] : null;
 }
 
+/**
+ * Write the Tauri `--config` override that carries the updater block and the
+ * injected build hook. `dir` is an override so tests do not share a temp path.
+ *
+ * @param {{
+ *   updater?: boolean,
+ *   isPro?: boolean,
+ *   beforeBuildCommand?: string | null,
+ *   variant?: string | null,
+ *   dir?: string,
+ * }} [opts]
+ */
 export function writeTauriConfigFile({
   updater = false,
   isPro = false,
@@ -167,6 +187,19 @@ export function writeTauriConfigFile({
   return file;
 }
 
+/**
+ * @param {{
+ *   target?: string | null,
+ *   updater?: boolean,
+ *   edition?: string,
+ *   features?: string[],
+ *   configPath?: string | null,
+ *   updaterConfigPath?: string | null,
+ *   beforeBuildCommand?: string | null,
+ *   variant?: string | null,
+ *   extraArgs?: string[],
+ * }} [opts]
+ */
 export function buildTauriArgs({
   target = null,
   updater = false,

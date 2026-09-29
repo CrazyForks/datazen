@@ -215,12 +215,14 @@ describe('SQL Editor AI 错误诊断 (SE-AI-ERR)', () => {
       return textarea?.value || '';
     });
 
-    // Draft should mention database type
+    // The case is "the draft should mention the database type", so the draft
+    // must actually mention it. `expect(typeof hasDbType).toBe('boolean')` held
+    // for `false` too, so the whole diagnosis contract was unverified.
     const hasDbType =
       chatInput.includes('postgresql') ||
       chatInput.includes('PostgreSQL') ||
       chatInput.includes('Database type');
-    expect(typeof hasDbType).toBe('boolean');
+    expect(hasDbType).toBe(true);
   });
 
   it('SE-AI-ERR-022: Draft 应包含错误的 SQL', async () => {
@@ -253,7 +255,8 @@ describe('SQL Editor AI 错误诊断 (SE-AI-ERR)', () => {
       chatInput.includes('error_test_draft_sql') ||
       chatInput.includes('SQL') ||
       chatInput.includes('```sql');
-    expect(typeof hasSql).toBe('boolean');
+    // As above: the draft is required to carry the SQL.
+    expect(hasSql).toBe(true);
   });
 
   it('SE-AI-ERR-023: Draft 应包含错误消息', async () => {
@@ -286,7 +289,8 @@ describe('SQL Editor AI 错误诊断 (SE-AI-ERR)', () => {
       chatInput.includes('error_test_draft_error') ||
       chatInput.includes('Error') ||
       chatInput.includes('error');
-    expect(typeof hasError).toBe('boolean');
+    // As above: the draft is required to carry the error.
+    expect(hasError).toBe(true);
   });
 
   // ── 无敏感数据泄露 ─────────────────────────────────────────────

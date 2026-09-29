@@ -122,8 +122,11 @@ function PathHierarchyQueryContextSelectors({
     if (level === null) return;
     pendingFocusLevelRef.current = null;
     requestAnimationFrame(() => {
+      // The searchable Select forwards its `data-*` attributes to the combobox
+      // input itself, so the locator addresses the focusable element directly
+      // instead of a wrapper that has to be searched through.
       const input = document.querySelector(
-        `[data-query-context-level="${level}"] input`,
+        `[data-query-context-level="${level}"]`,
       ) as HTMLInputElement | null;
       input?.focus();
     });

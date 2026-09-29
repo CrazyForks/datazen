@@ -15,11 +15,23 @@ import {
   runBoundQuery,
 } from './queryExecActions';
 import { panelTargetDatabase, panelTargetSchema } from './panelQueryContext';
+import { cancelAndCleanupExec, cancelAndCleanupPaneExec } from './panelExecCleanup';
+import { DEFAULT_PANE_ID, paneKey } from './paneKeys';
 import { resolveNextActive, resetPanelIdCounter, type Panel } from './panelTypes';
 import { createPanelCloseNotifier } from './panelCloseNotifier';
 
 export type { QueryExecState, BindParams };
 export { EMPTY_QUERY_EXEC, emptyQueryExecState } from './queryExecActions';
+export {
+  DEFAULT_PANE_ID,
+  isPaneKeyOfPanel,
+  paneArgs,
+  paneIdOfPaneKey,
+  paneKey,
+  paneKeysOfPanel,
+  panelIdOfPaneKey,
+  resolveFocusedPaneId,
+} from './paneKeys';
 export type {
   SubTabId,
   TablePanel,
@@ -41,27 +53,6 @@ export type {
 } from './panelTypes';
 export { nextPanelId } from './panelTypes';
 
-// ── Helper: cancel running queries and clean up queryExec entries ──
-
-function cancelAndCleanupExec(
-  panelsToRemove: Panel[],
-  currentExec: Map<string, QueryExecState>,
-): Map<string, QueryExecState> {
-  const nextExec = new Map(currentExec);
-  for (const panel of panelsToRemove) {
-    if (panel.type === 'query') {
-      const exec = nextExec.get(panel.id);
-      const capabilities =
-        useActiveConnectionStore.getState().connections[panel.connectionId]?.capabilities;
-      if (exec?.running && exec.executionId && getCancelCapability(capabilities) === 'supported') {
-        queryCommands.cancelQuery(panel.dbSessionId, exec.executionId).catch(() => {});
-      }
-      nextExec.delete(panel.id);
-    }
-  }
-  return nextExec;
-}
-
 // ── Store interface ──────────────────────────────────────────────
 
 export interface PendingHistoryQuery {
@@ -74,9 +65,41 @@ export interface PendingHistoryQuery {
 interface PanelState {
   panels: Panel[];
   activePanelId: string | null;
+  /**
+   * Query execution state, keyed by **pane** rather than by panel: one panel
+   * may own several independent editors once it is split. Use `paneKey()` to
+   * build the key — a panel's default pane is keyed by the bare panel id, so
+   * every single-pane caller is unaffected.
+   */
   queryExec: Map<string, QueryExecState>;
+  /**
+   * Source of truth: which pane editor actions (execute / format / save …)
+   * route to, **per tab**. A tab sitting on its default pane has no entry; the
+   * presence of a key means "this tab is split and its focus is on that pane".
+   *
+   * Focus has to be per tab because a pane belongs to a *panel*: with one global
+   * value, splitting tab A handed tab B a pane id B never opened, so B's editor
+   * resolved to an `addPanel`-unseeded key and its SQL and results became
+   * unreachable. See `paneFocusScope` regression tests.
+   */
+  focusedPaneIdByPanel: Record<string, string>;
+  /**
+   * Mirror of `focusedPaneIdByPanel[activePanelId]` — the focused pane of the
+   * tab on screen, or `null` when that tab is not split. This is the value the
+   * view layer hands down; the map above answers per-tab questions.
+   *
+   * It is written **only** by `syncPaneFocus`, which every focus/activation
+   * action goes through, so it cannot drift from the map. That single-writer
+   * rule is what `panelStore.panes.test.ts` pins.
+   */
+  focusedPaneId: string | null;
   queryHistory: QueryHistoryEntry[];
   queryFavorites: FavoriteQuery[];
+  /**
+   * Resolved favorites directory. Null until the first load, and null again if
+   * the lookup failed — the panel then shows no path rather than a wrong one.
+   */
+  favoritesRoot: string | null;
   historyVisible: boolean;
   favoritesVisible: boolean;
   /** Connection id waiting for query-history to open once ContentView mounts. */
@@ -86,7 +109,11 @@ interface PanelState {
 }
 
 interface PanelActions {
-  addPanel: (panel: Panel, activate?: boolean) => void;
+  /**
+   * Open `panel` as a tab. `paneId` names the pane it opens into; the default
+   * pane is the panel's own (pre-split) editor.
+   */
+  addPanel: (panel: Panel, activate?: boolean, paneId?: string) => void;
   removePanel: (panelId: string) => void;
   removeAllForConnection: (connectionId: string) => void;
   /**
@@ -114,22 +141,43 @@ interface PanelActions {
   closePanelsToTheRight: (panelId: string) => void;
   closePanelsToTheLeft: (panelId: string) => void;
 
-  updateSql: (panelId: string, sql: string) => void;
-  executeQuery: (panelId: string, params?: BindParams) => Promise<void>;
-  executeSelection: (panelId: string, sql: string, params?: BindParams) => Promise<void>;
-  cancelQuery: (panelId: string) => Promise<void>;
-  setActiveResult: (panelId: string, idx: number) => void;
-  togglePinResult: (panelId: string, idx: number) => void;
-  setResultDetailRow: (panelId: string, index: number | null) => void;
+  /**
+   * Route editor actions of `panelId` (the active tab by default) to `paneId`;
+   * `null` restores that tab's default pane.
+   */
+  setFocusedPane: (paneId: string | null, panelId?: string) => void;
+  /** Add a second pane to an existing query tab and focus it (Split Pane seam). */
+  openPane: (panelId: string, paneId: string) => void;
+  /** Close one pane of a query tab, cancelling its run and dropping its state. */
+  closePane: (panelId: string, paneId: string) => void;
+
+  /**
+   * Every exec action below takes an optional trailing `paneId`. Omitting it
+   * targets the panel's default pane, so callers that do not care about panes
+   * (and pre-split callers) keep their exact previous meaning.
+   */
+  updateSql: (panelId: string, sql: string, paneId?: string) => void;
+  executeQuery: (panelId: string, params?: BindParams, paneId?: string) => Promise<void>;
+  executeSelection: (
+    panelId: string,
+    sql: string,
+    params?: BindParams,
+    paneId?: string,
+  ) => Promise<void>;
+  cancelQuery: (panelId: string, paneId?: string) => Promise<void>;
+  setActiveResult: (panelId: string, idx: number, paneId?: string) => void;
+  togglePinResult: (panelId: string, idx: number, paneId?: string) => void;
+  setResultDetailRow: (panelId: string, index: number | null, paneId?: string) => void;
   updateResultCell: (
     panelId: string,
     resultIdx: number,
     row: number,
     col: string,
     value: unknown,
+    paneId?: string,
   ) => void;
-  setChartConfig: (panelId: string, config: ChartConfig) => void;
-  setResultViewMode: (panelId: string, mode: 'table' | 'chart') => void;
+  setChartConfig: (panelId: string, config: ChartConfig, paneId?: string) => void;
+  setResultViewMode: (panelId: string, mode: 'table' | 'chart', paneId?: string) => void;
 
   loadHistory: (connectionId?: string) => Promise<void>;
   openQueryHistory: (connectionId?: string) => Promise<void>;
@@ -137,6 +185,13 @@ interface PanelActions {
   setPendingHistoryQuery: (query: PendingHistoryQuery | null) => void;
   toggleHistory: () => void;
   loadFavorites: (connectionId?: string) => Promise<void>;
+  /**
+   * Re-scan the favorites directory. Use this — not `loadFavorites` — whenever
+   * the user is about to look at the panel or has just returned to the window:
+   * the backend caches the listing, so a `.sql` file a sync client wrote while
+   * the app was running is invisible until the cache is dropped.
+   */
+  refreshFavorites: (connectionId?: string) => Promise<void>;
   addFavorite: (title: string, sql: string, connectionId: string) => Promise<void>;
   deleteFavorite: (id: string) => Promise<void>;
   toggleFavorites: () => void;
@@ -144,12 +199,50 @@ interface PanelActions {
   reset: () => void;
 }
 
+/** The two focus fields an action has to write, plus the new activation. */
+type PaneFocusPatch = Pick<PanelState, 'focusedPaneIdByPanel' | 'focusedPaneId' | 'activePanelId'>;
+
+/**
+ * The one writer of pane focus.
+ *
+ * It drops entries whose tab is gone (a pane cannot outlive its panel), applies
+ * `paneId` to `panelId` when given, and re-derives the `focusedPaneId` mirror
+ * from whichever tab ends up active. Routing the mirror through the map — rather
+ * than letting each action assign it — is what keeps a tab from inheriting
+ * another tab's pane id, and what keeps closing a pane in one tab from stealing
+ * the focus of another.
+ *
+ * `paneId` of `null` / `undefined` means "this tab's default pane": the entry is
+ * removed rather than stored, so an unsplit tab is simply absent from the map.
+ */
+function syncPaneFocus(
+  prev: Pick<PanelState, 'focusedPaneIdByPanel'>,
+  panels: Panel[],
+  activePanelId: string | null,
+  focus?: { panelId: string; paneId: string | null },
+): PaneFocusPatch {
+  const live = new Set(panels.map((p) => p.id));
+  const next: Record<string, string> = {};
+  for (const [panelId, paneId] of Object.entries(prev.focusedPaneIdByPanel)) {
+    if (live.has(panelId) && panelId !== focus?.panelId) next[panelId] = paneId;
+  }
+  if (focus?.paneId) next[focus.panelId] = focus.paneId;
+  return {
+    focusedPaneIdByPanel: next,
+    focusedPaneId: activePanelId ? (next[activePanelId] ?? null) : null,
+    activePanelId,
+  };
+}
+
 export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
   panels: [],
   activePanelId: null,
   queryExec: new Map(),
+  focusedPaneIdByPanel: {},
+  focusedPaneId: null,
   queryHistory: [],
   queryFavorites: [],
+  favoritesRoot: null,
   historyVisible: false,
   favoritesVisible: false,
   pendingQueryHistoryConnectionId: null,
@@ -157,15 +250,17 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
 
   // ── Panel CRUD ──────────────────────────────────────────────
 
-  addPanel: (panel, activate = true) => {
+  addPanel: (panel, activate = true, paneId = DEFAULT_PANE_ID) => {
     const needsExec = panel.type === 'query';
     const nextExec = needsExec
-      ? new Map(get().queryExec).set(panel.id, emptyQueryExecState())
+      ? new Map(get().queryExec).set(paneKey(panel.id, paneId), emptyQueryExecState())
       : get().queryExec;
     set((s) => ({
       panels: [...s.panels, panel],
-      activePanelId: activate ? panel.id : s.activePanelId,
       queryExec: nextExec,
+      // A freshly opened tab starts on its own default pane, so activating it
+      // must not inherit the pane id the previously active tab had focused.
+      ...syncPaneFocus(s, [...s.panels, panel], activate ? panel.id : s.activePanelId),
     }));
   },
 
@@ -174,11 +269,12 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const panel = panels.find((p) => p.id === panelId);
     const nextExec = panel ? cancelAndCleanupExec([panel], queryExec) : queryExec;
     const nextActive = resolveNextActive(panels, panelId, activePanelId);
-    set({
-      panels: panels.filter((p) => p.id !== panelId),
-      activePanelId: nextActive,
+    const nextPanels = panels.filter((p) => p.id !== panelId);
+    set((s) => ({
+      panels: nextPanels,
       queryExec: nextExec,
-    });
+      ...syncPaneFocus(s, nextPanels, nextActive),
+    }));
   },
 
   removeAllForConnection: (connectionId) => {
@@ -187,11 +283,12 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const remaining = panels.filter((p) => p.connectionId !== connectionId);
     const nextExec = cancelAndCleanupExec(toRemove, queryExec);
     const activeStillExists = remaining.some((p) => p.id === activePanelId);
-    set({
+    const nextActive = activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null);
+    set((s) => ({
       panels: remaining,
-      activePanelId: activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null),
       queryExec: nextExec,
-    });
+      ...syncPaneFocus(s, remaining, nextActive),
+    }));
   },
 
   removePanelsForRelation: (connectionId, tableName, database) => {
@@ -215,11 +312,15 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const remaining = panels.filter((p) => !toRemove.some((r) => r.id === p.id));
     const nextExec = cancelAndCleanupExec(toRemove, queryExec);
     const activeStillExists = remaining.some((p) => p.id === activePanelId);
-    set({
+    set((s) => ({
       panels: remaining,
-      activePanelId: activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null),
       queryExec: nextExec,
-    });
+      ...syncPaneFocus(
+        s,
+        remaining,
+        activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null),
+      ),
+    }));
   },
 
   removePanelsForDatabase: (connectionId, database, sessionDatabase) => {
@@ -254,15 +355,21 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const remaining = panels.filter((p) => !toRemove.some((r) => r.id === p.id));
     const nextExec = cancelAndCleanupExec(toRemove, queryExec);
     const activeStillExists = remaining.some((p) => p.id === activePanelId);
-    set({
+    set((s) => ({
       panels: remaining,
-      activePanelId: activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null),
       queryExec: nextExec,
-    });
+      ...syncPaneFocus(
+        s,
+        remaining,
+        activeStillExists ? activePanelId : (remaining.at(-1)?.id ?? null),
+      ),
+    }));
   },
 
   setActivePanel: (panelId) => {
-    set({ activePanelId: panelId ?? null });
+    // Switching tabs hands the screen that tab's own focus — never the one the
+    // tab being left had.
+    set((s) => syncPaneFocus(s, s.panels, panelId ?? null));
   },
 
   updatePanel: (panelId, patch) => {
@@ -275,17 +382,18 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     const { panels, queryExec } = get();
     const toRemove = panels.filter((p) => p.id !== panelId);
     const nextExec = cancelAndCleanupExec(toRemove, queryExec);
-    set({
-      panels: panels.filter((p) => p.id === panelId),
-      activePanelId: panelId,
+    const kept = panels.filter((p) => p.id === panelId);
+    set((s) => ({
+      panels: kept,
       queryExec: nextExec,
-    });
+      ...syncPaneFocus(s, kept, panelId),
+    }));
   },
 
   closeAllPanels: () => {
     const { panels, queryExec } = get();
     const nextExec = cancelAndCleanupExec(panels, queryExec);
-    set({ panels: [], activePanelId: null, queryExec: nextExec });
+    set((s) => ({ panels: [], queryExec: nextExec, ...syncPaneFocus(s, [], null) }));
   },
 
   closePanelsToTheRight: (panelId) => {
@@ -298,8 +406,8 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       const activeStillExists = kept.some((p) => p.id === s.activePanelId);
       return {
         panels: kept,
-        activePanelId: activeStillExists ? s.activePanelId : panelId,
         queryExec: nextExec,
+        ...syncPaneFocus(s, kept, activeStillExists ? s.activePanelId : panelId),
       };
     });
   },
@@ -314,23 +422,70 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       const activeStillExists = kept.some((p) => p.id === s.activePanelId);
       return {
         panels: kept,
-        activePanelId: activeStillExists ? s.activePanelId : panelId,
         queryExec: nextExec,
+        ...syncPaneFocus(s, kept, activeStillExists ? s.activePanelId : panelId),
+      };
+    });
+  },
+
+  // ── Panes ─────────────────────────────────────────────────────
+
+  setFocusedPane: (paneId, panelId) => {
+    const s = get();
+    // Without a tab there is nothing to focus; the default is the tab on screen.
+    const target = panelId ?? s.activePanelId;
+    if (!target) return;
+    set((cur) => syncPaneFocus(cur, cur.panels, cur.activePanelId, { panelId: target, paneId }));
+  },
+
+  openPane: (panelId, paneId) => {
+    const panel = get().panels.find((p) => p.id === panelId);
+    if (!panel || panel.type !== 'query' || !paneId) return;
+    const key = paneKey(panelId, paneId);
+    set((s) => {
+      // Splitting a tab focuses the pane it just opened, and a tab you split is
+      // the tab you are working in, so it becomes the active one.
+      const focus = syncPaneFocus(s, s.panels, panelId, { panelId, paneId });
+      if (s.queryExec.has(key)) return focus;
+      return { queryExec: new Map(s.queryExec).set(key, emptyQueryExecState()), ...focus };
+    });
+  },
+
+  closePane: (panelId, paneId) => {
+    const panel = get().panels.find((p) => p.id === panelId);
+    if (!panel || panel.type !== 'query') return;
+    const nextExec = cancelAndCleanupPaneExec(panel, paneId, get().queryExec);
+    set((s) => {
+      // A closed pane cannot stay focused, but only *its own* tab loses focus:
+      // the mirror is re-derived from the active tab, so closing a pane in a
+      // background tab leaves the focus on screen untouched.
+      const clearsFocus = s.focusedPaneIdByPanel[panelId] === paneId;
+      return {
+        queryExec: nextExec,
+        ...syncPaneFocus(
+          s,
+          s.panels,
+          s.activePanelId,
+          clearsFocus ? { panelId, paneId: null } : undefined,
+        ),
       };
     });
   },
 
   // ── Query execution ────────────────────────────────────────────
 
-  updateSql: (panelId, sql) => {
-    set((s) => ({ queryExec: patchExec(s.queryExec, panelId, { sql }) }));
+  updateSql: (panelId, sql, paneId) => {
+    set((s) => ({ queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), { sql }) }));
   },
 
-  executeQuery: async (panelId, params) => {
+  executeQuery: async (panelId, params, paneId) => {
     const { panels, queryExec } = get();
     const panel = panels.find((p) => p.id === panelId);
     if (!panel || panel.type !== 'query') return;
-    const exec = queryExec.get(panelId);
+    // Resolved once: the whole run (including every async stream callback)
+    // targets this pane, even if focus moves while the query is in flight.
+    const key = paneKey(panelId, paneId);
+    const exec = queryExec.get(key);
     if (!exec) return;
     const sql = exec.sql.trim();
     if (!sql) return;
@@ -340,7 +495,7 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
 
     if (params && Object.keys(params).length > 0) {
       await runBoundQuery(
-        panelId,
+        key,
         panel.dbSessionId,
         sql,
         params,
@@ -351,7 +506,7 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       );
     } else {
       await runStreamingQuery(
-        panelId,
+        key,
         panel.dbSessionId,
         sql,
         getExec,
@@ -363,17 +518,18 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     await get().loadHistory(panel.connectionId);
   },
 
-  executeSelection: async (panelId, sql, params) => {
+  executeSelection: async (panelId, sql, params, paneId) => {
     const { panels } = get();
     const panel = panels.find((p) => p.id === panelId);
     if (!panel || panel.type !== 'query') return;
+    const key = paneKey(panelId, paneId);
 
     const getExec = () => get().queryExec;
     const setExec = (next: Map<string, QueryExecState>) => set({ queryExec: next });
 
     if (params && Object.keys(params).length > 0) {
       await runBoundQuery(
-        panelId,
+        key,
         panel.dbSessionId,
         sql,
         params,
@@ -384,7 +540,7 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       );
     } else {
       await runStreamingQuery(
-        panelId,
+        key,
         panel.dbSessionId,
         sql,
         getExec,
@@ -396,12 +552,13 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     await get().loadHistory(panel.connectionId);
   },
 
-  cancelQuery: async (panelId) => {
+  cancelQuery: async (panelId, paneId) => {
     const { panels, queryExec } = get();
     const panel = panels.find((p) => p.id === panelId);
     if (!panel) return;
 
-    const exec = queryExec.get(panelId);
+    const key = paneKey(panelId, paneId);
+    const exec = queryExec.get(key);
     if (!exec?.running || exec.cancelState === 'requested' || !exec.executionId) return;
 
     const capabilities =
@@ -409,12 +566,12 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     if (getCancelCapability(capabilities) !== 'supported') return;
 
     set((s) => {
-      const current = s.queryExec.get(panelId);
+      const current = s.queryExec.get(key);
       if (!current) return s;
       return {
         queryExec: patchExec(
           s.queryExec,
-          panelId,
+          key,
           reduceQueryExecutionState(current, { type: 'cancel_requested' }),
         ),
       };
@@ -424,12 +581,12 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       await queryCommands.cancelQuery(panel.dbSessionId, exec.executionId);
     } catch {
       set((s) => {
-        const current = s.queryExec.get(panelId);
+        const current = s.queryExec.get(key);
         if (!current) return s;
         return {
           queryExec: patchExec(
             s.queryExec,
-            panelId,
+            key,
             reduceQueryExecutionState(current, {
               type: 'cancel_failed',
               error: t('query.cancelFailed'),
@@ -440,23 +597,31 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     }
   },
 
-  setActiveResult: (panelId, idx) => {
-    set((s) => ({ queryExec: patchExec(s.queryExec, panelId, { activeResultIdx: idx }) }));
+  setActiveResult: (panelId, idx, paneId) => {
+    set((s) => ({
+      queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), { activeResultIdx: idx }),
+    }));
   },
 
-  togglePinResult: (panelId, idx) => {
-    const exec = get().queryExec.get(panelId);
+  togglePinResult: (panelId, idx, paneId) => {
+    const key = paneKey(panelId, paneId);
+    const exec = get().queryExec.get(key);
     if (!exec || !exec.results[idx]) return;
     const newResults = exec.results.map((r, i) => (i === idx ? { ...r, pinned: !r.pinned } : r));
-    set((s) => ({ queryExec: patchExec(s.queryExec, panelId, { results: newResults }) }));
+    set((s) => ({ queryExec: patchExec(s.queryExec, key, { results: newResults }) }));
   },
 
-  setResultDetailRow: (panelId, index) => {
-    set((s) => ({ queryExec: patchExec(s.queryExec, panelId, { resultDetailRowIndex: index }) }));
+  setResultDetailRow: (panelId, index, paneId) => {
+    set((s) => ({
+      queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), {
+        resultDetailRowIndex: index,
+      }),
+    }));
   },
 
-  updateResultCell: (panelId, resultIdx, row, col, value) => {
-    const exec = get().queryExec.get(panelId);
+  updateResultCell: (panelId, resultIdx, row, col, value, paneId) => {
+    const key = paneKey(panelId, paneId);
+    const exec = get().queryExec.get(key);
     if (!exec) return;
     const results = exec.results.map((r, ri) => {
       if (ri !== resultIdx) return r;
@@ -470,15 +635,19 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       });
       return { ...r, rows };
     });
-    set((s) => ({ queryExec: patchExec(s.queryExec, panelId, { results }) }));
+    set((s) => ({ queryExec: patchExec(s.queryExec, key, { results }) }));
   },
 
-  setChartConfig: (panelId, config) => {
-    set((s) => ({ queryExec: patchExec(s.queryExec, panelId, { chartConfig: config }) }));
+  setChartConfig: (panelId, config, paneId) => {
+    set((s) => ({
+      queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), { chartConfig: config }),
+    }));
   },
 
-  setResultViewMode: (panelId, mode) => {
-    set((s) => ({ queryExec: patchExec(s.queryExec, panelId, { resultViewMode: mode }) }));
+  setResultViewMode: (panelId, mode, paneId) => {
+    set((s) => ({
+      queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), { resultViewMode: mode }),
+    }));
   },
 
   // ── History / Favorites ────────────────────────────────────────
@@ -508,6 +677,16 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
     set({ queryFavorites });
   },
 
+  refreshFavorites: async (connectionId) => {
+    // The root is a display concern, not a blocker: if it cannot be read the
+    // panel simply omits the path rather than showing a stale one.
+    const [queryFavorites, favoritesRoot] = await Promise.all([
+      queryCommands.refreshFavorites(connectionId),
+      queryCommands.getFavoritesRoot(),
+    ]);
+    set({ queryFavorites, favoritesRoot });
+  },
+
   addFavorite: async (title, sql, connectionId) => {
     await queryCommands.addFavoriteQuery(connectionId, title, sql);
     await get().loadFavorites(connectionId);
@@ -529,8 +708,11 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
       panels: [],
       activePanelId: null,
       queryExec: new Map(),
+      focusedPaneIdByPanel: {},
+      focusedPaneId: null,
       queryHistory: [],
       queryFavorites: [],
+      favoritesRoot: null,
       historyVisible: false,
       favoritesVisible: false,
       pendingQueryHistoryConnectionId: null,

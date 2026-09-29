@@ -38,6 +38,9 @@ vi.mock('../contentViewHelpers', () => ({
 vi.mock('../../../commands/query', () => ({
   queryCommands: {
     getQueryHistory: vi.fn().mockResolvedValue([]),
+    // The global history dialog reads through the paged command, which returns
+    // `{ entries, total }` rather than a bare array.
+    getQueryHistoryPage: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
   },
 }));
 

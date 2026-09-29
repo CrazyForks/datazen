@@ -3,6 +3,7 @@
 mod ai_config;
 pub(crate) mod app_db;
 mod connections;
+pub(crate) mod favorites;
 mod history;
 pub(crate) mod history_db;
 mod key_store;
@@ -17,7 +18,11 @@ pub use app_db::{
     AppDb, AppDbError, DashboardRecord, DashboardWorkflowRef, WidgetRecord, WidgetRunRecord,
     WorkflowRecord, WorkflowVisibility, APP_DB_FILE,
 };
-pub use history_db::{HistoryDb, HistoryEntry, HistoryListItem, HistoryScope};
+pub(crate) use favorites::NewFavorite;
+pub use history_db::{
+    HistoryDb, HistoryEntry, HistoryListItem, HistoryOrder, HistoryScope, QueryHistoryFilter,
+    QueryHistoryPage,
+};
 pub use models::{FavoriteQuery, QueryHistoryEntry, SyncTask};
 pub use settings::{clamp_connection_pool_size, AppSettings, OnboardingState};
 
@@ -26,13 +31,14 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::Manager;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
+use favorites::FavoritesStore;
 use models::StoreCache;
 /// Bundle identifier — must match `tauri.conf.json` `"identifier"`.
 pub const APP_IDENTIFIER: &str = "com.tbeasy.datazen";
@@ -51,6 +57,7 @@ pub struct Store {
     pub(super) write_lock: Mutex<()>,
     history_db: Arc<HistoryDb>,
     app_db: Arc<AppDb>,
+    favorites: Arc<FavoritesStore>,
 }
 
 #[derive(Debug, Error)]
@@ -114,6 +121,15 @@ impl Store {
         Self::init_with_path(&data_dir).await
     }
 
+    /// Where favorites live when `AppSettings::favorites_root` is unset.
+    ///
+    /// This is `{appData}/favorites` — deliberately *not* inside a cloud
+    /// drive. The platform app-data directory does not sync, which is exactly
+    /// why `favorites_root` is configurable (plan §2.6.3).
+    pub fn default_favorites_root(data_dir: &Path) -> PathBuf {
+        data_dir.join("favorites")
+    }
+
     pub async fn init_with_path(data_dir: &std::path::Path) -> Result<Self, StoreError> {
         tokio::fs::create_dir_all(data_dir)
             .await
@@ -132,10 +148,56 @@ impl Store {
             write_lock: Mutex::new(()),
             history_db,
             app_db,
+            favorites: Arc::new(
+                FavoritesStore::open(&Self::default_favorites_root(data_dir))
+                    .map_err(|e| StoreError::InitError(e.to_string()))?,
+            ),
         };
 
         store.load_all().await?;
+        // A configured root wins over the default, so the favorites of an
+        // existing install follow the folder the user chose.
+        let configured = store.get_settings().await.favorites_root;
+        if let Some(configured) = configured.as_deref().map(str::trim) {
+            if !configured.is_empty() {
+                if let Err(e) = store.favorites.set_root(Path::new(configured)) {
+                    tracing::warn!(
+                        root = configured,
+                        error = %e,
+                        "Configured favorites root is unusable; falling back to the default"
+                    );
+                }
+            }
+        }
+        store.migrate_legacy_favorites().await;
         Ok(store)
+    }
+
+    /// Export any `favorite_queries` rows still in SQLite into `.sql` files.
+    ///
+    /// Runs after the favorites root is settled, because that root is the
+    /// destination. A failure is logged and stepped over rather than returned:
+    /// the legacy table is still intact, so the next launch retries — and
+    /// refusing to start the app over a favorites export would trade a
+    /// recoverable annoyance for an unrecoverable one.
+    async fn migrate_legacy_favorites(&self) {
+        let history_db = Arc::clone(&self.history_db);
+        let favorites = Arc::clone(&self.favorites);
+        let result = tokio::task::spawn_blocking(move || {
+            favorites::migrate::migrate_legacy_favorites(&history_db, &favorites)
+        })
+        .await;
+        match result {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => tracing::error!(
+                error = %e,
+                "Favorites migration failed; legacy rows stay in SQLite and will be retried next launch"
+            ),
+            Err(e) => tracing::error!(
+                error = %e,
+                "Favorites migration task could not be scheduled; will retry next launch"
+            ),
+        }
     }
 
     async fn get_or_create_encryption_key(

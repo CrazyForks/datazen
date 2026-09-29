@@ -944,7 +944,15 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
 
         // 2. Add column completions from each visible relation
         for (const binding of visible) {
-          const relMeta = matchRelation(binding, snapshot, adapter);
+          // The schema tree is passed on purpose. Without it `findRelationMetadata`
+          // has nothing to fall back on while the metadata snapshot is still
+          // being filled in, and a bare `WHERE ` then completes nothing at all —
+          // the snapshot is populated asynchronously (debounced in the panel,
+          // then an IPC round trip) while this source is read synchronously on
+          // the keystroke that opens the popup. The sibling `qualified_column`
+          // call site already passes it, which is why `WHERE t.` completed
+          // columns but `WHERE ` did not.
+          const relMeta = matchRelation(binding, snapshot, adapter, options.schema);
           if (!relMeta) continue;
 
           const qualifier = binding.alias ?? foldSegment(binding.relation.name, adapter);
@@ -963,15 +971,22 @@ export function produceSchemaCompletions(options: SchemaCompletionOptions): Sche
 
         // Deduplicate completions by label
         const seenLabels = new Set<string>();
-        return results.filter((item) => {
+        const deduped = results.filter((item) => {
           if (seenLabels.has(item.label)) return false;
           seenLabels.add(item.label);
           return true;
         });
+        // Returning here unconditionally — which is what this used to do —
+        // made the fallbacks below unreachable for every statement that has a
+        // FROM clause, including the ones where a FROM binding resolved to no
+        // columns at all. Those are exactly the cases the fallbacks exist for,
+        // so an empty result falls through instead of ending the search.
+        if (deduped.length > 0) return deduped;
       }
 
-      // FALLBACK: no visible relations — show ALL columns from ALL tables.
-      // First try the metadata snapshot (tables referenced in the SQL).
+      // FALLBACK: the visible relations yielded nothing — offer ALL columns from
+      // ALL tables. First try the metadata snapshot (tables referenced in the
+      // SQL), then the editor's schema tree.
       const fromSnapshot = allColumnsFromSnapshot(
         snapshot,
         includeTablePrefix,

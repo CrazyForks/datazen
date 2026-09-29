@@ -34,6 +34,8 @@ import * as cmView from '@codemirror/view';
 import * as cmState from '@codemirror/state';
 import * as cmLint from '@codemirror/lint';
 import * as cmAutocomplete from '@codemirror/autocomplete';
+import * as cmLanguage from '@codemirror/language';
+import * as cmCommands from '@codemirror/commands';
 import { useSchemaStore } from './stores/schemaStore';
 import { getCachedTableSchema } from './lib/schemaCache';
 
@@ -42,6 +44,14 @@ import { getCachedTableSchema } from './lib/schemaCache';
 // (scripts/pack-ep.mjs `rewriteEpImportsToHostGlobals`) redirects every bare
 // import in the staged bundle to this table at package time — keep the key
 // lists in sync or the blob-loaded bundle throws on a missing key.
+// The two lists are deliberately NOT interchangeable with the extension's
+// build-time externalize rule (a wide `/^@codemirror\//` regex): that wide rule
+// only guarantees a new package gets checked, this table and pack-ep's
+// `HOST_SHARED_MODULES` are the narrow, explicit registration gate. A regex
+// here would let an unverified specifier through and silently ship a second
+// copy of a module — cross-realm identity split, no error. Every shared
+// module must be spelled out on both sides; `scripts/__tests__/pack-ep.test.ts`
+// fails the build if the two lists drift.
 (globalThis as any).__DATAZEN_HOST__ = {
   '@datazen/extension-points': extensionPoints,
   '@datazen/ui': ui,
@@ -52,6 +62,8 @@ import { getCachedTableSchema } from './lib/schemaCache';
   '@codemirror/state': cmState,
   '@codemirror/lint': cmLint,
   '@codemirror/autocomplete': cmAutocomplete,
+  '@codemirror/language': cmLanguage,
+  '@codemirror/commands': cmCommands,
 };
 
 // E2E test hooks: expose Zustand stores on globalThis for WebDriver tests.

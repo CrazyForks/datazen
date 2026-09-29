@@ -84,6 +84,12 @@ export function ContentView({
   const activePanelId = usePanelStore((s) => s.activePanelId);
   const setActivePanel = usePanelStore((s) => s.setActivePanel);
   const storeUpdatePanel = usePanelStore((s) => s.updatePanel);
+  // Pane that editor actions of the tab on screen route to; `null` = that tab
+  // has not been split. This mirror is derived per tab by the store
+  // (`focusedPaneIdByPanel[activePanelId]`, written only by `syncPaneFocus`),
+  // so the pane handed to a panel is always one of *its* panes and never a
+  // sibling tab's — see `paneFocusScope.tester.test.ts`.
+  const focusedPaneId = usePanelStore((s) => s.focusedPaneId);
 
   const activePanel = allPanels.find((p) => p.id === activePanelId) ?? null;
 
@@ -555,6 +561,7 @@ export function ContentView({
           ) : (
             <PanelContentRenderer
               activePanel={activePanel}
+              focusedPaneId={focusedPaneId}
               currentDatabase={currentDatabase}
               lastTableSchema={lastTableSchema}
               onSetSubTab={handlers.handleSetSubTab}

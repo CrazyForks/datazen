@@ -9,6 +9,14 @@ export {
   type SelectProps,
   type SelectLabels,
 } from './Select';
+// The `data-*` passthrough contract itself (see docs/architecture/frontend/components.md §9.1).
+// Exported so the other closed-prop components can implement the *same* contract
+// from outside this package rather than re-declaring it locally.
+export {
+  splitDataAttrs,
+  type DataAttrProps,
+  type SplitDataAttrs,
+} from './dataAttrs';
 export { Dialog, type DialogProps } from './Dialog';
 export { Tabs, type TabItem, type TabRenderContext, type TabsProps } from './Tabs';
 export { Badge, type BadgeProps } from './Badge';
