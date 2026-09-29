@@ -60,3 +60,45 @@ export const SKIP_DIR_NAMES = new Set([
   '.turbo',
   '__snapshots__',
 ]);
+
+/**
+ * Repository-relative directory paths that are not this repository's source.
+ *
+ * This set exists because `SKIP_DIR_NAMES` **cannot express a path**. It matches
+ * a single `entry.name` at any depth, so the two only differ in what they get
+ * wrong:
+ *
+ *   * adding `'packages/pro-extensions'` to `SKIP_DIR_NAMES` would match
+ *     nothing at all — the walk tests the basename, not the path;
+ *   * adding `'pro-extensions'` would match, but would also skip any unrelated
+ *     directory that happens to share the name, at any depth, anywhere in the
+ *     tree. A skip list that over-matches is a guard that quietly stops
+ *     guarding.
+ *
+ * So a path-scoped exclusion needs its own set, and callers prune with
+ * {@link isSkippedPath} against a **repo-relative POSIX** path.
+ *
+ * `packages/pro-extensions` holds independently versioned extension packages:
+ * each is its own git repository, and the Pro ones are never checked out by Host
+ * CI at all. A Host guard that scanned them would be reading code that no Host
+ * build produces, no Host commit controls, and no Host reviewer can change —
+ * findings there are neither actionable by a Host commit nor, when the checkout
+ * is absent, even reproducible. The guards that own that code are the ones in
+ * the extension's own repository, which always have their own checkout.
+ *
+ * This is a scoping statement, not a suppression: nothing in this repository is
+ * exempt, and the exclusion prunes at the directory level so nothing under the
+ * path is read in the first place.
+ */
+export const SKIP_PATH_PREFIXES = new Set(['packages/pro-extensions']);
+
+/**
+ * @param {string} rel repo-relative POSIX path (use `/` separators on any OS)
+ * @returns {boolean} whether the path is inside an excluded subtree
+ */
+export function isSkippedPath(rel) {
+  for (const prefix of SKIP_PATH_PREFIXES) {
+    if (rel === prefix || rel.startsWith(`${prefix}/`)) return true;
+  }
+  return false;
+}

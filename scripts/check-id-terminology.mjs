@@ -15,13 +15,27 @@
  */
 import { readdirSync, readFileSync } from 'fs';
 import { join, relative, resolve, dirname } from 'path';
+import {
+  SCAN_EXTENSIONS as SHARED_SCAN_EXTENSIONS,
+  SKIP_DIR_NAMES,
+  isSkippedPath,
+} from './lib/scanTargets.mjs';
 import { fileURLToPath } from 'url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const SCAN_DIRS = ['src', 'packages', 'e2e'];
-const SCAN_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.rs']);
-const SKIP_DIR_NAMES = new Set(['node_modules', 'dist', 'coverage', '.git']);
+// Rust is in scope here and in no other guard, so it is added to the shared set
+// rather than restating it. This used to be an independent copy of the whole
+// list, which meant a second place for the other guards' input set to drift
+// out of sync — and the drift is silent, because a guard that quietly starts
+// skipping (or scanning) something still reports "ok".
+const SCAN_EXTENSIONS = new Set([...SHARED_SCAN_EXTENSIONS, '.rs']);
+// `SKIP_DIR_NAMES` is the shared set with no local override: this guard walks
+// `src` / `packages` / `e2e`, and the vendored and generated directories
+// `target/`, `build/`, `.turbo/` and `__snapshots__/` do not appear under any of
+// them, so the two lists were equivalent in practice. Verified by count, not by
+// inspection: the walk collects the same 2017 files under either set.
 // Gitignored codegen produced by resolve-drivers — never hand-written source.
 const SKIP_FILES = new Set(['src/extensions/generated.ts']);
 
@@ -94,6 +108,9 @@ function walk(dir, root, out) {
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
+      // Prune subtrees this repository does not own (see `SKIP_PATH_PREFIXES`).
+      const relDir = relative(root, full).split('\\').join('/');
+      if (isSkippedPath(relDir)) continue;
       if (!SKIP_DIR_NAMES.has(entry.name)) walk(full, root, out);
       continue;
     }
