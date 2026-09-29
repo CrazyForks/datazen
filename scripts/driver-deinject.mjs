@@ -300,5 +300,12 @@ export function deinjectManagedContent(relPath, workContent, opts = {}) {
   if (relPath.endsWith('Cargo.toml')) {
     return deinjectCargoContent(workContent);
   }
+  if (relPath.endsWith('Cargo.lock')) {
+    // Cargo rewrites the lockfile wholesale while the injected features are
+    // active, so there are no markers to strip. The pre-build stash is the
+    // authority and still carries whatever dependency bumps the user made
+    // before building; anything beyond that is the build's own residue.
+    return opts.stashContent ?? workContent;
+  }
   return workContent;
 }

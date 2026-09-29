@@ -9,7 +9,7 @@ import {
   runDriverStashPrecommit,
 } from '../driver-stash-precommit.mjs';
 import { createDriverFileStash, MANAGED_FILES } from '../driver-file-stash.mjs';
-import { mkdtempSync, existsSync, unlinkSync, readFileSync } from 'fs';
+import { mkdtempSync, existsSync, unlinkSync, readFileSync, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -130,6 +130,35 @@ describe('runDriverStashPrecommit', () => {
       for (const f of MANAGED_FILES) {
         expect(readManaged(root, f)).toBe(CLEAN_CONTENTS[f]);
       }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('restores a lockfile a killed build left rewritten', () => {
+    // Cargo.lock has no injection markers, so the hook can only judge it
+    // against the stashed pre-build copy. Cargo.toml is still clean here —
+    // the build died between cargo's rewrite and the restore step.
+    const { root, opts, cleanup } = setup();
+    try {
+      createDriverFileStash(root, { quiet: true }).stashManagedFiles();
+      writeFileSync(join(root, 'Cargo.lock'), INJECTED_CONTENTS['Cargo.lock']);
+
+      const result = runDriverStashPrecommit(opts);
+      expect(result.restored).toBe(true);
+      expect(readManaged(root, 'Cargo.lock')).toBe(CLEAN_CONTENTS['Cargo.lock']);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('leaves the lockfile alone when no stash records a pre-build copy', () => {
+    const { root, opts, cleanup } = setup();
+    try {
+      writeFileSync(join(root, 'Cargo.lock'), INJECTED_CONTENTS['Cargo.lock']);
+      const result = runDriverStashPrecommit(opts);
+      expect(result).toEqual({ status: 0, restored: false });
+      expect(readManaged(root, 'Cargo.lock')).toBe(INJECTED_CONTENTS['Cargo.lock']);
     } finally {
       cleanup();
     }
