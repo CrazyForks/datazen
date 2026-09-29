@@ -6,6 +6,7 @@ use datazen_driver_api::{TableInfo, TableSchema, TableType};
 
 use super::model::{
     ColumnMapping, TableInspectResult, TableMapping, TableMappingStatus, TransferMode,
+    TransferTargetColumnType,
 };
 
 fn schema_column_names(schema: &TableSchema) -> Vec<String> {
@@ -411,7 +412,16 @@ pub fn inspect_tables(
                 schema
                     .columns
                     .iter()
-                    .map(|column| (column.name.clone(), column.data_type.clone()))
+                    .map(|column| {
+                        (
+                            column.name.clone(),
+                            TransferTargetColumnType {
+                                native_type: column.data_type.clone(),
+                                character_set: None,
+                                collation: None,
+                            },
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -557,7 +567,7 @@ mod tests {
             results[0]
                 .target_column_types
                 .get("amount")
-                .map(String::as_str),
+                .map(|column| column.native_type.as_str()),
             Some("decimal(12,2)")
         );
     }

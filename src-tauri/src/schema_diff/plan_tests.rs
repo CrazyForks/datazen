@@ -77,6 +77,61 @@ fn cross_dialect_check_constraints_are_blocked_without_expression_translation() 
 }
 
 #[test]
+fn cross_dialect_table_options_are_skipped_with_a_review_warning() {
+    let mut src = schema(vec![col("id", "int")]);
+    src.table_options.engine = Some("InnoDB".into());
+    src.table_options.charset = Some("utf8mb4".into());
+    src.table_options.comment = Some("source catalog".into());
+    let tgt = schema(vec![col("id", "int")]);
+
+    let plan = build_schema_diff_plan(
+        &[("users".into(), src, tgt)],
+        "mysql",
+        "postgresql",
+        PlanOptions {
+            allow_destructive: false,
+            include_indexes: false,
+            type_mapper: None,
+            cross_dialect: true,
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert!(plan.statements.is_empty());
+    assert!(plan.warnings.iter().any(|warning| {
+        warning.contains("table options") && warning.contains("remain unchanged")
+    }));
+}
+
+#[test]
+fn mysql_new_table_renders_safe_source_table_options_inline() {
+    let mut src = schema(vec![col("id", "int")]);
+    src.table_options.engine = Some("InnoDB".into());
+    src.table_options.charset = Some("utf8mb4".into());
+    src.table_options.collation = Some("utf8mb4_0900_ai_ci".into());
+    let tgt = schema(vec![]);
+
+    let plan = build_column_plan("users", &src, &tgt, "mysql").unwrap();
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    let create = plan
+        .statements
+        .iter()
+        .find(|statement| statement.sql.contains("CREATE TABLE"))
+        .expect("CREATE TABLE statement");
+    assert!(create.sql.contains("ENGINE = InnoDB"));
+    assert!(create.sql.contains("DEFAULT CHARACTER SET = utf8mb4"));
+    assert!(create.sql.contains("COLLATE = utf8mb4_0900_ai_ci"));
+    assert!(
+        !plan
+            .statements
+            .iter()
+            .any(|statement| statement.sql.contains("ALTER TABLE")
+                && statement.sql.contains("ENGINE"))
+    );
+}
+
+#[test]
 fn missing_target_table_plans_create_not_add_column() {
     let mut src = schema(vec![col("id", "int"), col("email", "varchar(255)")]);
     src.primary_keys = vec!["id".into()];

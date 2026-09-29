@@ -1,7 +1,9 @@
 //! Driver metadata names are logical identifiers, not SQL-quoted expressions.
 use super::{error::TransferError, model::Endpoint};
-use crate::db::{ConnectionHandle, DatabaseDriver};
+use crate::db::{ConnectionHandle, DatabaseDriver, Value};
+use crate::transfer::adapter::SyncTargetAdapter;
 use datazen_driver_api::TableSchema;
+use std::collections::HashMap;
 
 pub fn metadata_relation_ref(endpoint: &Endpoint, table: &str) -> Result<String, TransferError> {
     match endpoint.normalized_schema() {
@@ -45,6 +47,58 @@ pub async fn load_table_schema(
         )
         .await
         .map_err(|error| TransferError::validation(error.to_string()))
+}
+
+pub async fn load_target_character_metadata(
+    adapter: &dyn SyncTargetAdapter,
+    driver: &dyn DatabaseDriver,
+    handle: &ConnectionHandle,
+    endpoint: &Endpoint,
+    table: &str,
+) -> Result<HashMap<String, (Option<String>, Option<String>)>, TransferError> {
+    let Some(query) = adapter.transfer_target_character_metadata_query(
+        &endpoint.database,
+        endpoint.normalized_schema(),
+        table,
+    ) else {
+        return Ok(HashMap::new());
+    };
+    let result = driver
+        .query(handle, &query)
+        .await
+        .map_err(|error| TransferError::validation(error.to_string()))?;
+    let mut metadata = HashMap::new();
+    for row in &result.rows {
+        let column = query_cell_text(row.first())?.ok_or_else(|| {
+            TransferError::validation(format!(
+                "target character metadata for '{table}' has an empty column name"
+            ))
+        })?;
+        let character_set = query_cell_text(row.get(1))?;
+        let collation = query_cell_text(row.get(2))?;
+        metadata.insert(column, (character_set, collation));
+    }
+    Ok(metadata)
+}
+
+fn query_cell_text(cell: Option<&Option<Value>>) -> Result<Option<String>, TransferError> {
+    match cell {
+        None => Err(TransferError::validation(
+            "target character metadata query returned an incomplete row",
+        )),
+        Some(None) | Some(Some(Value::Null)) => Ok(None),
+        Some(Some(Value::String(value))) | Some(Some(Value::Timestamp(value))) => {
+            Ok(Some(value.clone()))
+        }
+        Some(Some(Value::Bytes(value))) => {
+            String::from_utf8(value.clone()).map(Some).map_err(|_| {
+                TransferError::validation("target character metadata query returned non-UTF-8 text")
+            })
+        }
+        Some(Some(_)) => Err(TransferError::validation(
+            "target character metadata query returned a non-text value",
+        )),
+    }
 }
 
 #[cfg(test)]

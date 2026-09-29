@@ -1001,22 +1001,20 @@ fn plan_single_table(
     if opts.cross_dialect {
         operations.retain_mut(|op| strip_dialect_specific_defaults(op, warnings, requirements));
         operations.retain(|op| {
-            if matches!(
+            if matches!(op, super::operations::MigrationOperation::SetTableOptions { .. }) {
+                warnings.push(format!(
+                    "Skipped cross-dialect table options for {}: target engine, character set, and table comment remain unchanged.",
+                    op.key()
+                ));
+                false
+            } else if matches!(
                 op,
                 super::operations::MigrationOperation::AddCheckConstraint { .. }
                     | super::operations::MigrationOperation::DropCheckConstraint { .. }
-                    | super::operations::MigrationOperation::SetTableOptions { .. }
             ) {
                 requirements.push(PlanRequirement::Unsupported {
                     operation: op.key(),
-                    reason: if matches!(
-                        op,
-                        super::operations::MigrationOperation::SetTableOptions { .. }
-                    ) {
-                        "Table engine/charset/comment options are dialect-specific; compare and migrate them on the same database family".into()
-                    } else {
-                        "CHECK expressions are dialect-specific; compare and migrate them on the same database family".into()
-                    },
+                    reason: "CHECK expressions are dialect-specific; compare and migrate them on the same database family".into(),
                 });
                 false
             } else {
@@ -1252,8 +1250,7 @@ fn plan_single_table(
 
     for op in operations {
         let key = op.key();
-        let driver_op = op.to_driver_api();
-        match renderer.render(&driver_op) {
+        match op.render_with(renderer.as_ref()) {
             Ok(stmt) => {
                 let mut risk = match stmt.risk {
                     datazen_driver_api::MigrationRisk::Additive => StatementRisk::Additive,
@@ -1814,8 +1811,7 @@ fn render_target_only_tables(
         return;
     };
     for operation in operations {
-        let driver_operation = operation.to_driver_api();
-        match renderer.render(&driver_operation) {
+        match operation.render_with(renderer.as_ref()) {
             Ok(statement) => statements.push(PlanStatement {
                 sql: statement.sql,
                 risk: StatementRisk::Destructive,

@@ -231,6 +231,32 @@ pub trait SyncTargetAdapter: Send + Sync {
         Ok(())
     }
 
+    /// Validate character-set metadata for an existing transfer target column.
+    /// Drivers that require catalog proof before copying text can reject
+    /// unknown or lossy target character sets here.
+    fn validate_transfer_target_character_metadata(
+        &self,
+        _source_ir: &IRColumn,
+        _target_native_type: &str,
+        _target_character_set: Option<&str>,
+        _target_collation: Option<&str>,
+        _creating_target: bool,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Optional driver-owned query returning `(column_name, character_set,
+    /// collation)` rows for a target table. Data Transfer uses this only to
+    /// prove that existing string columns can preserve source text.
+    fn transfer_target_character_metadata_query(
+        &self,
+        _database: &str,
+        _schema: Option<&str>,
+        _table: &str,
+    ) -> Option<String> {
+        None
+    }
+
     /// Render an `IRDefault` as the content of a `DEFAULT` clause.
     /// Return `None` to omit the clause entirely (e.g. for auto-increment columns
     /// whose default is handled by the database engine).

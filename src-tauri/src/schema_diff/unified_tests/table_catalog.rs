@@ -72,6 +72,7 @@ fn test_tester_table_dependency_catalog_requires_complete_exact_target_proof() {
         table: "public.items".into(),
         columns: vec![column_snapshot("state", "public.order_state")],
         primary_keys: Vec::new(),
+        table_options: Default::default(),
     }];
     let empty = BTreeSet::new();
     let no_indices = HashMap::new();

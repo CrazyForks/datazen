@@ -198,11 +198,24 @@ async fn validate_plan_context(
         false,
     )
     .await?;
-    if source_fingerprint != plan.source_schema_fingerprint
-        || target_fingerprint != plan.target_schema_fingerprint
-    {
+    if source_fingerprint != plan.source_schema_fingerprint {
+        tracing::warn!(
+            expected = %plan.source_schema_fingerprint,
+            actual = %source_fingerprint,
+            "sync plan source schema fingerprint changed"
+        );
         return Err(CommandError::Validation(
-            "source or target schema/key changed since comparison; return to comparison".into(),
+            "source schema/key changed since comparison; return to comparison".into(),
+        ));
+    }
+    if target_fingerprint != plan.target_schema_fingerprint {
+        tracing::warn!(
+            expected = %plan.target_schema_fingerprint,
+            actual = %target_fingerprint,
+            "sync plan target schema fingerprint changed"
+        );
+        return Err(CommandError::Validation(
+            "target schema/key changed since comparison; return to comparison".into(),
         ));
     }
     Ok(ValidatedSyncContext {
@@ -250,10 +263,15 @@ async fn current_schema_fingerprint(
         let schema_snapshot = driver
             .get_table_schema(handle, relation, database, schema)
             .await
-            .ok();
+            .map_err(|_| {
+                CommandError::Validation(format!(
+                    "cannot confirm current {} schema metadata; return to comparison",
+                    if source { "source" } else { "target" }
+                ))
+            })?;
         entries.push((
             relation.clone(),
-            schema_snapshot,
+            Some(schema_snapshot),
             table.table.source_filter.clone(),
         ));
     }

@@ -101,6 +101,7 @@ export function DataTransferWindow() {
   const [batchSize, setBatchSize] = useState(DEFAULT_TRANSFER_OPTIONS.batchSize ?? 500);
   const [stopOnError, setStopOnError] = useState(true);
   const [confirmedDestructive, setConfirmedDestructive] = useState(false);
+  const [useTargetDefaultCollation, setUseTargetDefaultCollation] = useState(false);
   const [loading, setLoading] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [executeProgress, setExecuteProgress] = useState('');
@@ -411,7 +412,7 @@ export function DataTransferWindow() {
       mode,
       writeMode,
       tables: allTablesToMappings(),
-      options: { batchSize, stopOnError, confirmedDestructive },
+      options: { batchSize, stopOnError, confirmedDestructive, useTargetDefaultCollation },
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -446,6 +447,7 @@ export function DataTransferWindow() {
     batchSize,
     stopOnError,
     confirmedDestructive,
+    useTargetDefaultCollation,
     loadTransferProfiles,
     t,
   ]);
@@ -463,6 +465,7 @@ export function DataTransferWindow() {
     setBatchSize(profile.options.batchSize ?? DEFAULT_TRANSFER_OPTIONS.batchSize ?? 500);
     setStopOnError(profile.options.stopOnError ?? true);
     setConfirmedDestructive(profile.options.confirmedDestructive ?? false);
+    setUseTargetDefaultCollation(profile.options.useTargetDefaultCollation ?? false);
     setDestinationMode(profile.destinationMode);
     setSqlFileDialect(profile.sqlFileDialect ?? 'source');
     setSqlFileEncoding(profile.sqlFileEncoding ?? 'utf8');
@@ -539,7 +542,7 @@ export function DataTransferWindow() {
           mode,
           writeMode,
           tables: tablesToMappings(),
-          options: { batchSize, stopOnError, confirmedDestructive },
+          options: { batchSize, stopOnError, confirmedDestructive, useTargetDefaultCollation },
         };
       }
       if (!tgtConnId || !targetDatabase) return null;
@@ -553,6 +556,7 @@ export function DataTransferWindow() {
           batchSize,
           stopOnError,
           confirmedDestructive,
+          useTargetDefaultCollation,
         },
       };
     },
@@ -575,6 +579,7 @@ export function DataTransferWindow() {
       batchSize,
       stopOnError,
       confirmedDestructive,
+      useTargetDefaultCollation,
     ],
   );
 
@@ -1277,6 +1282,25 @@ export function DataTransferWindow() {
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
                   {t('transfer.setup.optionsSection')}
                 </p>
+                {(mode !== 'data' || writeMode === 'dropCreateInsert') && (
+                  <label className="flex items-start gap-2 rounded border border-warning/40 bg-warning/5 p-2 text-xs">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={useTargetDefaultCollation}
+                      onChange={(event) => setUseTargetDefaultCollation(event.target.checked)}
+                      data-testid="data-transfer-use-target-default-collation"
+                    />
+                    <span>
+                      <span className="block font-medium text-fg">
+                        {t('transfer.mapping.targetDefaultCollation')}
+                      </span>
+                      <span className="text-fg-muted">
+                        {t('transfer.mapping.targetDefaultCollationHint')}
+                      </span>
+                    </span>
+                  </label>
+                )}
                 <label className="block text-sm">
                   {t('transfer.writeMode.label')}
                   <div className="mt-1" data-testid="data-transfer-write-mode">

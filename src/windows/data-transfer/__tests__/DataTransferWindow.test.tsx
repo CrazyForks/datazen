@@ -76,7 +76,12 @@ vi.mock('../../../commands/database', () => ({
 }));
 
 vi.mock('../../../commands/transfer', () => ({
-  DEFAULT_TRANSFER_OPTIONS: { batchSize: 500, stopOnError: true, confirmedDestructive: false },
+  DEFAULT_TRANSFER_OPTIONS: {
+    batchSize: 500,
+    stopOnError: true,
+    confirmedDestructive: false,
+    useTargetDefaultCollation: false,
+  },
   transferCommands: {
     getProfiles: vi.fn().mockResolvedValue([]),
     saveProfile: vi.fn().mockResolvedValue(undefined),
@@ -531,7 +536,12 @@ describe('DataTransferWindow', () => {
       mode: 'data',
       writeMode: 'insert',
       tables: [],
-      options: { batchSize: 500, stopOnError: true, confirmedDestructive: false },
+      options: {
+        batchSize: 500,
+        stopOnError: true,
+        confirmedDestructive: false,
+        useTargetDefaultCollation: false,
+      },
       createdAt: '2026-09-21T00:00:00.000Z',
       updatedAt: '2026-09-21T00:00:00.000Z',
     };
@@ -570,7 +580,12 @@ describe('DataTransferWindow', () => {
       mode: 'data',
       writeMode: 'insert',
       tables: [],
-      options: { batchSize: 500, stopOnError: true, confirmedDestructive: false },
+      options: {
+        batchSize: 500,
+        stopOnError: true,
+        confirmedDestructive: false,
+        useTargetDefaultCollation: false,
+      },
       createdAt: '2026-09-21T00:00:00.000Z',
       updatedAt: '2026-09-21T00:00:00.000Z',
     };

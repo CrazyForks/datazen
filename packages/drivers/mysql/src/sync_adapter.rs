@@ -388,7 +388,8 @@ impl SyncSourceAdapter for MysqlSyncAdapter {
             "SELECT CONCAT('generated column ', COLUMN_NAME) AS unsupported_object \
              FROM information_schema.COLUMNS \
              WHERE TABLE_SCHEMA = {schema_expr} AND TABLE_NAME = {name_expr} \
-               AND EXTRA LIKE '%GENERATED%' \
+               AND (UPPER(EXTRA) LIKE '%VIRTUAL GENERATED%' \
+                    OR UPPER(EXTRA) LIKE '%STORED GENERATED%') \
              UNION ALL \
              SELECT CONCAT('index ', INDEX_NAME, ' (prefix, functional, or descending column)') \
              FROM information_schema.STATISTICS \
@@ -666,13 +667,79 @@ impl SyncTargetAdapter for MysqlSyncAdapter {
                     ));
                 }
             }
-            if !creating_target {
-                return Err(format!(
-                    "target column '{target_native}' character set/collation was not inspected, so its byte capacity and character conversion cannot be proven; inspect the target column charset/collation or use a structure transfer with an explicitly supported mapping"
-                ));
-            }
         }
         Ok(())
+    }
+
+    fn validate_transfer_target_character_metadata(
+        &self,
+        source_ir: &IRColumn,
+        target_native_type: &str,
+        target_character_set: Option<&str>,
+        target_collation: Option<&str>,
+        creating_target: bool,
+    ) -> Result<(), String> {
+        if creating_target
+            || !matches!(
+                &source_ir.ir_type,
+                IRType::Text | IRType::Varchar { .. } | IRType::Char { .. }
+            )
+        {
+            return Ok(());
+        }
+        let character_set = target_character_set
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "target column '{target_native_type}' character set was not inspected, so source text conversion cannot be proven"
+                )
+            })?;
+        let collation = target_collation
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "target column '{target_native_type}' collation was not inspected, so its character semantics cannot be confirmed"
+                )
+            })?;
+        if !character_set.eq_ignore_ascii_case("utf8mb4") {
+            return Err(format!(
+                "target character set '{character_set}' cannot preserve every Unicode character from source text; use utf8mb4"
+            ));
+        }
+        if !collation
+            .to_ascii_lowercase()
+            .starts_with(&format!("{}_", character_set.to_ascii_lowercase()))
+        {
+            return Err(format!(
+                "target collation '{collation}' does not belong to character set '{character_set}'"
+            ));
+        }
+        Ok(())
+    }
+
+    fn transfer_target_character_metadata_query(
+        &self,
+        database: &str,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Option<String> {
+        let catalog = if database.trim().is_empty() {
+            schema.filter(|value| !value.trim().is_empty())
+        } else {
+            Some(database)
+        };
+        let schema_expr = catalog
+            .map(mysql_utf8_hex_expression)
+            .unwrap_or_else(|| "DATABASE()".into());
+        let table_expr = mysql_utf8_hex_expression(table);
+        Some(format!(
+            "SELECT COLUMN_NAME, CHARACTER_SET_NAME, COLLATION_NAME \
+             FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = {schema_expr} AND TABLE_NAME = {table_expr} \
+             ORDER BY ORDINAL_POSITION"
+        ))
     }
 
     fn format_literal(&self, value: &Option<Value>, _ir_type: &IRType) -> String {
@@ -992,21 +1059,78 @@ mod tests {
     #[test]
     fn mysql_transfer_preflight_rejects_existing_string_targets_with_unknown_charset() {
         let adapter = adapter();
-        let error = adapter
+        let source_ir = ir_column("label", IRType::Varchar { length: Some(100) });
+        adapter
             .validate_transfer_column_type(
                 &col("label", "character varying(100)"),
-                &ir_column("label", IRType::Varchar { length: Some(100) }),
+                &source_ir,
                 Some(400),
                 true,
                 false,
                 Some("VARCHAR(255)"),
                 false,
             )
-            .expect_err("uninspected target charset cannot prove source capacity/conversion");
+            .expect("target type capacity should be checked independently of character metadata");
+        let error = adapter
+            .validate_transfer_target_character_metadata(
+                &source_ir,
+                "VARCHAR(255)",
+                None,
+                None,
+                false,
+            )
+            .expect_err("uninspected target charset cannot prove source conversion");
+        assert!(error.contains("character set was not inspected"), "{error}");
+    }
+
+    #[test]
+    fn mysql_transfer_target_text_requires_verified_unicode_metadata() {
+        let adapter = adapter();
+        let source_ir = ir_column("body", IRType::Text);
+        adapter
+            .validate_transfer_target_character_metadata(
+                &source_ir,
+                "LONGTEXT",
+                Some("utf8mb4"),
+                Some("utf8mb4_0900_ai_ci"),
+                false,
+            )
+            .expect("utf8mb4 preserves PostgreSQL Unicode text");
+
+        let latin1 = adapter
+            .validate_transfer_target_character_metadata(
+                &source_ir,
+                "LONGTEXT",
+                Some("latin1"),
+                Some("latin1_swedish_ci"),
+                false,
+            )
+            .expect_err("latin1 cannot represent every PostgreSQL Unicode value");
+        assert!(latin1.contains("cannot preserve every Unicode"), "{latin1}");
+
+        let mismatched = adapter
+            .validate_transfer_target_character_metadata(
+                &source_ir,
+                "LONGTEXT",
+                Some("utf8mb4"),
+                Some("latin1_swedish_ci"),
+                false,
+            )
+            .expect_err("collation must belong to its inspected character set");
+        assert!(mismatched.contains("does not belong"), "{mismatched}");
+    }
+
+    #[test]
+    fn mysql_transfer_target_character_query_scopes_catalog_and_escapes_names() {
+        let sql = adapter()
+            .transfer_target_character_metadata_query("datazen_sync_mysql_tgt", None, "données'\\x")
+            .expect("MySQL target character metadata query");
+        assert!(sql.contains("information_schema.COLUMNS"));
+        assert!(sql.contains("CHARACTER_SET_NAME, COLLATION_NAME"));
         assert!(
-            error.contains("character set/collation was not inspected"),
-            "{error}"
+            sql.contains("CONVERT(X'646174617A656E5F73796E635F6D7973716C5F746774' USING utf8mb4)")
         );
+        assert!(sql.contains("CONVERT(X'646F6E6EC3A96573275C78' USING utf8mb4)"));
     }
 
     #[test]
@@ -1295,6 +1419,9 @@ mod tests {
         assert!(query.contains(&mysql_utf8_hex_expression("tbl'\\x")));
         assert!(!query.contains("tbl'\\x"));
         assert!(query.contains("COLLATION = 'D'"));
+        assert!(query.contains("VIRTUAL GENERATED"));
+        assert!(query.contains("STORED GENERATED"));
+        assert!(!query.contains("EXTRA LIKE '%GENERATED%'"));
         assert!(query.contains("column-specific collation"));
         assert!(query.contains("not the database default"));
     }

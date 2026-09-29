@@ -10,13 +10,13 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::sync::{LazyLock, Mutex};
 
 use datazen_driver_api::{DatabaseDriver, TableSchema};
-use flate2::Compression;
 use flate2::write::GzEncoder;
+use flate2::Compression;
 use uuid::Uuid;
 
 use super::error::TransferError;
@@ -1330,7 +1330,14 @@ mod tests {
             source_primary_keys: vec!["id".into()],
             target_columns: vec!["id.with\"quote".into()],
             source_column_types: HashMap::from([("id".into(), "BIGINT".into())]),
-            target_column_types: HashMap::from([("id.with\"quote".into(), "BIGINT".into())]),
+            target_column_types: HashMap::from([(
+                "id.with\"quote".into(),
+                crate::data_transfer::model::TransferTargetColumnType {
+                    native_type: "BIGINT".into(),
+                    character_set: None,
+                    collation: None,
+                },
+            )]),
             incompatible_reason: None,
             source_row_count: Some(2),
             recordset: None,
@@ -1400,10 +1407,8 @@ mod tests {
         assert_eq!(script.matches("INSERT INTO").count(), 1, "{script}");
         assert!(script.contains("pg_catalog.replace(v_insert_sql"));
         assert!(script.contains("OVERRIDING SYSTEM VALUE"));
-        assert!(
-            script
-                .contains("v_relation text := '\"legacy_source_schema\".\"table.with\"\"quote\"'")
-        );
+        assert!(script
+            .contains("v_relation text := '\"legacy_source_schema\".\"table.with\"\"quote\"'"));
         assert!(script.contains("'id.with\"quote'"));
         assert!(script.contains("ALTER SEQUENCE %s RESTART WITH %s"));
     }
@@ -1883,11 +1888,9 @@ mod tests {
             .normalize_qualifiers()
             .unwrap();
         let error = validate_target_dialect_job(&job).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("explicit target database/schema")
-        );
+        assert!(error
+            .to_string()
+            .contains("explicit target database/schema"));
     }
 
     #[test]

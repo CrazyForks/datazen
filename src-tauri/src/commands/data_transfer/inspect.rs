@@ -192,6 +192,31 @@ pub(crate) async fn inspect_data_transfer_impl(
                 src.as_ref(),
                 tgt.as_ref(),
             );
+            for result in results
+                .iter_mut()
+                .filter(|result| result.enabled && !result.create_new)
+            {
+                let metadata = crate::data_transfer::metadata::load_target_character_metadata(
+                    tgt.as_ref(),
+                    tgt_driver.as_ref(),
+                    &tgt_handle,
+                    &target,
+                    &result.target_table,
+                )
+                .await
+                .map_err(|error| {
+                    CommandError::Validation(format!(
+                        "failed to inspect target character metadata for '{}': {error}",
+                        result.target_table
+                    ))
+                })?;
+                for (name, (character_set, collation)) in metadata {
+                    if let Some(column) = result.target_column_types.get_mut(&name) {
+                        column.character_set = character_set;
+                        column.collation = collation;
+                    }
+                }
+            }
         }
     }
 

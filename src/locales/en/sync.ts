@@ -292,6 +292,9 @@ const pack = {
   'transfer.mapping.noTables': 'No enabled tables to map.',
   'transfer.mapping.targetTable': 'Target table',
   'transfer.mapping.createNew': 'Create new table',
+  'transfer.mapping.targetDefaultCollation': 'Use the target database default collation',
+  'transfer.mapping.targetDefaultCollationHint':
+    'Text sorting, case/accent comparisons, and unique-index behavior may change.',
   'transfer.mapping.sourceColumn': 'Source column',
   'transfer.mapping.targetColumn': 'Target column',
   'transfer.mapping.skip': 'Skip',

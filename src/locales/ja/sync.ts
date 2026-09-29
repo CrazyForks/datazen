@@ -86,6 +86,8 @@ const pack = {
   'sync.pagePrev': '前へ',
   'sync.pageNext': '次へ',
   'sync.refreshPreview': '更新',
+  'sync.sqlPreviewLimitReached':
+    'SQL プレビューは 16 MiB に制限されています。SQL を確認するには、選択する行数または操作数を減らしてください。行の比較結果を確認し、レビュー済みの変更を実行することは引き続き可能です。',
   'sync.execute': '実行',
   'sync.executing': '同期を実行中…',
   'sync.executingSql': '{count} 件の SQL 文を実行中…',
@@ -166,6 +168,9 @@ const pack = {
   'transfer.mapping.noTables': 'マッピング可能な有効なテーブルがありません。',
   'transfer.mapping.targetTable': 'ターゲット テーブル',
   'transfer.mapping.createNew': '新しいテーブルを作成',
+  'transfer.mapping.targetDefaultCollation': 'ターゲット データベースの既定の照合順序を使用',
+  'transfer.mapping.targetDefaultCollationHint':
+    'テキストの並べ替え、大文字・小文字やアクセントの比較、ユニーク インデックスの動作が変わる場合があります。',
   'transfer.mapping.sourceColumn': 'ソース列',
   'transfer.mapping.targetColumn': 'ターゲット列',
   'transfer.mapping.skip': 'スキップ',
@@ -187,6 +192,9 @@ const pack = {
   'transfer.limitations.dontShowAgain': '今後このメッセージを表示しない',
   'transfer.ddlOverrideHint':
     '上の CREATE ステートメントを編集できます。実行時には編集後の SQL が使用されます。',
+  'transfer.ddlKind.index': 'インデックス',
+  'transfer.ddlKind.foreignKey': '外部キー',
+  'transfer.ddlKind.dropTable': 'テーブルを削除',
 
   // --- Schema Diff ---
   'schemaDiff.description':
@@ -239,6 +247,7 @@ const pack = {
   'schemaDiff.reviewTarget': 'ターゲット',
   'schemaDiff.reviewTables': 'テーブル',
   'schemaDiff.useTransaction': 'トランザクションで実行（方言が対応する場合）',
+  'schemaDiff.transactionRequired': 'SQLite のテーブル再構築の安全性を保つために必要',
   'schemaDiff.txUnsupported': 'この方言の DDL は通常オートコミットです',
   'schemaDiff.requireRollback': '完全なロールバック SQL を要求',
   'schemaDiff.rollbackIncomplete': 'ロールバック SQL が不足',

@@ -222,6 +222,9 @@ const pack = {
   'common.queriesPerSec': 'クエリ / 秒',
   'common.dataSyncTitle': 'データ同期 - DataZen',
   'common.unsupportedPair': '非対応の組み合わせ',
+  'common.experimentalPair': '実験的',
+  'common.experimentalPairHint':
+    'このデータベースの組み合わせは、実データを使った移行テストで検証されていません',
   'common.schemaDiff': 'スキーマ Diff',
   'common.sqlPreviewLower': 'SQL プレビュー',
   'common.selectDatabase': 'データベースを選択…',

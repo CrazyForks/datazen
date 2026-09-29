@@ -1034,10 +1034,11 @@ mod database_plan_tests {
             &[("id", "id"), ("name", "name")],
         )];
 
+        let mut transfer_job = job(mappings);
         let error = build_database_structure_plan(
             &Source,
             &datazen_driver_postgres::PgSyncAdapter,
-            &job(mappings),
+            &transfer_job,
             &inspected_tables,
             &schemas,
         )
@@ -1046,6 +1047,18 @@ mod database_plan_tests {
         assert!(message.contains("utf8mb4_0900_ai_ci"), "{message}");
         assert!(message.contains("no proven equivalent"), "{message}");
         assert!(message.contains("PostgreSQL UTF8"), "{message}");
+
+        transfer_job.options.use_target_default_collation = true;
+        let plan = build_database_structure_plan(
+            &Source,
+            &datazen_driver_postgres::PgSyncAdapter,
+            &transfer_job,
+            &inspected_tables,
+            &schemas,
+        )
+        .expect("explicit target-default selection permits a visible semantics conversion");
+        assert!(plan[0].ddl.contains("CREATE TABLE"), "{}", plan[0].ddl);
+        assert!(!plan[0].ddl.contains("COLLATE"), "{}", plan[0].ddl);
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub enum MigrationOperation {
         table: String,
         columns: Vec<ColumnSnapshot>,
         primary_keys: Vec<String>,
+        table_options: TableOptions,
     },
     /// Drop a target table as an explicit destructive operation. The deploy
     /// gate requires destructive approval and can never claim complete
@@ -161,6 +162,19 @@ pub enum MigrationOperation {
 }
 
 impl MigrationOperation {
+    pub fn render_with(
+        &self,
+        renderer: &dyn datazen_driver_api::MigrationRenderer,
+    ) -> Result<datazen_driver_api::MigrationStatement, String> {
+        let driver_operation = self.to_driver_api();
+        match self {
+            Self::CreateTable { table_options, .. } => {
+                renderer.render_create_table_with_options(&driver_operation, table_options)
+            }
+            _ => renderer.render(&driver_operation),
+        }
+    }
+
     pub fn risk(&self) -> StatementRisk {
         match self {
             Self::DropTable { .. }
@@ -508,6 +522,7 @@ impl MigrationOperation {
                 table,
                 columns,
                 primary_keys,
+                ..
             } => O::CreateTable {
                 table: table.clone(),
                 columns: columns.iter().map(col).collect(),

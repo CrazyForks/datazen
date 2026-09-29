@@ -90,6 +90,8 @@ const pack = {
   'sync.pagePrev': 'Précédent',
   'sync.pageNext': 'Suivant',
   'sync.refreshPreview': 'Rafraîchir',
+  'sync.sqlPreviewLimitReached':
+    'L’aperçu SQL est limité à 16 Mio. Sélectionnez moins de lignes ou d’opérations pour examiner le SQL. Vous pouvez toujours consulter la comparaison des lignes et exécuter les modifications vérifiées.',
   'sync.execute': 'Exécuter',
   'sync.executing': 'Exécution de la synchronisation…',
   'sync.executingSql': 'Exécution de {count} instruction(s) SQL…',
@@ -171,6 +173,9 @@ const pack = {
   'transfer.mapping.noTables': 'Aucune table activée à mapper.',
   'transfer.mapping.targetTable': 'Table cible',
   'transfer.mapping.createNew': 'Créer une nouvelle table',
+  'transfer.mapping.targetDefaultCollation': 'Utiliser la collation par défaut de la base cible',
+  'transfer.mapping.targetDefaultCollationHint':
+    'Le tri du texte, les comparaisons de casse ou d’accents et le comportement des index uniques peuvent changer.',
   'transfer.mapping.sourceColumn': 'Colonne source',
   'transfer.mapping.targetColumn': 'Colonne cible',
   'transfer.mapping.skip': 'Ignorer',
@@ -193,6 +198,9 @@ const pack = {
   'transfer.limitations.dontShowAgain': 'Ne plus afficher ce message',
   'transfer.ddlOverrideHint':
     'Modifiez l’instruction CREATE ci-dessus ; l’exécution lancera votre SQL modifié.',
+  'transfer.ddlKind.index': 'Indice',
+  'transfer.ddlKind.foreignKey': 'Clé étrangère',
+  'transfer.ddlKind.dropTable': 'Supprimer la table',
 
   // --- Schema Diff ---
   'schemaDiff.description':
@@ -253,6 +261,8 @@ const pack = {
   'schemaDiff.reviewTarget': 'Cible',
   'schemaDiff.reviewTables': 'Tables',
   'schemaDiff.useTransaction': 'Exécuter en transaction (si le dialecte le permet)',
+  'schemaDiff.transactionRequired':
+    'requis pour préserver la sécurité de la reconstruction des tables SQLite',
   'schemaDiff.txUnsupported': 'ce dialecte valide souvent le DDL automatiquement',
   'schemaDiff.requireRollback': 'Exiger un SQL de rollback complet',
   'schemaDiff.rollbackIncomplete': 'Rollback SQL manquant pour',

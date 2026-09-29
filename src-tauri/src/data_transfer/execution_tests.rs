@@ -1,7 +1,7 @@
 //! Generic execution journeys: bound values, projection, rollback and cancellation.
 use super::execute::{
-    ValueFormatter, execute_same_family_data, execute_transfer_data_with_write_observer,
-    map_row_values,
+    execute_same_family_data, execute_transfer_data_with_write_observer, map_row_values,
+    ValueFormatter,
 };
 use super::filter::SourceFilter;
 use super::model::*;
@@ -407,6 +407,7 @@ fn job_with_batch_size(batch_size: u32) -> TransferJob {
             batch_size,
             stop_on_error: false,
             confirmed_destructive: false,
+            use_target_default_collation: false,
         },
     }
 }
@@ -685,12 +686,10 @@ fn projected_text_bytes_decode_as_utf8_while_binary_bytes_remain_bytes() {
         Some(Value::Bytes(vec![0xff])),
         Some(Value::Bytes(vec![0, 255])),
     ];
-    assert!(
-        map_row_values(&invalid, &source_schema, &refs)
-            .unwrap_err()
-            .to_string()
-            .contains("not valid UTF-8")
-    );
+    assert!(map_row_values(&invalid, &source_schema, &refs)
+        .unwrap_err()
+        .to_string()
+        .contains("not valid UTF-8"));
 }
 
 #[tokio::test]
@@ -1546,18 +1545,16 @@ fn same_named_columns_use_their_own_table_ir_and_missing_types_fail() {
         .unwrap();
         assert!(matches!(&params[0], Value::String(value) if value == expected));
     }
-    assert!(
-        super::writer::bound_insert(
-            &driver,
-            "missing",
-            "target",
-            &[&binding],
-            &driver.schema,
-            &row,
-            &formatter
-        )
-        .is_err()
-    );
+    assert!(super::writer::bound_insert(
+        &driver,
+        "missing",
+        "target",
+        &[&binding],
+        &driver.schema,
+        &row,
+        &formatter
+    )
+    .is_err());
 }
 
 #[tokio::test]
@@ -1655,12 +1652,10 @@ async fn test_tester_dotted_target_schema_fails_before_any_bound_write() {
 
     assert!(result.partial);
     assert_eq!(result.rows_inserted, 0);
-    assert!(
-        result.tables[0]
-            .error
-            .as_deref()
-            .is_some_and(|message| message.contains("structured relation support"))
-    );
+    assert!(result.tables[0]
+        .error
+        .as_deref()
+        .is_some_and(|message| message.contains("structured relation support")));
     let target_state = target.state.lock().unwrap();
     assert_eq!(target_state.calls, 0);
     assert!(target_state.metadata_refs.is_empty());
@@ -1777,10 +1772,8 @@ async fn unknown_structure_ddl_fences_and_reports_every_unattempted_statement() 
 
     assert_eq!(results.len(), 3);
     assert_eq!(results[0].outcome, Some(TableExecutionOutcome::Unknown));
-    assert!(
-        results[1..]
-            .iter()
-            .all(|result| result.outcome == Some(TableExecutionOutcome::NotStarted))
-    );
+    assert!(results[1..]
+        .iter()
+        .all(|result| result.outcome == Some(TableExecutionOutcome::NotStarted)));
     assert_eq!(target.state.lock().unwrap().execute_calls, 1);
 }

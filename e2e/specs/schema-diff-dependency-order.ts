@@ -66,16 +66,43 @@ async function withFixture<T>(
     await setupFixture(fixture, scenario);
     return await run(fixture);
   } finally {
-    await teardownSchemaDiffFixture(
-      [fixture.sourceId, fixture.targetId],
-      [fixture.lateChildTable, fixture.childTable, fixture.parentTable],
-    );
+    try {
+      await dropCrossSchemaFixture(fixture);
+    } finally {
+      await teardownSchemaDiffFixture(
+        [fixture.sourceId, fixture.targetId],
+        [fixture.lateChildTable, fixture.childTable, fixture.parentTable],
+      );
+    }
     try {
       await assertFixtureTablesAbsent(fixture);
     } finally {
       await closeExtraWindows(mainWindow);
       await browser.switchToWindow(mainWindow);
     }
+  }
+}
+
+async function dropCrossSchemaFixture(fixture: DialectFixture): Promise<void> {
+  if (!fixture.childSchema) return;
+
+  await invokeBackend('save_connection', { config: fixture.targetConfig });
+  const session = await invokeBackend<string>('connect', {
+    connectionId: fixture.targetId,
+  });
+  try {
+    await withSafeModeOff(async () => {
+      await invokeBackend('execute_query', {
+        dbSessionId: session,
+        sql: `DROP TABLE IF EXISTS ${childTableIdentifier(fixture)}`,
+      });
+      await invokeBackend('execute_query', {
+        dbSessionId: session,
+        sql: `DROP SCHEMA IF EXISTS ${fixture.childSchema}`,
+      });
+    });
+  } finally {
+    await disconnectBackend(session);
   }
 }
 
@@ -92,26 +119,6 @@ async function assertFixtureTablesAbsent(fixture: DialectFixture): Promise<void>
     let session: string | undefined;
     try {
       session = await invokeBackend<string>('connect', { connectionId: endpoint.config.id });
-      if (fixture.childSchema && endpoint.label === 'target') {
-        const schemaExists = await invokeBackend<QueryResultPayload>('execute_query', {
-          dbSessionId: session,
-          sql: `SELECT count(*)::int AS c FROM information_schema.schemata WHERE schema_name = '${fixture.childSchema}'`,
-        });
-        if (queryScalar(schemaExists, 'c') > 0) {
-          await invokeBackend('execute_query', {
-            dbSessionId: session,
-            sql: `DROP TABLE IF EXISTS ${childTableIdentifier(fixture)}`,
-          });
-          await invokeBackend('execute_query', {
-            dbSessionId: session,
-            sql: `DROP SCHEMA ${fixture.childSchema}`,
-          });
-        }
-        await invokeBackend('execute_query', {
-          dbSessionId: session,
-          sql: `DROP TABLE IF EXISTS ${fixture.lateChildTable}, ${fixture.parentTable}`,
-        });
-      }
       const names = tableNames.map((name) => `'${name}'`).join(', ');
       const sql =
         fixture.childSchema && fixture.dialect === 'postgresql'
@@ -241,7 +248,11 @@ async function openPlan(fixture: DialectFixture) {
   await clickSchemaDiffGeneratePlan();
 
   const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
-  expect(await requirements.isExisting()).toBe(false);
+  if (await requirements.isExisting()) {
+    throw new Error(
+      `Plan requirements unexpectedly block deployment:\n${await readPlanRequirementText()}`,
+    );
+  }
 }
 
 async function readPlanStatements(): Promise<string[]> {

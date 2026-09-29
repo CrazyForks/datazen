@@ -178,11 +178,13 @@ fn foreign_key_waits_for_referenced_table_and_columns() {
         table: "users".into(),
         columns: vec![super::tests::snap("id")],
         primary_keys: vec!["id".into()],
+        table_options: Default::default(),
     };
     let add_local_table = MigrationOperation::CreateTable {
         table: "orders".into(),
         columns: vec![super::tests::snap("user_id")],
         primary_keys: vec![],
+        table_options: Default::default(),
     };
     let sorted = resolve_dependencies(vec![fk(true), add_local_table, add_ref_table]);
     let fk_position = sorted
@@ -221,11 +223,13 @@ fn typed_type_table_fk_trigger_chain_is_topologically_ordered() {
             },
         ],
         primary_keys: vec!["id".into()],
+        table_options: Default::default(),
     };
     let users = MigrationOperation::CreateTable {
         table: "public.users".into(),
         columns: vec![super::tests::snap("id")],
         primary_keys: vec!["id".into()],
+        table_options: Default::default(),
     };
     let foreign_key = MigrationOperation::AddForeignKey {
         table: "public.orders".into(),
@@ -306,6 +310,7 @@ fn unqualified_foreign_key_reference_is_rejected_when_selected_tables_are_ambigu
         table: table.into(),
         columns: vec![super::tests::snap("id")],
         primary_keys: vec!["id".into()],
+        table_options: Default::default(),
     };
     let error = try_resolve_dependencies(&[
         fk(true),
@@ -353,6 +358,7 @@ fn basename_only_fk_trigger_and_type_references_fail_closed() {
         table: "public.users".into(),
         columns: vec![super::tests::snap("id")],
         primary_keys: vec!["id".into()],
+        table_options: Default::default(),
     };
     let fk_error = try_resolve_dependencies(&[fk(true), qualified_table.clone()])
         .expect_err("an unqualified FK reference cannot prove which schema is intended");
@@ -390,6 +396,7 @@ fn basename_only_fk_trigger_and_type_references_fail_closed() {
             is_auto_increment: false,
         }],
         primary_keys: vec![],
+        table_options: Default::default(),
     };
     let type_error = try_resolve_dependencies(&[type_operation, table_operation])
         .expect_err("an unqualified custom type cannot prove its schema");

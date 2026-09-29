@@ -74,8 +74,9 @@ function connectionConfig(type: DriverType, id: string, name: string, database: 
 
 function createTableSql(type: DriverType, table: string): string {
   const tenant =
-    type === 'mysql' ? 'VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin' : 'TEXT';
-  return `CREATE TABLE ${table} (tenant ${tenant} NOT NULL, seq BIGINT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (tenant, seq))`;
+    type === 'mysql' ? 'VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin' : 'VARCHAR(64)';
+  const payload = type === 'mysql' ? 'LONGTEXT' : 'TEXT';
+  return `CREATE TABLE ${table} (tenant ${tenant} NOT NULL, seq BIGINT NOT NULL, payload ${payload} NOT NULL, PRIMARY KEY (tenant, seq))`;
 }
 
 function insertFixtureSql(table: string): string {
@@ -159,6 +160,10 @@ describe('Data Transfer composite tuple recordset journeys', () => {
             dbSessionId: sourceSession!,
             sql: insertFixtureSql(table),
           });
+          await invokeBackend('execute_query', {
+            dbSessionId: targetSession!,
+            sql: createTableSql(route.targetType, table),
+          });
           const sourceHex =
             route.sourceType === 'postgresql'
               ? "encode(convert_to(tenant, 'UTF8'), 'hex')"
@@ -180,10 +185,6 @@ describe('Data Transfer composite tuple recordset journeys', () => {
               'z-外:7a2de5a496:0',
             ].sort(),
           );
-          await invokeBackend('execute_query', {
-            dbSessionId: targetSession!,
-            sql: createTableSql(route.targetType, table),
-          });
         });
       });
 
@@ -288,7 +289,11 @@ describe('Data Transfer composite tuple recordset journeys', () => {
         await clickTransferNext({ timeout: 30000, pauseMs: 2500 });
 
         const preview = await $('[data-testid="data-transfer-preview"]');
-        await preview.waitForDisplayed({ timeout: 20000 });
+        const pageText = (await $('body').getText()).slice(-1800);
+        await preview.waitForDisplayed({
+          timeout: 20000,
+          timeoutMsg: `Tuple transfer preview did not appear. Page state: ${pageText}`,
+        });
         const previewText = await preview.getText();
         expect(previewText).toContain('a-雪');
         expect(previewText).toContain('9223372036854775806');
@@ -317,7 +322,11 @@ describe('Data Transfer composite tuple recordset journeys', () => {
           const targetRows = parseQueryRows(rows);
           expect(targetRows.map((row) => queryText(row[0]))).toEqual(['a-雪', 'a-雪', 'a-雪']);
           if (route.targetType === 'postgresql') {
-            expect(targetRows.map((row) => queryText(row[1]))).toEqual(['text', 'text', 'text']);
+            expect(targetRows.map((row) => queryText(row[1]))).toEqual([
+              'character varying',
+              'character varying',
+              'character varying',
+            ]);
           }
           const actual = targetRows.map(
             (row) =>

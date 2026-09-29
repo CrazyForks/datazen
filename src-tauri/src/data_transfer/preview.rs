@@ -84,6 +84,14 @@ pub fn build_preview(
         }
 
         let table_mapping = table_mapping_for(job, &table.source_table);
+        if job.options.use_target_default_collation
+            && (needs_structure || job.write_mode == WriteMode::DropCreateInsert)
+        {
+            warnings.push(format!(
+                "Table '{}' will use the target database's default character set and collation. Text ordering, case/accent comparisons, and unique-index behavior may differ from the source.",
+                table.target_table
+            ));
+        }
 
         // Resolve once, using the same renderer as both execution paths, but
         // only for operations that actually create structure. In particular,

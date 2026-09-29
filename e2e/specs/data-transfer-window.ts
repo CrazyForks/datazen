@@ -237,7 +237,14 @@ describe('数据传输真实迁移 (DTW-CL)', () => {
         tables: null,
       });
       const fixture = inspected.find((table) => table.sourceTable === TABLE);
-      expect(fixture?.sourceColumns).toContain('qty');
+      if (!fixture) {
+        throw new Error(
+          `inspect_data_transfer omitted ${TABLE}; returned source tables: ${inspected
+            .map((table) => table.sourceTable)
+            .join(', ')}`,
+        );
+      }
+      expect(fixture?.sourceColumns ?? []).toContain('qty');
       expect(fixture?.targetColumns).toContain('qty');
     } finally {
       await disconnectBackend(sourceSession);

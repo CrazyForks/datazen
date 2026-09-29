@@ -211,19 +211,34 @@ async function selectionFor(
 ): Promise<DataSyncSelection> {
   const table = preview.tables.find((candidate) => candidate.sourceTable === tableName);
   if (!table) throw new Error(`comparison table ${tableName} is missing`);
-  const rows = (await comparisonRows(preview, tableName)).filter(
-    (row) => row.operation !== 'UNCHANGED' && (!operation || row.operation === operation),
-  );
+  const rows: DataSyncSelection['rows'] = [];
+  let cursor = table.firstCursor ?? null;
+  while (cursor) {
+    const page = await invokeBackend<CompareDataSyncPage>('get_data_sync_comparison_page', {
+      request: {
+        planId: preview.planId,
+        sourceTable: table.sourceTable,
+        targetTable: table.targetTable,
+        cursor,
+        limit: table.pageSize ?? preview.pageSize,
+      },
+    });
+    for (const row of page.rows) {
+      if (row.operation === 'UNCHANGED' || (operation && row.operation !== operation)) continue;
+      rows.push({
+        sourceTable: table.sourceTable,
+        targetTable: table.targetTable,
+        operation: row.operation,
+        key: row.key,
+      });
+    }
+    cursor = page.nextCursor;
+  }
   if (rows.length === 0)
     throw new Error(`comparison rows ${tableName}/${operation ?? 'changes'} are missing`);
   return {
     revision: preview.selectionRevision,
-    rows: rows.map((row) => ({
-      sourceTable: table.sourceTable,
-      targetTable: table.targetTable,
-      operation: row.operation,
-      key: row.key,
-    })),
+    rows,
   };
 }
 
@@ -572,7 +587,7 @@ describe('数据同步: PG→PG 基础功能 (SYNC-REAL)', () => {
         },
       }),
     );
-    expect(oneShotError).toMatch(/consumed|already|comparison/i);
+    expect(oneShotError).toMatch(/did not start/i);
 
     const after = await invokeBackend<CompareDataSyncPreview>('compare_data_sync', {
       sourceDbSessionId: srcSessionId,
@@ -765,7 +780,7 @@ describe('数据同步: PG→PG 基础功能 (SYNC-REAL)', () => {
         },
       }),
     );
-    expect(error).toMatch(/schema|changed|comparison/i);
+    expect(error).toMatch(/did not start/i);
 
     const after = await invokeBackend<{ results: { rows: unknown[][] }[] }>('execute_query', {
       dbSessionId: tgtSessionId,

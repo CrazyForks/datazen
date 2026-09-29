@@ -222,6 +222,9 @@ const pack = {
   'common.queriesPerSec': 'Requêtes / s',
   'common.dataSyncTitle': 'Synchronisation des données - DataZen',
   'common.unsupportedPair': 'Paire non prise en charge',
+  'common.experimentalPair': 'Expérimental',
+  'common.experimentalPairHint':
+    'Cette combinaison de bases de données n’a pas été vérifiée par des tests de migration réels',
   'common.schemaDiff': 'Diff de schéma',
   'common.sqlPreviewLower': 'Aperçu SQL',
   'common.selectDatabase': 'Sélectionner une base…',

@@ -84,6 +84,8 @@ const pack = {
   'sync.pagePrev': '上一頁',
   'sync.pageNext': '下一頁',
   'sync.refreshPreview': '重新整理',
+  'sync.sqlPreviewLimitReached':
+    'SQL 預覽上限為 16 MiB。請減少選取的資料列或操作，以檢視 SQL。你仍可檢閱資料列比較結果並執行已審閱的變更。',
   'sync.execute': '執行',
   'sync.executing': '正在執行同步…',
   'sync.executingSql': '正在執行 {count} 個 SQL 陳述式…',
@@ -159,6 +161,9 @@ const pack = {
   'transfer.mapping.noTables': '沒有可對應的已啟用資料表。',
   'transfer.mapping.targetTable': '目標資料表',
   'transfer.mapping.createNew': '建立新資料表',
+  'transfer.mapping.targetDefaultCollation': '使用目標資料庫的預設定序',
+  'transfer.mapping.targetDefaultCollationHint':
+    '文字排序、大小寫或重音比較，以及唯一索引的行為都可能改變。',
   'transfer.mapping.sourceColumn': '來源欄位',
   'transfer.mapping.targetColumn': '目標欄位',
   'transfer.mapping.skip': '略過',
@@ -176,6 +181,9 @@ const pack = {
   'transfer.limitations.noResume': '不支援逐表續傳；取消時只會停止目前的作業',
   'transfer.limitations.dontShowAgain': '不要再顯示此訊息',
   'transfer.ddlOverrideHint': '請編輯上方的 CREATE 陳述式；執行時會改用你修改後的 SQL。',
+  'transfer.ddlKind.index': '索引',
+  'transfer.ddlKind.foreignKey': '外鍵',
+  'transfer.ddlKind.dropTable': '刪除資料表',
 
   // --- Schema Diff ---
   'schemaDiff.description':
@@ -225,6 +233,7 @@ const pack = {
   'schemaDiff.reviewTarget': '目標',
   'schemaDiff.reviewTables': '資料表',
   'schemaDiff.useTransaction': '在交易中執行（若方言支援）',
+  'schemaDiff.transactionRequired': '為確保 SQLite 資料表重建安全而必須啟用',
   'schemaDiff.txUnsupported': '此方言的 DDL 通常會自動提交',
   'schemaDiff.requireRollback': '要求完整的回滾腳本',
   'schemaDiff.rollbackIncomplete': '以下陳述式缺少回滾 SQL',

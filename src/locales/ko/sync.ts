@@ -84,6 +84,8 @@ const pack = {
   'sync.pagePrev': '이전',
   'sync.pageNext': '다음',
   'sync.refreshPreview': '새로 고침',
+  'sync.sqlPreviewLimitReached':
+    'SQL 미리보기는 16MiB로 제한됩니다. SQL을 확인하려면 행이나 작업을 더 적게 선택하세요. 행 비교 결과를 검토하고 검토된 변경 사항을 실행하는 작업은 계속 사용할 수 있습니다.',
   'sync.execute': '실행',
   'sync.executing': '동기화 실행 중…',
   'sync.executingSql': '{count}개 SQL 문 실행 중…',
@@ -163,6 +165,9 @@ const pack = {
   'transfer.mapping.noTables': '매핑할 사용 가능한 테이블이 없습니다.',
   'transfer.mapping.targetTable': '대상 테이블',
   'transfer.mapping.createNew': '새 테이블 만들기',
+  'transfer.mapping.targetDefaultCollation': '대상 데이터베이스의 기본 데이터 정렬 사용',
+  'transfer.mapping.targetDefaultCollationHint':
+    '텍스트 정렬, 대소문자·악센트 비교, 고유 인덱스 동작이 달라질 수 있습니다.',
   'transfer.mapping.sourceColumn': '소스 열',
   'transfer.mapping.targetColumn': '대상 열',
   'transfer.mapping.skip': '건너뛰기',
@@ -182,6 +187,9 @@ const pack = {
   'transfer.limitations.noResume': '테이블별 재개 없음; 취소를 누르면 현재 작업만 중단됩니다',
   'transfer.limitations.dontShowAgain': '다시 표시하지 않음',
   'transfer.ddlOverrideHint': '위의 CREATE 문을 편집하세요. 실행하면 수정한 SQL이 적용됩니다.',
+  'transfer.ddlKind.index': '인덱스',
+  'transfer.ddlKind.foreignKey': '외래 키',
+  'transfer.ddlKind.dropTable': '테이블 삭제',
 
   // --- Schema Diff ---
   'schemaDiff.description':
@@ -231,6 +239,7 @@ const pack = {
   'schemaDiff.reviewTarget': '대상',
   'schemaDiff.reviewTables': '테이블',
   'schemaDiff.useTransaction': '트랜잭션으로 실행(방언 지원 시)',
+  'schemaDiff.transactionRequired': 'SQLite 테이블 재구성의 안전성을 보장하기 위해 필요',
   'schemaDiff.txUnsupported': '이 방언 DDL은 보통 자동 커밋됩니다',
   'schemaDiff.requireRollback': '완전한 롤백 SQL 요구',
   'schemaDiff.rollbackIncomplete': '롤백 SQL 누락',

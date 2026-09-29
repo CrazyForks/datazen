@@ -76,6 +76,8 @@ export interface TransferOptions {
   batchSize?: number;
   stopOnError?: boolean;
   confirmedDestructive?: boolean;
+  /** Explicitly use target-default collation when source text semantics cannot be preserved. */
+  useTargetDefaultCollation?: boolean;
 }
 
 export interface TransferJob {
@@ -227,6 +229,7 @@ export const DEFAULT_TRANSFER_OPTIONS: TransferOptions = {
   batchSize: 500,
   stopOnError: true,
   confirmedDestructive: false,
+  useTargetDefaultCollation: false,
 };
 
 export const transferCommands = {

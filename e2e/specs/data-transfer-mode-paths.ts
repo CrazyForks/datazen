@@ -70,11 +70,21 @@ async function runWizard(
         : 'data-transfer-mode-both';
   await (await $(`[data-testid="${modeTestId}"]`)).click();
   await browser.pause(300);
+  if (createNew) {
+    const collationChoice = await $('[data-testid="data-transfer-use-target-default-collation"]');
+    if ((await collationChoice.isExisting()) && !(await collationChoice.isSelected())) {
+      await collationChoice.click();
+    }
+  }
   await clickTransferNext();
 
   await browser.pause(2000);
   const tableRow = await $(`[data-testid="data-transfer-table-row"]*=${table}`);
-  await tableRow.waitForDisplayed({ timeout: 15000 });
+  const pageText = (await $('body').getText()).slice(-1800);
+  await tableRow.waitForDisplayed({
+    timeout: 15000,
+    timeoutMsg: `Transfer table ${table} did not appear. Page state: ${pageText}`,
+  });
   const checkbox = await tableRow.$('input[type="checkbox"]');
   if (!(await checkbox.isSelected())) await checkbox.click();
   await clickTransferNext();
@@ -182,7 +192,7 @@ describe('数据传输模式路径矩阵 (DT-MODE-MATRIX)', () => {
             sql: `DROP TABLE IF EXISTS ${p.table}`,
           });
           const pgCreate = `CREATE TABLE ${p.table} (id INT PRIMARY KEY, name TEXT NOT NULL)`;
-          const mysqlCreate = `CREATE TABLE ${p.table} (id INT PRIMARY KEY, name VARCHAR(255) NOT NULL)`;
+          const mysqlCreate = `CREATE TABLE ${p.table} (id INT PRIMARY KEY, name LONGTEXT NOT NULL)`;
           const pgInsert = `INSERT INTO ${p.table} (id, name) VALUES (1,'one'),(2,'two')`;
           const mysqlInsert = pgInsert;
 
@@ -262,7 +272,11 @@ describe('数据传输模式路径矩阵 (DT-MODE-MATRIX)', () => {
       it(`DT-MODE-${p.pair}-${mode}: ${p.pair} ${mode} 模式应到达 Preview`, async () => {
         await runWizard(p.srcName, p.tgtName, p.table, mode, createNew);
         const preview = await $('[data-testid="data-transfer-preview"]');
-        await expect(preview).toBeDisplayed();
+        const pageText = (await $('body').getText()).slice(-1800);
+        await preview.waitForDisplayed({
+          timeout: 15000,
+          timeoutMsg: `Transfer preview did not appear for ${p.pair}/${mode}. Page state: ${pageText}`,
+        });
       });
     }
   }

@@ -1204,6 +1204,17 @@ pub struct MigrationStatement {
 pub trait MigrationRenderer: Send + Sync {
     fn render(&self, operation: &MigrationOperation) -> Result<MigrationStatement, String>;
 
+    /// Render a new table with source table-level options when the target
+    /// dialect can preserve them. The default renderer ignores those options;
+    /// drivers with portable table options can override this method.
+    fn render_create_table_with_options(
+        &self,
+        operation: &MigrationOperation,
+        _table_options: &TableOptions,
+    ) -> Result<MigrationStatement, String> {
+        self.render(operation)
+    }
+
     /// Render a reviewed, driver-native rebuild of one existing table.
     /// Drivers should return a multi-statement sequence only when the host
     /// can execute it inside one transaction. Catalog semantics that are not

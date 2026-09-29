@@ -89,6 +89,8 @@ const pack = {
   'sync.pagePrev': 'Назад',
   'sync.pageNext': 'Далее',
   'sync.refreshPreview': 'Обновить',
+  'sync.sqlPreviewLimitReached':
+    'Предпросмотр SQL ограничен 16 МиБ. Выберите меньше строк или операций, чтобы просмотреть SQL. Сравнение строк и выполнение проверенных изменений по-прежнему доступны.',
   'sync.execute': 'Выполнить',
   'sync.executing': 'Выполнение синхронизации…',
   'sync.executingSql': 'Выполняется операторов SQL: {count}…',
@@ -169,6 +171,10 @@ const pack = {
   'transfer.mapping.noTables': 'Нет включённых таблиц для сопоставления.',
   'transfer.mapping.targetTable': 'Целевая таблица',
   'transfer.mapping.createNew': 'Создать новую таблицу',
+  'transfer.mapping.targetDefaultCollation':
+    'Использовать сортировку по умолчанию целевой базы данных',
+  'transfer.mapping.targetDefaultCollationHint':
+    'Могут измениться сортировка текста, сравнение с учётом регистра и диакритики, а также поведение уникальных индексов.',
   'transfer.mapping.sourceColumn': 'Столбец источника',
   'transfer.mapping.targetColumn': 'Столбец цели',
   'transfer.mapping.skip': 'Пропустить',
@@ -192,6 +198,9 @@ const pack = {
   'transfer.limitations.dontShowAgain': 'Больше не показывать',
   'transfer.ddlOverrideHint':
     'Измените инструкцию CREATE выше; при выполнении будет запущен ваш изменённый SQL.',
+  'transfer.ddlKind.index': 'Индекс',
+  'transfer.ddlKind.foreignKey': 'Внешний ключ',
+  'transfer.ddlKind.dropTable': 'Удалить таблицу',
 
   // --- Schema Diff ---
   'schemaDiff.description':
@@ -242,6 +251,7 @@ const pack = {
   'schemaDiff.reviewTarget': 'Цель',
   'schemaDiff.reviewTables': 'Таблицы',
   'schemaDiff.useTransaction': 'Выполнять в транзакции (если диалект поддерживает)',
+  'schemaDiff.transactionRequired': 'требуется для безопасного перестроения таблицы SQLite',
   'schemaDiff.txUnsupported': 'этот диалект обычно автокоммитит DDL',
   'schemaDiff.requireRollback': 'Требовать полный rollback SQL',
   'schemaDiff.rollbackIncomplete': 'Нет rollback SQL для',

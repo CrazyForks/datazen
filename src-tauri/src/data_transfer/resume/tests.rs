@@ -641,6 +641,7 @@ async fn run_test_chunk_without_ack_fault_lock(
             batch_size: 2,
             stop_on_error: true,
             confirmed_destructive: false,
+            use_target_default_collation: false,
         },
     };
     let table = TableInspectResult {

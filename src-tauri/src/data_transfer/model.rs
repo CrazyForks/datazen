@@ -330,6 +330,10 @@ pub struct TransferOptions {
     pub stop_on_error: bool,
     #[serde(default)]
     pub confirmed_destructive: bool,
+    /// Explicitly use target-default character semantics when source
+    /// collations cannot be represented by the target database.
+    #[serde(default)]
+    pub use_target_default_collation: bool,
 }
 
 /// Upper bound for both a source keyset page and its target INSERT. Keeping
@@ -343,6 +347,7 @@ impl Default for TransferOptions {
             batch_size: 500,
             stop_on_error: true,
             confirmed_destructive: false,
+            use_target_default_collation: false,
         }
     }
 }
@@ -425,11 +430,21 @@ pub struct TableInspectResult {
     /// Native target column types captured during inspection. This is used by
     /// Data Transfer preflight to catch narrowing before the first write.
     #[serde(default)]
-    pub target_column_types: HashMap<String, String>,
+    pub target_column_types: HashMap<String, TransferTargetColumnType>,
     pub incompatible_reason: Option<String>,
     pub source_row_count: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recordset: Option<TransferRecordset>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferTargetColumnType {
+    pub native_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_set: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

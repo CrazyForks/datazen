@@ -24,6 +24,7 @@ pub fn diff_to_operations(
                 .map(super::compare::column_snapshot)
                 .collect(),
             primary_keys: source.effective_primary_keys(),
+            table_options: source.table_options.clone(),
         });
     } else if source.columns.is_empty() && !target.columns.is_empty() {
         // A missing desired table is represented explicitly so a target-only
@@ -179,12 +180,14 @@ pub fn diff_to_operations(
         });
     }
 
-    if let Some(table_options) = diff.table_options {
-        ops.push(MigrationOperation::SetTableOptions {
-            table: table.into(),
-            from: table_options.target,
-            to: table_options.source,
-        });
+    if !is_new_table {
+        if let Some(table_options) = diff.table_options {
+            ops.push(MigrationOperation::SetTableOptions {
+                table: table.into(),
+                from: table_options.target,
+                to: table_options.source,
+            });
+        }
     }
 
     ops
@@ -260,6 +263,27 @@ mod tests {
         assert!(!ops
             .iter()
             .any(|op| matches!(op, MigrationOperation::DropPrimaryKey { .. })));
+    }
+
+    #[test]
+    fn new_table_carries_table_options_in_create_operation() {
+        let mut source = schema(vec![col("id")]);
+        source.table_options.engine = Some("InnoDB".into());
+        source.table_options.charset = Some("utf8mb4".into());
+        let target = schema(vec![]);
+
+        let operations = diff_to_operations("items", &source, &target, None);
+
+        assert_eq!(operations.len(), 1);
+        assert!(matches!(
+            &operations[0],
+            MigrationOperation::CreateTable { table_options, .. }
+                if table_options.engine.as_deref() == Some("InnoDB")
+                    && table_options.charset.as_deref() == Some("utf8mb4")
+        ));
+        assert!(!operations
+            .iter()
+            .any(|operation| matches!(operation, MigrationOperation::SetTableOptions { .. })));
     }
 
     #[test]

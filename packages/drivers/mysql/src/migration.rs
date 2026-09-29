@@ -135,6 +135,82 @@ fn mysql_table_comment(value: Option<&String>) -> String {
         .unwrap_or_else(|| "''".into())
 }
 
+fn render_mysql_create_table(
+    table: &str,
+    columns: &[MigrationColumn],
+    primary_keys: &[String],
+    options: &TableOptions,
+) -> Result<MigrationStatement, String> {
+    let qi = |s: &str| {
+        if s.contains('.') {
+            s.split('.')
+                .map(|part| format!("`{}`", part.replace('`', "``")))
+                .collect::<Vec<_>>()
+                .join(".")
+        } else {
+            format!("`{}`", s.replace('`', "``"))
+        }
+    };
+    let cols = columns
+        .iter()
+        .map(|column| format_mysql_column_def(column, &qi))
+        .collect::<Vec<_>>();
+    let pk = if primary_keys.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", PRIMARY KEY ({})",
+            primary_keys
+                .iter()
+                .map(|column| qi(column))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let mut suffixes = Vec::new();
+    if let Some(engine) = options.engine.as_deref() {
+        suffixes.push(format!(
+            "ENGINE = {}",
+            mysql_option_token(engine, "engine")?
+        ));
+    }
+    if let Some(charset) = options.charset.as_deref() {
+        suffixes.push(format!(
+            "DEFAULT CHARACTER SET = {}",
+            mysql_option_token(charset, "charset")?
+        ));
+    }
+    if let Some(collation) = options.collation.as_deref() {
+        suffixes.push(format!(
+            "COLLATE = {}",
+            mysql_option_token(collation, "collation")?
+        ));
+    }
+    if options.comment.is_some() {
+        suffixes.push(format!(
+            "COMMENT = {}",
+            mysql_table_comment(options.comment.as_ref())
+        ));
+    }
+    let suffix = if suffixes.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", suffixes.join(" "))
+    };
+    Ok(MigrationStatement {
+        sql: format!(
+            "CREATE TABLE {} ({}{}){}",
+            qi(table),
+            cols.join(", "),
+            pk,
+            suffix
+        ),
+        risk: MigrationRisk::Additive,
+        rollback_sql: Some(format!("DROP TABLE {}", qi(table))),
+        summary: format!("CREATE TABLE {}", table),
+    })
+}
+
 pub struct MysqlMigrationRenderer;
 
 impl MigrationRenderer for MysqlMigrationRenderer {
@@ -154,30 +230,7 @@ impl MigrationRenderer for MysqlMigrationRenderer {
                 table,
                 columns,
                 primary_keys,
-            } => {
-                let cols = columns
-                    .iter()
-                    .map(|c| format_mysql_column_def(c, &qi))
-                    .collect::<Vec<_>>();
-                let pk = if primary_keys.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        ", PRIMARY KEY ({})",
-                        primary_keys
-                            .iter()
-                            .map(|c| qi(c))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                };
-                Ok(MigrationStatement {
-                    sql: format!("CREATE TABLE {} ({}{})", qi(table), cols.join(", "), pk),
-                    risk: MigrationRisk::Additive,
-                    rollback_sql: Some(format!("DROP TABLE {}", qi(table))),
-                    summary: format!("CREATE TABLE {}", table),
-                })
-            }
+            } => render_mysql_create_table(table, columns, primary_keys, &TableOptions::default()),
             MigrationOperation::DropTable { table } => {
                 let table = validate_migration_identifier(table)?;
                 Ok(MigrationStatement {
@@ -708,6 +761,21 @@ impl MigrationRenderer for MysqlMigrationRenderer {
             dependencies,
         )
     }
+
+    fn render_create_table_with_options(
+        &self,
+        operation: &MigrationOperation,
+        table_options: &TableOptions,
+    ) -> Result<MigrationStatement, String> {
+        match operation {
+            MigrationOperation::CreateTable {
+                table,
+                columns,
+                primary_keys,
+            } => render_mysql_create_table(table, columns, primary_keys, table_options),
+            _ => self.render(operation),
+        }
+    }
 }
 
 pub struct MysqlMigrationCapabilities;
@@ -819,6 +887,33 @@ mod tests {
         let stmt = MysqlMigrationRenderer.render(&op).unwrap();
         assert!(stmt.sql.contains("AUTO_INCREMENT"));
         assert!(stmt.sql.contains("COMMENT 'primary id'"));
+    }
+
+    #[test]
+    fn create_table_preserves_reviewed_source_table_options() {
+        let operation = MigrationOperation::CreateTable {
+            table: "items".into(),
+            columns: vec![col("id", "INT")],
+            primary_keys: vec!["id".into()],
+        };
+        let statement = MysqlMigrationRenderer
+            .render_create_table_with_options(
+                &operation,
+                &TableOptions {
+                    engine: Some("InnoDB".into()),
+                    charset: Some("utf8mb4".into()),
+                    collation: Some("utf8mb4_0900_ai_ci".into()),
+                    comment: Some("catalog items".into()),
+                    ..TableOptions::default()
+                },
+            )
+            .unwrap();
+
+        assert!(statement.sql.contains("ENGINE = InnoDB"));
+        assert!(statement.sql.contains("DEFAULT CHARACTER SET = utf8mb4"));
+        assert!(statement.sql.contains("COLLATE = utf8mb4_0900_ai_ci"));
+        assert!(statement.sql.contains("COMMENT = 'catalog items'"));
+        assert_eq!(statement.risk, MigrationRisk::Additive);
     }
 
     #[test]

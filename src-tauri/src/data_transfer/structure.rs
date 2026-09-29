@@ -286,24 +286,28 @@ pub fn validate_transfer_column_types(
                     ))
                 })?;
             let source_ir = source_adapter.column_to_ir(source_column, None);
+            let inspected_target = if creates_target {
+                None
+            } else {
+                table.target_column_types.get(target_name)
+            };
             let target_native = if creates_target {
                 configured_native
                     .filter(|native| !native.trim().is_empty())
                     .map(str::to_string)
                     .or_else(|| Some(inferred_create_native_type(&source_ir, target_adapter)))
             } else {
-                table
-                    .target_column_types
-                    .get(target_name)
+                inspected_target
+                    .map(|metadata| metadata.native_type.clone())
                     .filter(|native| !native.trim().is_empty())
-                    .cloned()
             };
             target_adapter
                 .validate_transfer_column_type(
                     source_column,
                     &source_ir,
                     source_adapter.transfer_source_text_limit_bytes(source_column),
-                    source_adapter.transfer_source_requires_collation_preservation(source_column),
+                    source_adapter.transfer_source_requires_collation_preservation(source_column)
+                        && !job.options.use_target_default_collation,
                     source_adapter.transfer_source_type_is_native_only(source_column, &source_ir),
                     target_native.as_deref(),
                     creates_target,
@@ -314,6 +318,22 @@ pub fn validate_transfer_column_types(
                         table.source_table, source_name, table.target_table, target_name
                     ))
                 })?;
+            if let Some(target_native) = target_native.as_deref() {
+                target_adapter
+                    .validate_transfer_target_character_metadata(
+                        &source_ir,
+                        target_native,
+                        inspected_target.and_then(|metadata| metadata.character_set.as_deref()),
+                        inspected_target.and_then(|metadata| metadata.collation.as_deref()),
+                        creates_target,
+                    )
+                    .map_err(|reason| {
+                        TransferError::unsupported(format!(
+                            "cannot map source column '{}.{}' to '{}.{}': {reason}",
+                            table.source_table, source_name, table.target_table, target_name
+                        ))
+                    })?;
+            }
         }
     }
     Ok(())
@@ -690,8 +710,14 @@ pub fn mapped_create_ddl(
             )));
         }
     }
+    let use_target_default_collation = job.options.use_target_default_collation;
+    let mut source_table_options = schema.table_options.clone();
+    if use_target_default_collation {
+        source_table_options.collation = None;
+        source_table_options.charset = None;
+    }
     let table_options = tgt_adapter
-        .render_source_table_options(&schema.table_options)
+        .render_source_table_options(&source_table_options)
         .map_err(|error| {
             TransferError::unsupported(format!(
                 "cannot preserve table options on '{}': {error}",

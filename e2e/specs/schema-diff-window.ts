@@ -77,7 +77,7 @@ describe('结构对比窗口 (SD-001~SD-004, SD-LIM)', () => {
     }
     await clickSchemaDiffNext({ requireEnabled: false });
     const body = await $('body').getText();
-    expect(body).toContain(t('schemaDiff.tableRequired'));
+    expect(body).toContain(t('schemaDiff.selectionRequired'));
     await captureJourneyStep('schema-diff-table-required');
   });
 
