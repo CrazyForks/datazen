@@ -95,6 +95,7 @@ const locale = {
   'redis.json.mode.pretty': 'Форматированный',
   'redis.json.mode.minify': 'Минифицированный',
   'redis.json.saveDocument': 'Сохранить документ',
+  'redis.keyBrowser.tree': 'Обозреватель ключей',
   'redis.keyName': 'Имя ключа',
   'redis.loadMore': 'Загрузить больше',
   'redis.loadedCount': 'Загружено: {count}',

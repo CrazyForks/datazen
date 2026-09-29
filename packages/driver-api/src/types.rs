@@ -362,7 +362,50 @@ pub struct TableInfo {
     pub row_count: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableOptions {
+    /// Table comment when the driver can read and render it without guessing.
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// Storage engine (currently populated by the MySQL-family driver only).
+    #[serde(default)]
+    pub engine: Option<String>,
+    /// Default character set (currently populated by the MySQL-family driver only).
+    #[serde(default)]
+    pub charset: Option<String>,
+    /// Default table collation (currently populated by the MySQL-family driver only).
+    /// A target must preserve or explicitly reject this because matching
+    /// character encodings do not prove equivalent comparison semantics.
+    #[serde(default)]
+    pub collation: Option<String>,
+    /// Whether repeated reads of this relation are covered by the driver's
+    /// stable read-snapshot transaction contract. `None` means unknown and
+    /// must not be treated as resumable. Drivers should set this only when
+    /// the individual relation's storage/metadata proves snapshot behavior.
+    #[serde(default)]
+    pub supports_consistent_snapshot: Option<bool>,
+    /// Catalog facts that prevent a driver from safely rebuilding a table
+    /// from the public schema snapshot. This is reviewed metadata, not a
+    /// user-editable table option.
+    #[serde(default)]
+    pub migration_blockers: Vec<String>,
+}
+
+impl Default for TableOptions {
+    fn default() -> Self {
+        Self {
+            comment: None,
+            engine: None,
+            charset: None,
+            collation: None,
+            supports_consistent_snapshot: None,
+            migration_blockers: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TableSchema {
     pub table_name: String,
@@ -370,6 +413,10 @@ pub struct TableSchema {
     pub primary_keys: Vec<String>,
     pub indexes: Vec<IndexInfo>,
     pub foreign_keys: Vec<ForeignKeyInfo>,
+    #[serde(default)]
+    pub check_constraints: Vec<CheckConstraint>,
+    #[serde(default)]
+    pub table_options: TableOptions,
 }
 
 impl TableSchema {
@@ -387,7 +434,7 @@ impl TableSchema {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ColumnSchema {
     pub name: String,
@@ -409,7 +456,7 @@ pub struct IndexInfo {
     pub index_type: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ForeignKeyInfo {
     pub name: String,
@@ -418,6 +465,34 @@ pub struct ForeignKeyInfo {
     pub referenced_columns: Vec<String>,
     pub on_update: String,
     pub on_delete: String,
+    /// Deferral behavior when the driver can determine it. Older drivers and
+    /// catalogs that do not expose this metadata deserialize as `Unknown`.
+    #[serde(default)]
+    pub deferrability: ForeignKeyDeferrability,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ForeignKeyDeferrability {
+    /// The source catalog did not report this property.
+    #[default]
+    Unknown,
+    NotDeferrable,
+    DeferrableInitiallyImmediate,
+    DeferrableInitiallyDeferred,
+}
+
+/// A table-level CHECK constraint captured from a database catalog.
+///
+/// The expression is the database's SQL predicate without the surrounding
+/// `CHECK (...)` wrapper.  Names are required in the migration IR so unnamed
+/// constraints must be given a deterministic driver-generated name before
+/// they enter schema diff planning.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckConstraint {
+    pub name: String,
+    pub expression: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -804,6 +879,8 @@ mod tests {
             primary_keys: primary_keys.into_iter().map(str::to_string).collect(),
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: TableOptions::default(),
         }
     }
 

@@ -217,7 +217,10 @@ impl WorkflowScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::model::{WorkflowDefinition, WorkflowSchedule};
+    use crate::workflow::model::{
+        UnattendedDestructivePolicy, WorkflowDefinition, WorkflowMigrationOperation,
+        WorkflowSchedule, WorkflowStep,
+    };
 
     fn wf(enabled: bool, interval: Option<u64>) -> WorkflowDefinition {
         WorkflowDefinition {
@@ -280,6 +283,28 @@ mod tests {
     fn clamps_interval_helper() {
         assert_eq!(clamp_interval_secs(1), MIN_INTERVAL_SECS);
         assert_eq!(clamp_interval_secs(120), 120);
+    }
+
+    #[test]
+    fn scheduled_workflow_accepts_host_owned_migration_step() {
+        let mut workflow = wf(true, Some(60));
+        workflow.steps.push(WorkflowStep::Migration {
+            id: "nightly-transfer".into(),
+            operation: WorkflowMigrationOperation::DataTransfer,
+            profile_id: "transfer-profile".into(),
+            profile_revision: None,
+            destructive_policy: UnattendedDestructivePolicy::Reject,
+            sql_file_token_variable: None,
+            timeout_secs: None,
+            on_error: None,
+        });
+
+        // The scheduler delegates the complete definition to the normal
+        // workflow executor, so migration steps retain the same interval and
+        // first-observation arming semantics as every other workflow.
+        assert_eq!(scheduled_interval_secs(&workflow), Some(60));
+        let now = Instant::now();
+        assert_eq!(due_decision(None, now, 60), DueDecision::Arm);
     }
 
     /// Verify that `InFlightGuard` removes the workflow id from `in_flight`

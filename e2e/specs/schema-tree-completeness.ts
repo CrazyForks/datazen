@@ -145,10 +145,10 @@ describe('Schema 树完整性 (TC-TREE-001~006)', () => {
     await expandConnectedConnectionInNavigator();
     await expandSchemaTableCategory();
     // Conditioned assertion instead of a one-shot read after a fixed pause.
-    await browser.waitUntil(
-      async () => (await $('body').getText()).includes(testTable),
-      { timeout: 20000, timeoutMsg: `刷新后 schema 树未显示 ${testTable}` },
-    );
+    await browser.waitUntil(async () => (await $('body').getText()).includes(testTable), {
+      timeout: 20000,
+      timeoutMsg: `刷新后 schema 树未显示 ${testTable}`,
+    });
     await captureJourneyStep('schema-tree-refreshed');
     await withSafeModeOff(async () => {
       await executeSQL(`DROP TABLE IF EXISTS ${testTable}`);

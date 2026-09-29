@@ -39,7 +39,7 @@ function hostEntryWith(body: string): string {
     body,
     '};',
     '',
-    "startLocaleSync();",
+    'startLocaleSync();',
   ].join('\n');
 }
 
@@ -72,7 +72,9 @@ describe('[tester] host-table parser: fail closed on anything it cannot read', (
     // silently shrink the derived key set on the wrong OS.
     const cond = writeHostEntry('cond', "  'react': reactAll,\n  ...(isMac ? macOnly : winOnly),");
     try {
-      expect(() => readHostGlobalTableKeys(cond.path)).toThrow(/unparsable __DATAZEN_HOST__ table entry/);
+      expect(() => readHostGlobalTableKeys(cond.path)).toThrow(
+        /unparsable __DATAZEN_HOST__ table entry/,
+      );
     } finally {
       rmSync(cond.dir, { recursive: true, force: true });
     }
@@ -139,8 +141,14 @@ describe('[tester] artifact gate: fail closed on every unverifiable access shape
    * to refuse to sign rather than assume it is fine.
    */
   it.each([
-    ['computed global access (double quotes)', `const { a } = globalThis["${GLOBAL}"]["${UNMAPPED}"];`],
-    ['computed global access (single quotes)', `const { a } = globalThis['${GLOBAL}']['${UNMAPPED}'];`],
+    [
+      'computed global access (double quotes)',
+      `const { a } = globalThis["${GLOBAL}"]["${UNMAPPED}"];`,
+    ],
+    [
+      'computed global access (single quotes)',
+      `const { a } = globalThis['${GLOBAL}']['${UNMAPPED}'];`,
+    ],
     ['template-literal key', `const { a } = ${GLOBAL}[\`${UNMAPPED}\`];`],
     ['computed index from a variable', `const k = "${UNMAPPED}"; const { a } = ${GLOBAL}[k];`],
     ['whole-table destructuring', `const { react, search } = globalThis.${GLOBAL};`],
@@ -171,7 +179,9 @@ describe('[tester] artifact gate: fail closed on every unverifiable access shape
     const code = `const a = ${GLOBAL} . @codemirror/search ;`;
     expect(collectHostGlobalKeys(code)).toEqual([]);
     expect(countUnverifiableHostRefs(code)).toBe(1);
-    expect(() => assertHostGlobalKeysAllowed(code)).toThrow(/cannot be verified against the host table/);
+    expect(() => assertHostGlobalKeysAllowed(code)).toThrow(
+      /cannot be verified against the host table/,
+    );
   });
 
   it('test_tester_dot_form_reads_the_first_identifier_only', () => {

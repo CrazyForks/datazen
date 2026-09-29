@@ -324,5 +324,9 @@ const pack = {
   'settings.confirmDangerousExecution': 'セーフモードがオフの場合に危険な SQL を確認する',
   'settings.confirmDangerousExecutionHint':
     'セーフモードがオフの場合、高リスク/本番 SQL の実行前に確認ダイアログを表示します。オフにすると直接実行します。',
+  'settings.updater.manualDescription':
+    'このビルドには署名済みの更新チャンネルがありません。GitHub Releases から該当するリリースをインストールして更新してください。',
+  'settings.updater.manualVariant': '現在のビルド: {variant}',
+  'settings.updater.openReleases': 'Releases ページを開く',
 } as const;
 export default pack;

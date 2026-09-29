@@ -15,6 +15,18 @@ mod type_decode;
 #[path = "tests.rs"]
 mod tests;
 
+fn supports_consistent_snapshot_engine(engine: Option<&str>) -> bool {
+    engine.is_some_and(|value| value.eq_ignore_ascii_case("InnoDB"))
+}
+
+const MYSQL_TABLE_OPTIONS_QUERY: &str =
+    "SELECT t.ENGINE, collation_map.CHARACTER_SET_NAME AS TABLE_CHARSET, \
+            t.TABLE_COLLATION AS TABLE_COLLATION, NULLIF(t.TABLE_COMMENT, '') AS TABLE_COMMENT \
+     FROM information_schema.TABLES t \
+     LEFT JOIN information_schema.COLLATION_CHARACTER_SET_APPLICABILITY collation_map \
+       ON collation_map.COLLATION_NAME = t.TABLE_COLLATION \
+     WHERE t.TABLE_SCHEMA = ? AND t.TABLE_NAME = ?";
+
 use crate::structure;
 use async_trait::async_trait;
 use catalog::{
@@ -33,6 +45,97 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 
 pub(crate) use type_decode::{decode_mysql_text, decode_mysql_text_idx, decode_mysql_text_opt};
+
+#[derive(Debug, PartialEq, Eq)]
+enum ClusterScopeDecision {
+    Cluster { scope: &'static str, id: String },
+    NodeFallback,
+    Unknown,
+}
+
+fn mysql_group_replication_scope(
+    group_name: Option<&str>,
+    member_state: Result<Option<&str>, ()>,
+) -> ClusterScopeDecision {
+    let Some(group_name) = group_name.map(str::trim).filter(|name| !name.is_empty()) else {
+        return if group_name.is_some() {
+            ClusterScopeDecision::NodeFallback
+        } else {
+            ClusterScopeDecision::Unknown
+        };
+    };
+
+    match member_state {
+        Err(()) => ClusterScopeDecision::Unknown,
+        Ok(None) => ClusterScopeDecision::NodeFallback,
+        Ok(Some(state)) if state.eq_ignore_ascii_case("ONLINE") => ClusterScopeDecision::Cluster {
+            scope: "mysql-group-replication",
+            id: group_name.to_string(),
+        },
+        Ok(Some(_)) => ClusterScopeDecision::Unknown,
+    }
+}
+
+fn mysql_group_replication_plugin_active(
+    plugin_statuses: Option<&HashMap<String, String>>,
+) -> Option<bool> {
+    let plugin_statuses = plugin_statuses?;
+    match plugin_statuses
+        .get("group_replication")
+        .map(String::as_str)
+        .map(str::to_ascii_uppercase)
+        .as_deref()
+    {
+        None | Some("INACTIVE") | Some("DISABLED") => Some(false),
+        Some("ACTIVE") => Some(true),
+        Some(_) => None,
+    }
+}
+
+fn mariadb_wsrep_scope(statuses: Option<&HashMap<String, String>>) -> ClusterScopeDecision {
+    let Some(statuses) = statuses else {
+        return ClusterScopeDecision::Unknown;
+    };
+    if statuses.is_empty() {
+        return ClusterScopeDecision::NodeFallback;
+    }
+
+    let Some(state_uuid) = statuses
+        .get("wsrep_cluster_state_uuid")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return ClusterScopeDecision::Unknown;
+    };
+    let healthy = statuses
+        .get("wsrep_cluster_status")
+        .is_some_and(|value| value.eq_ignore_ascii_case("Primary"))
+        && statuses
+            .get("wsrep_connected")
+            .is_some_and(|value| value.eq_ignore_ascii_case("ON"))
+        && statuses
+            .get("wsrep_ready")
+            .is_some_and(|value| value.eq_ignore_ascii_case("ON"));
+    if healthy {
+        ClusterScopeDecision::Cluster {
+            scope: "mariadb-wsrep",
+            id: state_uuid.to_string(),
+        }
+    } else {
+        ClusterScopeDecision::Unknown
+    }
+}
+
+fn canonical_database_identity(driver: &str, scope: &str, id: &str, database: &str) -> String {
+    serde_json::json!({
+        "driver": driver,
+        "scope": scope,
+        "id": id,
+        "database": database,
+    })
+    .to_string()
+}
 
 pub struct MysqlDriver {
     pub(crate) pools: RwLock<HashMap<String, MySqlPool>>,
@@ -163,7 +266,7 @@ impl MysqlDriver {
                     name,
                     data_type: decode_mysql_text(r, "COLUMN_TYPE"),
                     nullable: nullable == "YES",
-                    default_value: r.try_get("COLUMN_DEFAULT").ok(),
+                    default_value: decode_mysql_text_opt(r, "COLUMN_DEFAULT"),
                     comment: {
                         let s = decode_mysql_text(r, "COLUMN_COMMENT");
                         if s.is_empty() {
@@ -217,7 +320,7 @@ impl MysqlDriver {
                 name: name.clone(),
                 data_type: decode_mysql_text(r, "COLUMN_TYPE"),
                 nullable: nullable == "YES",
-                default_value: r.try_get("COLUMN_DEFAULT").ok(),
+                default_value: decode_mysql_text_opt(r, "COLUMN_DEFAULT"),
                 comment: {
                     let s = decode_mysql_text(r, "COLUMN_COMMENT");
                     if s.is_empty() {
@@ -254,11 +357,8 @@ impl MysqlDriver {
             // Pattern: CONSTRAINT `name` FOREIGN KEY (`cols`) REFERENCES `table` (`cols`) ...
             let fk_name = Self::extract_backtick_after(trimmed, "CONSTRAINT");
             let fk_cols = Self::extract_backtick_list_after(trimmed, "FOREIGN KEY");
-            let ref_table = Self::extract_backtick_after(trimmed, "REFERENCES");
-            let ref_cols = Self::extract_backtick_list_after(
-                trimmed,
-                &format!("REFERENCES `{}`", ref_table.replace('`', "``")),
-            );
+            let ref_table = Self::extract_qualified_table_after(trimmed, "REFERENCES");
+            let ref_cols = Self::extract_backtick_list_after(trimmed, "REFERENCES");
 
             let on_delete = Self::extract_rule(trimmed, "ON DELETE");
             let on_update = Self::extract_rule(trimmed, "ON UPDATE");
@@ -271,11 +371,132 @@ impl MysqlDriver {
                     referenced_columns: ref_cols,
                     on_delete,
                     on_update,
+                    deferrability: ForeignKeyDeferrability::NotDeferrable,
                 });
             }
         }
         fks.sort_by(|a, b| a.name.cmp(&b.name));
         fks
+    }
+
+    /// Parse CHECK clauses from SHOW CREATE TABLE. The scanner skips quoted
+    /// SQL and comments before looking for a real CHECK keyword, then balances
+    /// the predicate parentheses so literals containing CHECK cannot become
+    /// false constraints or truncate an expression.
+    fn parse_check_from_create_table(create_sql: &str) -> Vec<CheckConstraint> {
+        let mut checks = Vec::new();
+        let bytes = create_sql.as_bytes();
+        let mut index = 0usize;
+        while index + 5 <= bytes.len() {
+            let ch = bytes[index] as char;
+            if matches!(ch, '\'' | '"' | '`') {
+                index = Self::skip_quoted_sql(bytes, index, ch);
+                continue;
+            }
+            if index + 1 < bytes.len() && bytes[index] == b'/' && bytes[index + 1] == b'*' {
+                index = Self::skip_block_comment(bytes, index);
+                continue;
+            }
+            if bytes[index..].starts_with(b"--") || bytes[index] == b'#' {
+                index = Self::skip_line_comment(bytes, index);
+                continue;
+            }
+            let is_check = bytes[index..index + 5].eq_ignore_ascii_case(b"CHECK")
+                && (index == 0 || !Self::is_sql_identifier_byte(bytes[index - 1]))
+                && (index + 5 == bytes.len() || !Self::is_sql_identifier_byte(bytes[index + 5]));
+            if !is_check {
+                index += 1;
+                continue;
+            }
+            let mut open = index + 5;
+            while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+                open += 1;
+            }
+            if open >= bytes.len() || bytes[open] != b'(' {
+                index += 5;
+                continue;
+            }
+            let Some(close) = Self::scan_sql_parentheses(bytes, open) else {
+                break;
+            };
+            let expression = create_sql[open + 1..close].trim();
+            if !expression.is_empty() {
+                let line_start = create_sql[..index].rfind('\n').map_or(0, |pos| pos + 1);
+                let name =
+                    Self::extract_backtick_after(&create_sql[line_start..index], "CONSTRAINT");
+                checks.push(CheckConstraint {
+                    name: if name.is_empty() {
+                        format!("check_{}", checks.len())
+                    } else {
+                        name
+                    },
+                    expression: expression.to_string(),
+                });
+            }
+            index = close + 1;
+        }
+        checks.sort_by(|a, b| a.name.cmp(&b.name));
+        checks
+    }
+
+    fn skip_quoted_sql(bytes: &[u8], start: usize, quote: char) -> usize {
+        let mut index = start + 1;
+        while index < bytes.len() {
+            if bytes[index] == b'\\' && index + 1 < bytes.len() {
+                index += 2;
+            } else if bytes[index] as char == quote {
+                if index + 1 < bytes.len() && bytes[index + 1] as char == quote {
+                    index += 2;
+                } else {
+                    return index + 1;
+                }
+            } else {
+                index += 1;
+            }
+        }
+        bytes.len()
+    }
+
+    fn skip_block_comment(bytes: &[u8], start: usize) -> usize {
+        bytes[start + 2..]
+            .windows(2)
+            .position(|pair| pair == b"*/")
+            .map_or(bytes.len(), |offset| start + 2 + offset + 2)
+    }
+
+    fn skip_line_comment(bytes: &[u8], start: usize) -> usize {
+        bytes[start..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(bytes.len(), |offset| start + offset + 1)
+    }
+
+    fn is_sql_identifier_byte(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || byte == b'_'
+    }
+
+    fn scan_sql_parentheses(bytes: &[u8], open: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut index = open;
+        while index < bytes.len() {
+            let ch = bytes[index] as char;
+            if matches!(ch, '\'' | '"' | '`') {
+                index = Self::skip_quoted_sql(bytes, index, ch);
+                continue;
+            }
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        return Some(index);
+                    }
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        None
     }
 
     /// Extract the first backtick-quoted identifier after a keyword.
@@ -290,6 +511,96 @@ impl MysqlDriver {
             }
         }
         String::new()
+    }
+
+    fn extract_qualified_table_after(s: &str, keyword: &str) -> String {
+        let Some(pos) = s.find(keyword) else {
+            return String::new();
+        };
+        let after = s[pos + keyword.len()..].trim_start();
+        let bytes = after.as_bytes();
+        let mut index = 0;
+        let mut parts = Vec::new();
+        loop {
+            while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+                index += 1;
+            }
+            if index >= bytes.len() || bytes[index] == b'(' {
+                return String::new();
+            }
+            let part = if bytes[index] == b'`' {
+                index += 1;
+                let content_start = index;
+                let mut value = String::new();
+                let mut closed = false;
+                while index < bytes.len() {
+                    if bytes[index] == b'`' {
+                        if index + 1 < bytes.len() && bytes[index + 1] == b'`' {
+                            index += 2;
+                        } else {
+                            value = after[content_start..index].replace("``", "`");
+                            index += 1;
+                            closed = true;
+                            break;
+                        }
+                    } else {
+                        index += 1;
+                    }
+                }
+                if !closed {
+                    return String::new();
+                }
+                value
+            } else {
+                let start = index;
+                while index < bytes.len()
+                    && bytes[index] != b'.'
+                    && bytes[index] != b'('
+                    && !bytes[index].is_ascii_whitespace()
+                {
+                    index += 1;
+                }
+                after[start..index].to_string()
+            };
+            if part.is_empty() || part.contains('.') {
+                return String::new();
+            }
+            parts.push(part);
+            while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+                index += 1;
+            }
+            if index < bytes.len() && bytes[index] == b'.' {
+                index += 1;
+                continue;
+            }
+            if index == bytes.len() || bytes[index] == b'(' || bytes[index].is_ascii_whitespace() {
+                return parts.join(".");
+            }
+            return String::new();
+        }
+    }
+
+    fn grants_prove_server_wide_catalog_visibility(grants: &[String]) -> bool {
+        let has_global_select = grants.iter().any(|grant| {
+            let upper = grant.trim().to_ascii_uppercase();
+            if !upper.starts_with("GRANT ") {
+                return false;
+            }
+            let Some(on) = upper.find(" ON *.* TO ") else {
+                return false;
+            };
+            upper[6..on]
+                .split(',')
+                .map(str::trim)
+                .any(|privilege| matches!(privilege, "SELECT" | "ALL PRIVILEGES"))
+        });
+        has_global_select
+            && !grants.iter().any(|grant| {
+                grant
+                    .trim_start()
+                    .to_ascii_uppercase()
+                    .starts_with("REVOKE ")
+            })
     }
 
     /// Extract a parenthesized list of backtick-quoted identifiers after a keyword.
@@ -361,6 +672,55 @@ impl MysqlDriver {
                     .and_then(|s| serde_json::from_str(&s).ok())
             })
         })
+    }
+
+    async fn physical_database_node_identity(
+        &self,
+        pool: &MySqlPool,
+        database: &str,
+    ) -> Result<Option<String>, DriverError> {
+        let driver = if self.is_mariadb { "mariadb" } else { "mysql" };
+        if let Ok(row) = sqlx::query("SELECT @@server_uuid AS server_uuid")
+            .fetch_one(pool)
+            .await
+        {
+            if let Ok(server_uuid) = row.try_get::<String, _>("server_uuid") {
+                let server_uuid = server_uuid.trim();
+                if !server_uuid.is_empty() {
+                    return Ok(Some(canonical_database_identity(
+                        driver,
+                        "node",
+                        server_uuid,
+                        database,
+                    )));
+                }
+            }
+        }
+
+        let Ok(row) = sqlx::query(
+            "SELECT @@hostname AS server_host, CAST(@@port AS CHAR) AS server_port, CAST(@@server_id AS CHAR) AS server_id",
+        )
+        .fetch_one(pool)
+        .await
+        else {
+            return Ok(None);
+        };
+        let (Ok(server_host), Ok(server_port), Ok(server_id)) = (
+            row.try_get::<String, _>("server_host"),
+            row.try_get::<String, _>("server_port"),
+            row.try_get::<String, _>("server_id"),
+        ) else {
+            return Ok(None);
+        };
+        let id = serde_json::json!({
+            "host": server_host,
+            "port": server_port,
+            "serverId": server_id,
+        })
+        .to_string();
+        Ok(Some(canonical_database_identity(
+            driver, "node", &id, database,
+        )))
     }
 }
 
@@ -445,11 +805,12 @@ impl DatabaseDriver for MysqlDriver {
                 let escaped = s.replace('\\', "\\\\");
                 format!("'{}'", escaped.replace('\'', "''"))
             }
-            Some(super::Value::Bytes(b)) => {
-                let s = String::from_utf8_lossy(b);
-                let escaped = s.replace('\\', "\\\\");
-                format!("'{}'", escaped.replace('\'', "''"))
-            }
+            Some(super::Value::Bytes(b)) => format!(
+                "X'{}'",
+                b.iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            ),
             Some(super::Value::Timestamp(s)) => {
                 let escaped = s.replace('\\', "\\\\");
                 format!("'{}'", escaped.replace('\'', "''"))
@@ -595,6 +956,23 @@ impl DatabaseDriver for MysqlDriver {
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
 
         Ok(rows.iter().map(|r| decode_mysql_text_idx(r, 0)).collect())
+    }
+
+    async fn has_complete_foreign_key_catalog_visibility(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<bool, DriverError> {
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let rows = sqlx::query("SHOW GRANTS FOR CURRENT_USER()")
+            .fetch_all(pool)
+            .await
+            .map_err(|error| DriverError::QueryFailed(error.to_string()))?;
+        let grants = rows
+            .iter()
+            .map(|row| decode_mysql_text_idx(row, 0))
+            .collect::<Vec<_>>();
+        Ok(Self::grants_prove_server_wide_catalog_visibility(&grants))
     }
 
     async fn get_tables(
@@ -750,6 +1128,30 @@ impl DatabaseDriver for MysqlDriver {
             .fetch_one(&mut *conn)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let table_options_row = sqlx::query(MYSQL_TABLE_OPTIONS_QUERY)
+            .bind(&db)
+            .bind(Self::bare_table_name(table))
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let engine = table_options_row
+            .as_ref()
+            .and_then(|row| row.try_get::<Option<String>, _>("ENGINE").ok().flatten());
+        let charset = table_options_row.as_ref().and_then(|row| {
+            row.try_get::<Option<String>, _>("TABLE_CHARSET")
+                .ok()
+                .flatten()
+        });
+        let collation = table_options_row.as_ref().and_then(|row| {
+            row.try_get::<Option<String>, _>("TABLE_COLLATION")
+                .ok()
+                .flatten()
+        });
+        let table_comment = table_options_row.as_ref().and_then(|row| {
+            row.try_get::<Option<String>, _>("TABLE_COMMENT")
+                .ok()
+                .flatten()
+        });
 
         tracing::info!(%table, col_rows = col_rows.len(), idx_rows = idx_rows.len(),
             ms = t0.elapsed().as_millis() as u64,
@@ -782,7 +1184,7 @@ impl DatabaseDriver for MysqlDriver {
                     name,
                     data_type: col_type,
                     nullable: nullable == "YES",
-                    default_value: r.try_get("Default").ok(),
+                    default_value: decode_mysql_text_opt(r, "Default"),
                     comment,
                     is_auto_increment: extra.contains("auto_increment"),
                 }
@@ -839,8 +1241,9 @@ impl DatabaseDriver for MysqlDriver {
         // ── foreign keys parsed from SHOW CREATE TABLE output ──
         let create_sql = decode_mysql_text_idx(&create_row, 1);
         let foreign_keys = Self::parse_fk_from_create_table(&create_sql);
+        let check_constraints = Self::parse_check_from_create_table(&create_sql);
 
-        tracing::info!(%table, cols = columns.len(), indexes = indexes.len(), fks = foreign_keys.len(),
+        tracing::info!(%table, cols = columns.len(), indexes = indexes.len(), fks = foreign_keys.len(), checks = check_constraints.len(),
             total_ms = t0.elapsed().as_millis() as u64, "mysql get_table_schema: complete");
 
         Ok(TableSchema {
@@ -849,6 +1252,17 @@ impl DatabaseDriver for MysqlDriver {
             primary_keys,
             indexes,
             foreign_keys,
+            check_constraints,
+            table_options: TableOptions {
+                supports_consistent_snapshot: Some(supports_consistent_snapshot_engine(
+                    engine.as_deref(),
+                )),
+                engine,
+                charset,
+                collation,
+                comment: table_comment,
+                ..TableOptions::default()
+            },
         })
     }
 
@@ -1206,6 +1620,46 @@ impl DatabaseDriver for MysqlDriver {
         })
     }
 
+    fn parameter_placeholder(
+        &self,
+        _index: usize,
+        _data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        Ok("?".to_string())
+    }
+
+    async fn execute_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<u64, DriverError> {
+        {
+            let mut txs = self.transactions.lock().await;
+            if let Some(conn) = txs.get_mut(&handle.id) {
+                let result = Self::bind_values(sqlx::query(sql), params)
+                    .execute(&mut **conn)
+                    .await
+                    .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                return Ok(result.rows_affected());
+            }
+        }
+
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        self.apply_active_database(handle, &mut conn).await?;
+
+        let result = Self::bind_values(sqlx::query(sql), params)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(result.rows_affected())
+    }
+
     async fn execute(&self, handle: &ConnectionHandle, sql: &str) -> Result<u64, DriverError> {
         {
             let mut txs = self.transactions.lock().await;
@@ -1260,6 +1714,58 @@ impl DatabaseDriver for MysqlDriver {
         txs.insert(handle.id.clone(), conn);
         Ok(TransactionHandle {
             id: format!("mysql_tx_{}", uuid::Uuid::new_v4()),
+            connection_id: handle.id.clone(),
+        })
+    }
+
+    async fn begin_read_snapshot(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        let mut txs = self.transactions.lock().await;
+        if txs.contains_key(&handle.id) {
+            return Err(DriverError::TransactionError(
+                "A transaction is already open on this connection".into(),
+            ));
+        }
+
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        drop(pools);
+
+        self.apply_active_database(handle, &mut conn).await?;
+
+        // WITH CONSISTENT SNAPSHOT is only effective with REPEATABLE READ.
+        // Scope the isolation override to the next transaction so the pool's
+        // session defaults are not changed for later checkouts.
+        if let Err(e) =
+            Self::execute_text_on_conn(&mut conn, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                .await
+        {
+            let _ = conn.close().await;
+            return Err(DriverError::TransactionError(e.to_string()));
+        }
+
+        // MySQL and MariaDB support these transaction characteristics. If a
+        // server rejects one, close the connection so a pending one-shot
+        // isolation setting cannot leak into a later pooled transaction.
+        if let Err(e) = Self::execute_text_on_conn(
+            &mut conn,
+            "START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY",
+        )
+        .await
+        {
+            let _ = conn.close().await;
+            return Err(DriverError::TransactionError(e.to_string()));
+        }
+
+        txs.insert(handle.id.clone(), conn);
+        Ok(TransactionHandle {
+            id: format!("mysql_snapshot_{}", uuid::Uuid::new_v4()),
             connection_id: handle.id.clone(),
         })
     }
@@ -1466,6 +1972,116 @@ impl DatabaseDriver for MysqlDriver {
             server_version: version,
             server_type: server_type.to_string(),
         })
+    }
+
+    async fn physical_database_identity(
+        &self,
+        handle: &ConnectionHandle,
+        _database: &str,
+    ) -> Result<Option<String>, DriverError> {
+        let pools = self.pools.read().await;
+        let pool = Self::get_pool(&pools, handle)?;
+        let Ok(database_row) = sqlx::query("SELECT DATABASE() AS database_name")
+            .fetch_one(pool)
+            .await
+        else {
+            return Ok(None);
+        };
+        let database: Option<String> = database_row.try_get("database_name").unwrap_or(None);
+        let Some(database) = database else {
+            return Ok(None);
+        };
+
+        let cluster_scope = if self.is_mariadb {
+            let Ok(rows) = sqlx::query("SHOW GLOBAL STATUS").fetch_all(pool).await else {
+                return Ok(None);
+            };
+            let mut statuses = HashMap::new();
+            let mut wsrep_detected = false;
+            for row in rows {
+                let Ok(name) = row.try_get::<String, _>(0) else {
+                    return Ok(None);
+                };
+                let name = name.to_ascii_lowercase();
+                if !name.starts_with("wsrep_") {
+                    continue;
+                }
+                wsrep_detected = true;
+                if let Ok(value) = row.try_get::<String, _>(1) {
+                    statuses.insert(name, value);
+                }
+            }
+            if wsrep_detected && statuses.is_empty() {
+                statuses.insert("wsrep_status_incomplete".to_string(), String::new());
+            }
+            mariadb_wsrep_scope(Some(&statuses))
+        } else {
+            let Ok(group_row) =
+                sqlx::query("SELECT @@GLOBAL.group_replication_group_name AS group_name")
+                    .fetch_one(pool)
+                    .await
+            else {
+                // Older or non-GR MySQL builds may not expose the variable at
+                // all. Only fall back when SHOW PLUGINS proves GR is absent or
+                // inactive; an active plugin with an unreadable variable is
+                // ambiguous and must fail closed.
+                let Ok(plugin_rows) = sqlx::query("SHOW PLUGINS").fetch_all(pool).await else {
+                    return Ok(None);
+                };
+                let mut plugin_statuses = HashMap::new();
+                for row in plugin_rows {
+                    let (Ok(name), Ok(status)) =
+                        (row.try_get::<String, _>(0), row.try_get::<String, _>(1))
+                    else {
+                        return Ok(None);
+                    };
+                    plugin_statuses.insert(name.to_ascii_lowercase(), status);
+                }
+                return match mysql_group_replication_plugin_active(Some(&plugin_statuses)) {
+                    Some(false) => self.physical_database_node_identity(pool, &database).await,
+                    Some(true) | None => Ok(None),
+                };
+            };
+            let Ok(group_name) = group_row.try_get::<String, _>("group_name") else {
+                return Ok(None);
+            };
+            let group_name = group_name.trim();
+            if group_name.is_empty() {
+                mysql_group_replication_scope(Some(group_name), Ok(None))
+            } else {
+                // A configured group name alone is not proof that this server
+                // is a healthy member. Failure to inspect membership must fail
+                // closed rather than treating a peer in that group as separate.
+                let membership = sqlx::query(
+                    "SELECT MEMBER_STATE AS member_state FROM performance_schema.replication_group_members WHERE MEMBER_ID = @@server_uuid",
+                )
+                .fetch_optional(pool)
+                .await;
+                match membership {
+                    Ok(None) => mysql_group_replication_scope(Some(group_name), Ok(None)),
+                    Ok(Some(row)) => match row.try_get::<String, _>("member_state") {
+                        Ok(state) => {
+                            mysql_group_replication_scope(Some(group_name), Ok(Some(&state)))
+                        }
+                        Err(_) => ClusterScopeDecision::Unknown,
+                    },
+                    Err(_) => ClusterScopeDecision::Unknown,
+                }
+            }
+        };
+
+        match cluster_scope {
+            ClusterScopeDecision::Cluster { scope, id } => Ok(Some(canonical_database_identity(
+                if self.is_mariadb { "mariadb" } else { "mysql" },
+                scope,
+                &id,
+                &database,
+            ))),
+            ClusterScopeDecision::Unknown => Ok(None),
+            ClusterScopeDecision::NodeFallback => {
+                self.physical_database_node_identity(pool, &database).await
+            }
+        }
     }
 
     async fn dump_table_ddl(

@@ -327,5 +327,9 @@ const pack = {
     'Uma sonda WebSocket verifica o relay: no modo raw_binary ela comprova apenas que o relay está acessível, enquanto datazen_v1 abre um canal até o destino.',
   'settings.tunnels.test.scope.general':
     'Uma sonda bem-sucedida nunca garante que seu banco de dados esteja acessível através deste túnel.',
+  'settings.updater.manualDescription':
+    'Esta compilação não tem um canal de atualização assinado. Para atualizá-la, instale uma versão correspondente em GitHub Releases.',
+  'settings.updater.manualVariant': 'Versão atual: {variant}',
+  'settings.updater.openReleases': 'Abrir página de Releases',
 } as const;
 export default pack;

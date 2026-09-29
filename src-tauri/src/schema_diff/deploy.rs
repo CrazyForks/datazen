@@ -49,6 +49,21 @@ pub async fn run_deploy_with_executor(
         };
     }
 
+    if plan
+        .statements
+        .iter()
+        .any(|statement| statement.requires_transaction)
+        && !can_tx
+    {
+        return SchemaDiffDeployResult {
+            status: DeployStatus::Failed,
+            executed_count: 0,
+            statement_count: n,
+            errors: vec!["This reviewed table rebuild requires transactional DDL; enable transaction execution".into()],
+            statement_results: vec![],
+        };
+    }
+
     if can_tx {
         if let Err(e) = executor.exec("BEGIN").await {
             return SchemaDiffDeployResult {
@@ -70,14 +85,29 @@ pub async fn run_deploy_with_executor(
         if let Some(flag) = cancelled {
             if flag.load(Ordering::SeqCst) {
                 tracing::info!(index, "schema diff deploy cancelled");
+                let mut status = if ok_count > 0 {
+                    DeployStatus::Mixed
+                } else {
+                    DeployStatus::Cancelled
+                };
+                let mut cancel_errors = vec!["Deploy cancelled by user".into()];
                 if can_tx {
-                    let _ = executor.exec("ROLLBACK").await;
+                    match executor.exec("ROLLBACK").await {
+                        Ok(()) => {
+                            ok_count = 0;
+                            status = DeployStatus::Cancelled;
+                        }
+                        Err(e) => {
+                            status = DeployStatus::Unknown;
+                            cancel_errors.push(format!("ROLLBACK failed: {e}"));
+                        }
+                    }
                 }
                 return SchemaDiffDeployResult {
-                    status: DeployStatus::Cancelled,
+                    status,
                     executed_count: ok_count,
                     statement_count: n,
-                    errors: vec!["Deploy cancelled by user".into()],
+                    errors: cancel_errors,
                     statement_results: results,
                 };
             }
@@ -112,21 +142,27 @@ pub async fn run_deploy_with_executor(
 
     if can_tx {
         if failed {
-            let _ = executor.exec("ROLLBACK").await;
+            let rollback = executor.exec("ROLLBACK").await;
+            let status = if let Err(e) = rollback {
+                errors.push(format!("ROLLBACK failed: {e}"));
+                DeployStatus::Unknown
+            } else {
+                ok_count = 0;
+                DeployStatus::RolledBack
+            };
             return SchemaDiffDeployResult {
-                status: DeployStatus::RolledBack,
-                executed_count: 0,
+                status,
+                executed_count: ok_count,
                 statement_count: n,
                 errors,
                 statement_results: results,
             };
         }
         if let Err(e) = executor.exec("COMMIT").await {
-            let _ = executor.exec("ROLLBACK").await;
-            errors.push(format!("COMMIT failed: {e}"));
+            errors.push(format!("COMMIT outcome unknown: {e}"));
             return SchemaDiffDeployResult {
-                status: DeployStatus::Failed,
-                executed_count: 0,
+                status: DeployStatus::Unknown,
+                executed_count: ok_count,
                 statement_count: n,
                 errors,
                 statement_results: results,
@@ -204,7 +240,22 @@ pub async fn execute_schema_diff_deploy_at(
         };
     }
 
-    let tx_scope = if can_tx {
+    if plan
+        .statements
+        .iter()
+        .any(|statement| statement.requires_transaction)
+        && !can_tx
+    {
+        return SchemaDiffDeployResult {
+            status: DeployStatus::Failed,
+            executed_count: 0,
+            statement_count: n,
+            errors: vec!["This reviewed table rebuild requires transactional DDL; enable transaction execution".into()],
+            statement_results: vec![],
+        };
+    }
+
+    let mut tx_scope = if can_tx {
         match TransactionScope::begin_at(driver, handle, target).await {
             Ok(scope) => Some(scope),
             Err(e) => {
@@ -221,6 +272,38 @@ pub async fn execute_schema_diff_deploy_at(
         None
     };
 
+    if plan
+        .statements
+        .iter()
+        .any(|statement| statement.requires_transaction)
+    {
+        let validation = driver
+            .validate_schema_migration_plan(handle, target, &plan.expected_target_schemas)
+            .await;
+        if let Err(error) = validation {
+            let mut errors = vec![format!(
+                "Reviewed target schema changed or could not be validated: {error}"
+            )];
+            let status = match tx_scope.take() {
+                Some(scope) => match scope.rollback().await {
+                    Ok(()) => DeployStatus::RolledBack,
+                    Err(rollback_error) => {
+                        errors.push(format!("ROLLBACK failed: {rollback_error}"));
+                        DeployStatus::Unknown
+                    }
+                },
+                None => DeployStatus::Failed,
+            };
+            return SchemaDiffDeployResult {
+                status,
+                executed_count: 0,
+                statement_count: n,
+                errors,
+                statement_results: vec![],
+            };
+        }
+    }
+
     let mut results = Vec::new();
     let mut errors = Vec::new();
     let mut ok_count = 0usize;
@@ -230,14 +313,29 @@ pub async fn execute_schema_diff_deploy_at(
         if let Some(ref flag) = cancelled {
             if flag.load(Ordering::SeqCst) {
                 tracing::info!(index, "schema diff deploy cancelled");
+                let mut status = if ok_count > 0 {
+                    DeployStatus::Mixed
+                } else {
+                    DeployStatus::Cancelled
+                };
+                let mut cancel_errors = vec!["Deploy cancelled by user".into()];
                 if let Some(scope) = tx_scope {
-                    let _ = scope.rollback().await;
+                    match scope.rollback().await {
+                        Ok(()) => {
+                            ok_count = 0;
+                            status = DeployStatus::Cancelled;
+                        }
+                        Err(e) => {
+                            status = DeployStatus::Unknown;
+                            cancel_errors.push(format!("ROLLBACK failed: {e}"));
+                        }
+                    }
                 }
                 return SchemaDiffDeployResult {
-                    status: DeployStatus::Cancelled,
+                    status,
                     executed_count: ok_count,
                     statement_count: n,
-                    errors: vec!["Deploy cancelled by user".into()],
+                    errors: cancel_errors,
                     statement_results: results,
                 };
             }
@@ -281,6 +379,18 @@ pub async fn execute_schema_diff_deploy_at(
         }
     }
 
+    if !failed
+        && plan
+            .statements
+            .iter()
+            .any(|statement| statement.requires_transaction)
+    {
+        if let Err(error) = driver.validate_schema_migration(handle, target).await {
+            failed = true;
+            errors.push(format!("Schema migration validation failed: {error}"));
+        }
+    }
+
     if can_tx {
         let Some(scope) = tx_scope else {
             // Should be unreachable: can_tx implies DdlAtomicity::Transactional
@@ -294,20 +404,27 @@ pub async fn execute_schema_diff_deploy_at(
             };
         };
         if failed {
-            let _ = scope.rollback().await;
+            let rollback = scope.rollback().await;
+            let status = if let Err(e) = rollback {
+                errors.push(format!("ROLLBACK failed: {e}"));
+                DeployStatus::Unknown
+            } else {
+                ok_count = 0;
+                DeployStatus::RolledBack
+            };
             return SchemaDiffDeployResult {
-                status: DeployStatus::RolledBack,
-                executed_count: 0,
+                status,
+                executed_count: ok_count,
                 statement_count: n,
                 errors,
                 statement_results: results,
             };
         }
         if let Err(e) = scope.commit().await {
-            errors.push(format!("COMMIT failed: {e}"));
+            errors.push(format!("COMMIT outcome unknown: {e}"));
             return SchemaDiffDeployResult {
-                status: DeployStatus::Failed,
-                executed_count: 0,
+                status: DeployStatus::Unknown,
+                executed_count: ok_count,
                 statement_count: n,
                 errors,
                 statement_results: results,
@@ -356,6 +473,7 @@ mod tests {
     struct ScriptedExecutor {
         outcomes: Mutex<Vec<Result<(), String>>>,
         log: Mutex<Vec<String>>,
+        control_failure: Option<&'static str>,
     }
 
     impl ScriptedExecutor {
@@ -363,6 +481,7 @@ mod tests {
             Self {
                 outcomes: Mutex::new(outcomes),
                 log: Mutex::new(vec![]),
+                control_failure: None,
             }
         }
     }
@@ -371,6 +490,9 @@ mod tests {
     impl StatementExecutor for ScriptedExecutor {
         async fn exec(&self, sql: &str) -> Result<(), String> {
             self.log.lock().unwrap().push(sql.to_string());
+            if self.control_failure == Some(sql) {
+                return Err("connection lost".into());
+            }
             if sql == "BEGIN" || sql == "COMMIT" || sql == "ROLLBACK" {
                 return Ok(());
             }
@@ -389,9 +511,11 @@ mod tests {
                 risk: StatementRisk::Additive,
                 rollback_sql: Some(format!("RB_{i}")),
                 summary: format!("s{i}"),
+                requires_transaction: false,
             })
             .collect();
         SchemaDiffPlan {
+            plan_id: None,
             table: "t".into(),
             tables: vec!["t".into()],
             source_dialect: dialect.into(),
@@ -405,6 +529,7 @@ mod tests {
             },
             requirements: vec![],
             type_suggestions: vec![],
+            expected_target_schemas: vec![],
         }
     }
 
@@ -425,6 +550,28 @@ mod tests {
         .await;
         assert_eq!(result.status, DeployStatus::Committed);
         assert_eq!(result.executed_count, 3);
+    }
+
+    #[tokio::test]
+    async fn required_transaction_is_enforced_before_any_statement() {
+        let mut plan = plan_with("sqlite", 2);
+        plan.statements[0].requires_transaction = true;
+        let exec = ScriptedExecutor::new(vec![Ok(()), Ok(())]);
+        let result = run_deploy_with_executor(
+            &exec,
+            &plan,
+            &DeployOptions {
+                use_transaction: false,
+                stop_on_error: true,
+            },
+            DdlAtomicity::Transactional,
+            None,
+        )
+        .await;
+
+        assert_eq!(result.status, DeployStatus::Failed);
+        assert_eq!(result.executed_count, 0);
+        assert!(exec.log.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -485,5 +632,41 @@ mod tests {
         assert_eq!(result.status, DeployStatus::Cancelled);
         let log = exec.log.lock().unwrap();
         assert!(log.iter().any(|s| s == "ROLLBACK"));
+    }
+    #[tokio::test]
+    async fn transaction_control_errors_never_claim_rollback_or_known_commit() {
+        for command in ["COMMIT", "ROLLBACK"] {
+            let mut exec = ScriptedExecutor::new(if command == "COMMIT" {
+                vec![Ok(())]
+            } else {
+                vec![Err("DDL error".into())]
+            });
+            exec.control_failure = Some(command);
+            let result = run_deploy_with_executor(
+                &exec,
+                &plan_with("postgresql", 1),
+                &DeployOptions::default(),
+                DdlAtomicity::Transactional,
+                None,
+            )
+            .await;
+            assert_eq!(result.status, DeployStatus::Unknown);
+            assert!(result.errors.iter().any(|e| e.contains(command)));
+        }
+    }
+    #[tokio::test]
+    async fn cancellation_rollback_failure_is_unknown() {
+        let mut exec = ScriptedExecutor::new(vec![]);
+        exec.control_failure = Some("ROLLBACK");
+        let flag = AtomicBool::new(true);
+        let result = run_deploy_with_executor(
+            &exec,
+            &plan_with("postgresql", 1),
+            &DeployOptions::default(),
+            DdlAtomicity::Transactional,
+            Some(&flag),
+        )
+        .await;
+        assert_eq!(result.status, DeployStatus::Unknown);
     }
 }

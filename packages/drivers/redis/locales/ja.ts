@@ -97,6 +97,7 @@ const locale = {
   'redis.json.mode.pretty': '整形済み',
   'redis.json.mode.minify': '圧縮',
   'redis.json.saveDocument': 'ドキュメントを保存',
+  'redis.keyBrowser.tree': 'キー ブラウザー',
   'redis.keyName': 'キー名',
   'redis.loadMore': 'さらにロードする',
   'redis.loadedCount': '{count} 件読み込み済み',

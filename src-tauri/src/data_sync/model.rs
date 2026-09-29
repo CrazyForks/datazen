@@ -7,6 +7,7 @@ use datazen_driver_api::Value;
 use serde::{Deserialize, Serialize};
 
 use super::error::DataSyncError;
+use super::filter::SyncSourceFilter;
 
 pub type Row = Vec<Option<Value>>;
 
@@ -61,8 +62,24 @@ pub enum LargeValueMode {
     Hash,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Behaviour when an UPDATE or DELETE no longer matches the target row that
+/// was captured during comparison.
+///
+/// `Abort` is deliberately the default. `Skip` is useful for long-running
+/// synchronizations where independent rows may continue after a concurrent
+/// edit. `Force` only removes the optimistic target-row predicate from
+/// UPDATE/DELETE; INSERT conflicts remain database errors.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
+pub enum ConflictPolicy {
+    #[default]
+    Abort,
+    Skip,
+    Force,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SyncOptions {
     pub insert: bool,
     pub update: bool,
@@ -70,6 +87,8 @@ pub struct SyncOptions {
     pub matching_strategy: MatchingStrategy,
     pub batch_size: u32,
     pub large_value_mode: LargeValueMode,
+    #[serde(default)]
+    pub conflict_policy: ConflictPolicy,
 }
 
 impl Default for SyncOptions {
@@ -81,20 +100,16 @@ impl Default for SyncOptions {
             matching_strategy: MatchingStrategy::PrimaryKey,
             batch_size: 1000,
             large_value_mode: LargeValueMode::Full,
+            conflict_policy: ConflictPolicy::Abort,
         }
     }
 }
 
 impl SyncOptions {
     pub fn validate(&self) -> Result<(), DataSyncError> {
-        if self.batch_size == 0 {
+        if self.batch_size == 0 || self.batch_size > 1000 {
             return Err(DataSyncError::validation(
-                "batchSize must be greater than 0",
-            ));
-        }
-        if !self.insert && !self.update && !self.delete {
-            return Err(DataSyncError::validation(
-                "at least one of insert/update/delete must be enabled",
+                "batchSize must be between 1 and 1000",
             ));
         }
         Ok(())
@@ -111,20 +126,23 @@ impl SyncOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ColumnMapping {
     pub source_column: String,
     pub target_column: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TableMapping {
     pub source_table: String,
     pub target_table: String,
     pub enabled: bool,
     #[serde(default)]
     pub matching_columns: Vec<ColumnMapping>,
+    /// Optional structured predicate applied symmetrically to source and target rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_filter: Option<SyncSourceFilter>,
 }
 
 impl TableMapping {
@@ -135,6 +153,7 @@ impl TableMapping {
             source_table: name,
             enabled: true,
             matching_columns: Vec::new(),
+            source_filter: None,
         }
     }
 
@@ -144,6 +163,7 @@ impl TableMapping {
             target_table: target_table.into(),
             enabled: true,
             matching_columns: Vec::new(),
+            source_filter: None,
         }
     }
 }
@@ -315,9 +335,22 @@ pub struct TableResult {
     pub target_table: String,
     pub status: TableMappingStatus,
     pub incompatible_reason: Option<String>,
+    /// Canonical projection used by both reads; never target physical order.
+    #[serde(default)]
+    pub columns: Vec<String>,
+    #[serde(default)]
+    pub column_types: Vec<String>,
+    #[serde(default)]
+    pub primary_keys: Vec<String>,
+    #[serde(default)]
+    pub unchanged_count: usize,
     pub rows: Vec<RowChange>,
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// Structured predicate used for this comparison. Values remain bound by the
+    /// read path and are retained in the reviewed plan context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_filter: Option<SyncSourceFilter>,
 }
 
 impl TableResult {
@@ -333,6 +366,11 @@ impl TableResult {
             incompatible_reason: None,
             rows,
             warnings: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            primary_keys: Vec::new(),
+            unchanged_count: 0,
+            source_filter: None,
         }
     }
 
@@ -348,6 +386,11 @@ impl TableResult {
             incompatible_reason: Some(reason.into()),
             rows: Vec::new(),
             warnings: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            primary_keys: Vec::new(),
+            unchanged_count: 0,
+            source_filter: None,
         }
     }
 
@@ -359,6 +402,11 @@ impl TableResult {
             incompatible_reason: None,
             rows: Vec::new(),
             warnings: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            primary_keys: Vec::new(),
+            unchanged_count: 0,
+            source_filter: None,
         }
     }
 
@@ -371,6 +419,11 @@ impl TableResult {
             incompatible_reason: None,
             rows: Vec::new(),
             warnings: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            primary_keys: Vec::new(),
+            unchanged_count: 0,
+            source_filter: None,
         }
     }
 
@@ -383,6 +436,11 @@ impl TableResult {
             incompatible_reason: None,
             rows: Vec::new(),
             warnings: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            primary_keys: Vec::new(),
+            unchanged_count: 0,
+            source_filter: None,
         }
     }
 
@@ -399,7 +457,7 @@ impl TableResult {
     }
 
     pub fn unchanged_row_count(&self) -> usize {
-        self.count_op(ChangeOperation::Unchanged)
+        self.unchanged_count + self.count_op(ChangeOperation::Unchanged)
     }
 
     fn count_op(&self, op: ChangeOperation) -> usize {
@@ -525,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn options_reject_empty_ops_and_zero_batch() {
+    fn options_reject_zero_batch_but_allow_comparison_only() {
         let mut opts = SyncOptions::default();
         opts.batch_size = 0;
         assert!(opts.validate().is_err());
@@ -533,7 +591,7 @@ mod tests {
         opts.insert = false;
         opts.update = false;
         opts.delete = false;
-        assert!(opts.validate().is_err());
+        assert!(opts.validate().is_ok());
     }
 
     #[test]
@@ -625,6 +683,20 @@ mod tests {
         let mut chosen = del.clone();
         chosen.selected = true;
         assert!(chosen.eligible_for_changeset(&opts));
+    }
+
+    #[test]
+    fn options_with_all_write_operations_disabled_are_valid_for_comparison() {
+        let options = SyncOptions {
+            insert: false,
+            update: false,
+            delete: false,
+            ..SyncOptions::default()
+        };
+        assert!(options.validate().is_ok());
+        assert!(!options.allows(ChangeOperation::Insert));
+        assert!(!options.allows(ChangeOperation::Update));
+        assert!(!options.allows(ChangeOperation::Delete));
     }
 
     #[test]

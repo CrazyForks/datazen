@@ -303,17 +303,19 @@ export function ConnectionWorkspaceHome({
   const ConnectionHome = connectionHomeSlot?.Component;
   if (ConnectionHome && connectionHomeSlot && connectionContext) {
     return (
-      <div
-        className="flex flex-1 flex-col overflow-y-auto"
-        data-testid="connection-workspace-home"
-      >
+      <div className="flex flex-1 flex-col overflow-y-auto" data-testid="connection-workspace-home">
         <div
           className="flex min-h-0 flex-1 flex-col"
           data-slot="kv-connection-home"
           data-testid="home-kv-connection-home"
         >
           {/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- RedisOverviewHome extends ConnectionHomeSlotProps with onOpenTarget */}
-          <ConnectionHome {...(connectionHomeSlot.props as any)} {...(connectionHomeSlot.onOpenTarget ? { onOpenTarget: connectionHomeSlot.onOpenTarget } : {})} />
+          <ConnectionHome
+            {...(connectionHomeSlot.props as any)}
+            {...(connectionHomeSlot.onOpenTarget
+              ? { onOpenTarget: connectionHomeSlot.onOpenTarget }
+              : {})}
+          />
         </div>
       </div>
     );

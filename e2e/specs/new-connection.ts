@@ -181,7 +181,9 @@ describe('新建连接 (CM-002, CM-005)', () => {
       await createEntry.click();
       await browser.pause(300);
     } else if (
-      !(await $('[data-testid="new-conn-inline-tunnel"]').isExisting().catch(() => false))
+      !(await $('[data-testid="new-conn-inline-tunnel"]')
+        .isExisting()
+        .catch(() => false))
     ) {
       await selectDzOptionInWrap('new-conn-tunnel-source', t('newConn.savedTunnelNone'));
     }

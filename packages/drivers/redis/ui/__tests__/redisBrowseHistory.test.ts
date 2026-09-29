@@ -22,7 +22,9 @@ const KEY_A = 'user:1';
 const KEY_B = 'user:2';
 const KEY_C = 'session:9';
 
-function fakeStorage(initial: Record<string, string> = {}): StorageLike & { data: Record<string, string> } {
+function fakeStorage(
+  initial: Record<string, string> = {},
+): StorageLike & { data: Record<string, string> } {
   const data: Record<string, string> = { ...initial };
   return {
     data,
@@ -115,7 +117,12 @@ describe('pushBrowseEntry', () => {
   it('keeps the newest entry first and dedupes by db + key', () => {
     pushBrowseEntry('conn-1', { key: KEY_A, dbIndex: 0, keyType: 'string' }, storage, T0);
     pushBrowseEntry('conn-1', { key: KEY_B, dbIndex: 0 }, storage, T0 + 1000);
-    const after = pushBrowseEntry('conn-1', { key: KEY_A, dbIndex: 0, keyType: 'hash' }, storage, T0 + 2000);
+    const after = pushBrowseEntry(
+      'conn-1',
+      { key: KEY_A, dbIndex: 0, keyType: 'hash' },
+      storage,
+      T0 + 2000,
+    );
 
     expect(after.map((entry) => entry.key)).toEqual([KEY_A, KEY_B]);
     expect(after[0].visitedAt).toBe(T0 + 2000);
@@ -148,7 +155,12 @@ describe('pushBrowseEntry', () => {
   });
 
   it('normalises a nonsensical db index / timestamp instead of storing NaN', () => {
-    const after = pushBrowseEntry('conn-1', { key: KEY_A, dbIndex: Number.NaN }, storage, Number.NaN);
+    const after = pushBrowseEntry(
+      'conn-1',
+      { key: KEY_A, dbIndex: Number.NaN },
+      storage,
+      Number.NaN,
+    );
     expect(after[0].dbIndex).toBe(0);
     expect(Number.isFinite(after[0].visitedAt)).toBe(true);
   });

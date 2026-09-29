@@ -5,6 +5,8 @@ export function runDashboardWidgetsOnce(dashboard: Dashboard): void {
   void Promise.all(
     dashboard.widgets
       .filter((widget) => widget.enabled)
-      .map((widget) => dashboardCommands.runDashboardWidget(dashboard.id, widget.id).catch(() => undefined)),
+      .map((widget) =>
+        dashboardCommands.runDashboardWidget(dashboard.id, widget.id).catch(() => undefined),
+      ),
   );
 }

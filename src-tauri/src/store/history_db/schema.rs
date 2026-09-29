@@ -93,7 +93,39 @@ impl HistoryDb {
                     ON workflow_history(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_workflow_history_workflow_id
                     ON workflow_history(workflow_id);
+
+                CREATE TABLE IF NOT EXISTS migration_run_history (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    operation TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    phase TEXT NOT NULL,
+                    profile_id TEXT,
+                    profile_revision TEXT,
+                    source_connection_id TEXT,
+                    target_connection_id TEXT,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    selected_count INTEGER NOT NULL DEFAULT 0,
+                    committed_count INTEGER NOT NULL DEFAULT 0,
+                    failed_count INTEGER NOT NULL DEFAULT 0,
+                    conflict_count INTEGER NOT NULL DEFAULT 0,
+                    cancelled INTEGER NOT NULL DEFAULT 0,
+                    rollback_outcome TEXT NOT NULL DEFAULT 'notRequired',
+                    error_summary TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_migration_run_started
+                    ON migration_run_history(started_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_migration_run_profile
+                    ON migration_run_history(profile_id, started_at DESC);
                 ",
+            )?;
+            conn.execute(
+                "UPDATE migration_run_history SET status = 'interrupted', outcome = 'unknown', \
+                 phase = 'interrupted', finished_at = COALESCE(finished_at, ?1), \
+                 rollback_outcome = CASE WHEN rollback_outcome = 'notRequired' THEN 'unknown' ELSE rollback_outcome END \
+                 WHERE status = 'running'",
+                params![chrono::Utc::now().to_rfc3339()],
             )?;
             Ok(())
         })

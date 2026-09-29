@@ -179,6 +179,8 @@ mod tests {
             primary_keys: pks.into_iter().map(str::to_string).collect(),
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         }
     }
 

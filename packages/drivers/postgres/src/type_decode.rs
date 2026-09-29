@@ -2,7 +2,6 @@
 
 use crate::postgres::PostgresDriver;
 use datazen_driver_api::*;
-use rust_decimal::prelude::ToPrimitive;
 use sqlx::{Column, Executor, Postgres, Row};
 
 const JS_MAX_SAFE_INT: i64 = 9_007_199_254_740_991;
@@ -105,21 +104,19 @@ impl PostgresDriver {
                             "FLOAT8" | "DOUBLE PRECISION" => {
                                 row.try_get::<f64, _>(i).ok().map(Value::Float)
                             }
-                            "NUMERIC" | "DECIMAL" => row
-                                .try_get::<rust_decimal::Decimal, _>(i)
-                                .ok()
-                                .map(|d| {
-                                    if d.scale() == 0 {
-                                        if let Some(n) = d.to_i64() {
-                                            return Self::safe_integer(n);
-                                        }
+                            "NUMERIC" | "DECIMAL" => row.try_get_raw(i).ok().and_then(|raw| {
+                                match raw.format() {
+                                    sqlx::postgres::PgValueFormat::Text => {
+                                        raw.as_str().ok().map(str::to_string)
                                     }
-                                    d.to_f64()
-                                        .map(Value::Float)
-                                        .unwrap_or_else(|| Value::String(d.to_string()))
-                                })
-                                .or_else(|| row.try_get::<f64, _>(i).ok().map(Value::Float))
-                                .or_else(|| row.try_get::<String, _>(i).ok().map(Value::String)),
+                                    sqlx::postgres::PgValueFormat::Binary => {
+                                        raw.as_bytes().ok().and_then(|bytes| {
+                                            crate::numeric::binary_numeric_text(bytes).ok()
+                                        })
+                                    }
+                                }
+                                .map(Value::String)
+                            }),
                             "BOOL" | "BOOLEAN" => row.try_get::<bool, _>(i).ok().map(Value::Bool),
                             "DATE" => row
                                 .try_get::<chrono::NaiveDate, _>(i)
@@ -129,7 +126,7 @@ impl PostgresDriver {
                             "TIME" | "TIME WITHOUT TIME ZONE" => row
                                 .try_get::<chrono::NaiveTime, _>(i)
                                 .ok()
-                                .map(|t| Value::String(t.format("%H:%M:%S").to_string()))
+                                .map(|t| Value::String(t.format("%H:%M:%S%.f").to_string()))
                                 .or_else(|| row.try_get::<String, _>(i).ok().map(Value::String)),
                             "TIMETZ" | "TIME WITH TIME ZONE" => {
                                 row.try_get::<String, _>(i).ok().map(Value::String)
@@ -137,7 +134,9 @@ impl PostgresDriver {
                             "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => row
                                 .try_get::<chrono::NaiveDateTime, _>(i)
                                 .ok()
-                                .map(|dt| Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string()))
+                                .map(|dt| {
+                                    Value::String(dt.format("%Y-%m-%d %H:%M:%S%.f").to_string())
+                                })
                                 .or_else(|| row.try_get::<String, _>(i).ok().map(Value::String)),
                             "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => row
                                 .try_get::<chrono::DateTime<chrono::Utc>, _>(i)
@@ -145,7 +144,7 @@ impl PostgresDriver {
                                 .map(|dt| Value::String(dt.to_rfc3339()))
                                 .or_else(|| {
                                     row.try_get::<chrono::NaiveDateTime, _>(i).ok().map(|dt| {
-                                        Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                                        Value::String(dt.format("%Y-%m-%d %H:%M:%S%.f").to_string())
                                     })
                                 })
                                 .or_else(|| row.try_get::<String, _>(i).ok().map(Value::String)),
@@ -196,11 +195,7 @@ impl PostgresDriver {
                                     })
                                 })
                                 .or_else(|| row.try_get::<String, _>(i).ok().map(Value::String)),
-                            "BYTEA" => row.try_get::<Vec<u8>, _>(i).ok().map(|bytes| {
-                                let hex: String =
-                                    bytes.iter().map(|b| format!("{:02x}", b)).collect();
-                                Value::String(format!("\\x{}", hex))
-                            }),
+                            "BYTEA" => row.try_get::<Vec<u8>, _>(i).ok().map(Value::Bytes),
                             _ => row
                                 .try_get::<String, _>(i)
                                 .ok()

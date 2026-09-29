@@ -1,23 +1,67 @@
 //! Batch INSERT execute path (same-family and IR).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+#[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+use std::sync::Mutex;
 
 use datazen_driver_api::TableSchema;
 
-use crate::data_sync::sql::{format_literal, qualify_relation_sql, quote_ident_sql};
+use crate::data_sync::sql::{qualify_relation_sql, quote_ident_sql};
 use crate::db::{ConnectionHandle, DatabaseDriver, Value};
 use crate::transfer::adapter::SyncTargetAdapter;
 use crate::transfer::ir::IRType;
 
 use super::error::TransferError;
 use super::model::{
-    ColumnMapping, TableExecutionResult, TableInspectResult, TransferExecutionResult, TransferJob,
-    TransferMode, WriteMode,
+    ColumnMapping, TableExecutionOutcome, TableExecutionResult, TableInspectResult,
+    TransferExecutionResult, TransferJob, TransferMode, WriteMode,
 };
 use super::structure::{drop_and_recreate_table, table_eligible_for_data};
-use crate::db::SqlTarget;
+
+/// One-shot fault seam used only by unit tests and debug webdriver builds.
+/// It is keyed to one exact target table and is consumed only after the real
+/// driver commit call has returned success.
+#[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+static TEST_COMMIT_ACK_LOSS_TABLE: Mutex<Option<String>> = Mutex::new(None);
+
+#[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+pub(crate) fn arm_test_commit_ack_loss(target_table: &str) -> Result<(), String> {
+    let target_table = target_table.trim();
+    if target_table.is_empty() {
+        return Err("target table must be non-empty".into());
+    }
+    let mut armed = TEST_COMMIT_ACK_LOSS_TABLE
+        .lock()
+        .map_err(|_| "Data Transfer test fault state is unavailable".to_string())?;
+    if armed.is_some() {
+        return Err("a Data Transfer commit acknowledgement loss is already armed".into());
+    }
+    *armed = Some(target_table.to_string());
+    Ok(())
+}
+
+#[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+pub(crate) fn clear_test_commit_ack_loss() -> bool {
+    TEST_COMMIT_ACK_LOSS_TABLE
+        .lock()
+        .map(|mut armed| armed.take().is_some())
+        .unwrap_or(false)
+}
+
+#[cfg(any(test, all(debug_assertions, feature = "webdriver")))]
+pub(crate) fn consume_test_commit_ack_loss(target_table: &str) -> bool {
+    let Ok(mut armed) = TEST_COMMIT_ACK_LOSS_TABLE.lock() else {
+        return false;
+    };
+    if armed.as_deref() == Some(target_table) {
+        armed.take();
+        true
+    } else {
+        false
+    }
+}
 
 pub struct DropCreateContext<'a> {
     pub src_adapter: &'a dyn crate::transfer::adapter::SyncSourceAdapter,
@@ -27,140 +71,58 @@ pub struct DropCreateContext<'a> {
     pub tgt_driver: &'a dyn DatabaseDriver,
     pub tgt_handle: &'a ConnectionHandle,
     pub source_schemas: &'a HashMap<String, TableSchema>,
+    /// The immutable structure plan already performed the destructive preamble.
+    pub structure_precreated: bool,
 }
 
 pub enum ValueFormatter<'a> {
-    SameFamily {
-        quote: char,
-    },
+    SameFamily,
     Ir {
         tgt_adapter: &'a dyn SyncTargetAdapter,
-        source_column_ir_types: &'a HashMap<String, IRType>,
+        source_column_ir_types: &'a HashMap<String, HashMap<String, IRType>>,
     },
 }
 
+/// Logical relation identity keeps catalog/database and schema separate. Schema
+/// defaults are resolved at the command boundary before execution reaches here.
 pub fn is_self_table_overwrite(
-    source_conn: &str,
-    source_db: &str,
-    target_conn: &str,
-    target_db: &str,
+    source: &super::model::Endpoint,
+    target: &super::model::Endpoint,
     source_table: &str,
     target_table: &str,
 ) -> bool {
-    source_conn == target_conn && source_db == target_db && source_table == target_table
+    source.db_session_id == target.db_session_id
+        && source.database == target.database
+        && source.normalized_schema() == target.normalized_schema()
+        && source_table == target_table
+}
+
+pub fn validate_no_self_table_overwrite(
+    job: &TransferJob,
+    inspected: &[TableInspectResult],
+) -> Result<(), TransferError> {
+    let target = job.database_target()?;
+    for table in inspected
+        .iter()
+        .filter(|table| table_eligible_for_data(table, job))
+    {
+        if is_self_table_overwrite(
+            &job.source,
+            target,
+            &table.source_table,
+            &table.target_table,
+        ) {
+            return Err(TransferError::validation(format!(
+                "self-overwrite of table '{}' is not allowed",
+                table.source_table
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub fn active_column_mappings(mappings: &[ColumnMapping]) -> Vec<&ColumnMapping> {
     mappings.iter().filter(|m| !m.skip).collect()
-}
-
-#[allow(dead_code)]
-pub fn build_insert_sql(
-    table: &str,
-    columns: &[&ColumnMapping],
-    values: &[Option<Value>],
-    quote: char,
-) -> String {
-    let q = |name: &str| quote_ident_sql(name, quote);
-    let col_list: Vec<String> = columns.iter().map(|c| q(&c.target_column)).collect();
-    let val_list: Vec<String> = values.iter().map(format_literal).collect();
-    format!(
-        "INSERT INTO {} ({}) VALUES ({})",
-        q(table),
-        col_list.join(", "),
-        val_list.join(", ")
-    )
-}
-
-#[allow(dead_code)] // tested; thin wrapper over build_batch_insert_sql_ref
-pub fn build_batch_insert_sql(
-    table: &str,
-    columns: &[&ColumnMapping],
-    rows: &[Vec<Option<Value>>],
-    quote: char,
-) -> String {
-    build_batch_insert_sql_ref(&quote_ident_sql(table, quote), columns, rows, quote)
-}
-
-pub fn build_batch_insert_sql_ref(
-    table_ref: &str,
-    columns: &[&ColumnMapping],
-    rows: &[Vec<Option<Value>>],
-    quote: char,
-) -> String {
-    if rows.is_empty() {
-        return String::new();
-    }
-    let q = |name: &str| quote_ident_sql(name, quote);
-    let col_list: Vec<String> = columns.iter().map(|c| q(&c.target_column)).collect();
-    let value_groups: Vec<String> = rows
-        .iter()
-        .map(|row| {
-            let vals: Vec<String> = row.iter().map(format_literal).collect();
-            format!("({})", vals.join(", "))
-        })
-        .collect();
-    format!(
-        "INSERT INTO {} ({}) VALUES {}",
-        table_ref,
-        col_list.join(", "),
-        value_groups.join(", ")
-    )
-}
-
-#[allow(dead_code)] // tested; thin wrapper over build_batch_insert_sql_ir_ref
-pub fn build_batch_insert_sql_ir(
-    table: &str,
-    columns: &[&ColumnMapping],
-    rows: &[Vec<Option<Value>>],
-    tgt_adapter: &dyn SyncTargetAdapter,
-    source_column_ir_types: &HashMap<String, IRType>,
-) -> String {
-    build_batch_insert_sql_ir_ref(
-        &tgt_adapter.quote_ident(table),
-        columns,
-        rows,
-        tgt_adapter,
-        source_column_ir_types,
-    )
-}
-
-pub fn build_batch_insert_sql_ir_ref(
-    table_ref: &str,
-    columns: &[&ColumnMapping],
-    rows: &[Vec<Option<Value>>],
-    tgt_adapter: &dyn SyncTargetAdapter,
-    source_column_ir_types: &HashMap<String, IRType>,
-) -> String {
-    if rows.is_empty() {
-        return String::new();
-    }
-    let q = |name: &str| tgt_adapter.quote_ident(name);
-    let col_list: Vec<String> = columns.iter().map(|c| q(&c.target_column)).collect();
-    let value_groups: Vec<String> = rows
-        .iter()
-        .map(|row| {
-            let vals: Vec<String> = columns
-                .iter()
-                .zip(row.iter())
-                .map(|(col, value)| {
-                    let ir_type = source_column_ir_types
-                        .get(col.source_column.as_str())
-                        .cloned()
-                        .unwrap_or(IRType::Text);
-                    let transformed = tgt_adapter.transform_value(value, &ir_type);
-                    tgt_adapter.format_literal(&transformed, &ir_type)
-                })
-                .collect();
-            format!("({})", vals.join(", "))
-        })
-        .collect();
-    format!(
-        "INSERT INTO {} ({}) VALUES {}",
-        table_ref,
-        col_list.join(", "),
-        value_groups.join(", ")
-    )
 }
 
 #[allow(dead_code)] // tested; thin wrapper over build_truncate_sql_ref
@@ -177,49 +139,68 @@ pub fn map_row_values(
     source_schema: &TableSchema,
     columns: &[&ColumnMapping],
 ) -> Result<Vec<Option<Value>>, TransferError> {
-    let index: HashMap<&str, usize> = source_schema
-        .columns
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.name.as_str(), i))
-        .collect();
-    let mut out = Vec::with_capacity(columns.len());
-    for col in columns {
-        let idx = index
-            .get(col.source_column.as_str())
-            .copied()
+    if source_row.len() != columns.len() {
+        return Err(TransferError::validation(format!(
+            "projected row has {} values, expected {}",
+            source_row.len(),
+            columns.len()
+        )));
+    }
+    let mut projected = Vec::with_capacity(columns.len());
+    for (value, col) in source_row.iter().zip(columns) {
+        let source_column = source_schema
+            .columns
+            .iter()
+            .find(|source| source.name == col.source_column)
             .ok_or_else(|| {
                 TransferError::validation(format!(
                     "source column '{}' not found",
                     col.source_column
                 ))
             })?;
-        out.push(source_row.get(idx).cloned().unwrap_or(None));
+
+        // Some MySQL text columns with binary collations are surfaced by the
+        // driver as bytes. Preserve their text meaning when the source schema
+        // confirms a character type; never reinterpret binary columns this way.
+        let value = match value {
+            Some(Value::Bytes(bytes)) if is_textual_source_type(&source_column.data_type) => {
+                let text = std::str::from_utf8(bytes).map_err(|_| {
+                    TransferError::validation(format!(
+                        "source text column '{}' contains bytes that are not valid UTF-8",
+                        col.source_column
+                    ))
+                })?;
+                Some(Value::String(text.to_owned()))
+            }
+            value => value.clone(),
+        };
+        projected.push(value);
     }
-    Ok(out)
+    Ok(projected)
 }
 
-fn build_insert_for_rows(
-    table_ref: &str,
-    columns: &[&ColumnMapping],
-    rows: &[Vec<Option<Value>>],
-    formatter: &ValueFormatter<'_>,
-) -> String {
-    match formatter {
-        ValueFormatter::SameFamily { quote } => {
-            build_batch_insert_sql_ref(table_ref, columns, rows, *quote)
-        }
-        ValueFormatter::Ir {
-            tgt_adapter,
-            source_column_ir_types,
-        } => build_batch_insert_sql_ir_ref(
-            table_ref,
-            columns,
-            rows,
-            *tgt_adapter,
-            source_column_ir_types,
-        ),
-    }
+fn is_textual_source_type(data_type: &str) -> bool {
+    let normalized = data_type.trim().to_ascii_lowercase();
+    let base = normalized.split('(').next().unwrap_or(&normalized).trim();
+    matches!(
+        base,
+        "char"
+            | "character"
+            | "varchar"
+            | "character varying"
+            | "nchar"
+            | "nvarchar"
+            | "national char"
+            | "national character"
+            | "national character varying"
+            | "text"
+            | "tinytext"
+            | "mediumtext"
+            | "longtext"
+            | "citext"
+            | "enum"
+            | "set"
+    )
 }
 
 pub async fn execute_transfer_data(
@@ -234,304 +215,63 @@ pub async fn execute_transfer_data(
     drop_create: Option<&DropCreateContext<'_>>,
     target_read_only: bool,
     cancelled: Option<Arc<AtomicBool>>,
+    completed_tables: Option<&HashSet<String>>,
 ) -> Result<TransferExecutionResult, TransferError> {
-    if target_read_only {
-        return Err(TransferError::validation(
-            "target connection is read-only; Data Transfer cannot execute",
-        ));
-    }
-
-    // Transfer names are qualified, but PostgreSQL cannot cross databases in
-    // one statement: the endpoint database is what routes each read and write
-    // to the right catalog.
-    let src_target = SqlTarget::new(Some(&job.source.database), job.source.schema.as_deref());
-    let tgt_target = SqlTarget::new(Some(&job.target.database), job.target.schema.as_deref());
-
-    if !matches!(
-        job.mode,
-        TransferMode::Data | TransferMode::StructureAndData
-    ) {
-        return Ok(TransferExecutionResult {
-            tables: Vec::new(),
-            rows_inserted: 0,
-            cancelled: false,
-            partial: false,
-        });
-    }
-
-    if job.write_mode.is_destructive() && !job.options.confirmed_destructive {
-        return Err(TransferError::validation(
-            "destructive write mode requires confirmedDestructive",
-        ));
-    }
-
-    job.options.validate()?;
-
-    let src_quote = src_driver.quote_char();
-    let tgt_quote = tgt_driver.quote_char();
-    let src_family = src_driver.driver_type();
-    let tgt_family = tgt_driver.driver_type();
-    let batch = job.options.batch_size as usize;
-    let mut tables_out = Vec::new();
-    let mut total_rows = 0u64;
-    let mut partial = false;
-
-    for table in inspected.iter().filter(|t| table_eligible_for_data(t, job)) {
-        if let Some(flag) = &cancelled {
-            if flag.load(Ordering::SeqCst) {
-                return Ok(TransferExecutionResult {
-                    tables: tables_out,
-                    rows_inserted: total_rows,
-                    cancelled: true,
-                    partial: true,
-                });
-            }
-        }
-
-        if is_self_table_overwrite(
-            &job.source.db_session_id,
-            &job.source.database,
-            &job.target.db_session_id,
-            &job.target.database,
-            &table.source_table,
-            &table.target_table,
-        ) {
-            return Err(TransferError::validation(format!(
-                "self-overwrite of table '{}' is not allowed",
-                table.source_table
-            )));
-        }
-
-        let columns = active_column_mappings(&table.column_mappings);
-        if columns.is_empty() {
-            tables_out.push(TableExecutionResult {
-                source_table: table.source_table.clone(),
-                target_table: table.target_table.clone(),
-                rows_inserted: 0,
-                success: false,
-                error: Some("no column mappings".into()),
-            });
-            if job.options.stop_on_error {
-                partial = true;
-                break;
-            }
-            continue;
-        }
-
-        let Some(src_schema) = source_schemas.get(&table.source_table) else {
-            tables_out.push(TableExecutionResult {
-                source_table: table.source_table.clone(),
-                target_table: table.target_table.clone(),
-                rows_inserted: 0,
-                success: false,
-                error: Some("source schema not loaded".into()),
-            });
-            if job.options.stop_on_error {
-                partial = true;
-                break;
-            }
-            continue;
-        };
-
-        if job.write_mode == WriteMode::DropCreateInsert {
-            let Some(ctx) = drop_create else {
-                return Err(TransferError::validation(
-                    "drop+create requires IR adapters",
-                ));
-            };
-            if let Err(e) = drop_and_recreate_table(
-                ctx.src_adapter,
-                ctx.tgt_adapter,
-                ctx.src_driver,
-                ctx.src_handle,
-                ctx.tgt_driver,
-                ctx.tgt_handle,
-                &table.source_table,
-                &table.target_table,
-                ctx.source_schemas,
-                tgt_target,
-            )
-            .await
-            {
-                tables_out.push(TableExecutionResult {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    rows_inserted: 0,
-                    success: false,
-                    error: Some(e.to_string()),
-                });
-                if job.options.stop_on_error {
-                    partial = true;
-                    break;
-                }
-                continue;
-            }
-        } else if job.write_mode == WriteMode::TruncateInsert {
-            let tgt_table_ref = qualify_relation_sql(
-                &tgt_family,
-                Some(&job.target.database),
-                job.target.schema.as_deref(),
-                &table.target_table,
-                tgt_quote,
-            );
-            let truncate_sql = build_truncate_sql_ref(&tgt_table_ref);
-            if let Err(e) = tgt_driver
-                .execute_at(tgt_handle, &truncate_sql, tgt_target)
-                .await
-                .map_err(|e| TransferError::validation(e.to_string()))
-            {
-                tables_out.push(TableExecutionResult {
-                    source_table: table.source_table.clone(),
-                    target_table: table.target_table.clone(),
-                    rows_inserted: 0,
-                    success: false,
-                    error: Some(format!("truncate failed: {e}")),
-                });
-                if job.options.stop_on_error {
-                    partial = true;
-                    break;
-                }
-                continue;
-            }
-        }
-
-        let src_table_ref = qualify_relation_sql(
-            &src_family,
-            Some(&job.source.database),
-            job.source.schema.as_deref(),
-            &table.source_table,
-            src_quote,
-        );
-        let tgt_table_ref = qualify_relation_sql(
-            &tgt_family,
-            Some(&job.target.database),
-            job.target.schema.as_deref(),
-            &table.target_table,
-            tgt_quote,
-        );
-
-        let select_cols: Vec<String> = columns
-            .iter()
-            .map(|c| quote_ident_sql(&c.source_column, src_quote))
-            .collect();
-        let base_sql = format!("SELECT {} FROM {}", select_cols.join(", "), src_table_ref);
-
-        let mut offset = 0usize;
-        let mut table_rows = 0u64;
-        let mut table_error: Option<String> = None;
-
-        loop {
-            if let Some(flag) = &cancelled {
-                if flag.load(Ordering::SeqCst) {
-                    return Ok(TransferExecutionResult {
-                        tables: tables_out,
-                        rows_inserted: total_rows,
-                        cancelled: true,
-                        partial: true,
-                    });
-                }
-            }
-
-            let sql = if src_driver.supports_offset() {
-                let pagination = src_driver.pagination_syntax(batch as u64, offset as u64);
-                let mut statement = base_sql.clone();
-                // Dialects whose clause is only legal after `ORDER BY` (T-SQL
-                // `OFFSET … FETCH`) need the driver's neutral ordering here,
-                // because `base_sql` carries no ordering of its own.
-                if pagination.requires_order_by {
-                    if let Some(fallback) = pagination.order_by_fallback {
-                        statement.push_str(&format!(" ORDER BY {fallback}"));
-                    }
-                }
-                if !pagination.clause.is_empty() {
-                    statement.push(' ');
-                    statement.push_str(&pagination.clause);
-                }
-                statement
-            } else if offset == 0 {
-                base_sql.clone()
-            } else {
-                break;
-            };
-
-            let result = src_driver
-                .query_at(src_handle, &sql, src_target)
-                .await
-                .map_err(|e| TransferError::validation(e.to_string()))?;
-
-            if result.rows.is_empty() {
-                break;
-            }
-
-            let mapped_rows: Result<Vec<Vec<Option<Value>>>, TransferError> = result
-                .rows
-                .iter()
-                .map(|row| map_row_values(row, src_schema, &columns))
-                .collect();
-
-            match mapped_rows {
-                Ok(rows) => {
-                    let insert_sql =
-                        build_insert_for_rows(&tgt_table_ref, &columns, &rows, formatter);
-                    if insert_sql.is_empty() {
-                        break;
-                    }
-                    if let Err(e) = tgt_driver
-                        .execute_at(tgt_handle, &insert_sql, tgt_target)
-                        .await
-                        .map_err(|e| TransferError::validation(e.to_string()))
-                    {
-                        table_error = Some(e.to_string());
-                        if job.options.stop_on_error {
-                            partial = true;
-                        }
-                        break;
-                    }
-                    let n = rows.len() as u64;
-                    table_rows += n;
-                    total_rows += n;
-                }
-                Err(e) => {
-                    table_error = Some(e.to_string());
-                    if job.options.stop_on_error {
-                        partial = true;
-                    }
-                    break;
-                }
-            }
-
-            if !src_driver.supports_offset() {
-                break;
-            }
-            if result.rows.len() < batch {
-                break;
-            }
-            offset += batch;
-        }
-
-        tables_out.push(TableExecutionResult {
-            source_table: table.source_table.clone(),
-            target_table: table.target_table.clone(),
-            rows_inserted: table_rows,
-            success: table_error.is_none(),
-            error: table_error,
-        });
-
-        if partial {
-            break;
-        }
-    }
-
-    Ok(TransferExecutionResult {
-        tables: tables_out,
-        rows_inserted: total_rows,
-        cancelled: false,
-        partial,
-    })
+    execute_transfer_data_with_write_observer(
+        src_driver,
+        src_handle,
+        tgt_driver,
+        tgt_handle,
+        job,
+        inspected,
+        source_schemas,
+        formatter,
+        drop_create,
+        target_read_only,
+        cancelled,
+        completed_tables,
+        None,
+    )
+    .await
 }
 
-/// Same-family convenience wrapper (kept for tests and backward compatibility).
-#[allow(dead_code)]
+pub async fn execute_transfer_data_with_write_observer(
+    src_driver: &dyn DatabaseDriver,
+    src_handle: &ConnectionHandle,
+    tgt_driver: &dyn DatabaseDriver,
+    tgt_handle: &ConnectionHandle,
+    job: &TransferJob,
+    inspected: &[TableInspectResult],
+    source_schemas: &HashMap<String, TableSchema>,
+    formatter: &ValueFormatter<'_>,
+    drop_create: Option<&DropCreateContext<'_>>,
+    target_read_only: bool,
+    cancelled: Option<Arc<AtomicBool>>,
+    completed_tables: Option<&HashSet<String>>,
+    write_started: Option<&AtomicBool>,
+) -> Result<TransferExecutionResult, TransferError> {
+    execute_transfer_data_with_resume_checkpoint(
+        src_driver,
+        src_handle,
+        tgt_driver,
+        tgt_handle,
+        job,
+        inspected,
+        source_schemas,
+        formatter,
+        drop_create,
+        target_read_only,
+        cancelled,
+        completed_tables,
+        write_started,
+        None,
+    )
+    .await
+}
+
+mod dispatcher;
+pub(crate) use dispatcher::execute_transfer_data_with_resume_checkpoint;
+
 pub async fn execute_same_family_data(
     src_driver: &dyn DatabaseDriver,
     src_handle: &ConnectionHandle,
@@ -543,8 +283,7 @@ pub async fn execute_same_family_data(
     target_read_only: bool,
     cancelled: Option<Arc<AtomicBool>>,
 ) -> Result<TransferExecutionResult, TransferError> {
-    let quote = tgt_driver.quote_char();
-    let formatter = ValueFormatter::SameFamily { quote };
+    let formatter = ValueFormatter::SameFamily;
     execute_transfer_data(
         src_driver,
         src_handle,
@@ -557,6 +296,7 @@ pub async fn execute_same_family_data(
         None,
         target_read_only,
         cancelled,
+        None,
     )
     .await
 }
@@ -564,35 +304,32 @@ pub async fn execute_same_family_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Value;
 
     #[test]
-    fn self_overwrite_detected() {
-        assert!(is_self_table_overwrite(
-            "c1", "db", "c1", "db", "users", "users"
-        ));
+    fn self_overwrite_detected_by_complete_logical_relation() {
+        let mut source = super::super::model::Endpoint {
+            db_session_id: "session".into(),
+            database: "catalog".into(),
+            schema: None,
+        };
+        let mut target = source.clone();
+        assert!(is_self_table_overwrite(&source, &target, "users", "users"));
         assert!(!is_self_table_overwrite(
-            "c1", "db", "c1", "db", "users", "clients"
+            &source, &target, "users", "clients"
         ));
-    }
-
-    #[test]
-    fn batch_insert_sql() {
-        let cols = vec![ColumnMapping {
-            source_column: "id".into(),
-            target_column: "id".into(),
-            skip: false,
-            target_native_type: None,
-        }];
-        let refs: Vec<&ColumnMapping> = cols.iter().collect();
-        let sql = build_batch_insert_sql(
-            "users",
-            &refs,
-            &[vec![Some(Value::Integer(1))], vec![Some(Value::Integer(2))]],
-            '"',
-        );
-        assert!(sql.contains("INSERT INTO"));
-        assert!(sql.contains("VALUES"));
+        target.schema = Some("  ".into());
+        assert!(is_self_table_overwrite(&source, &target, "users", "users"));
+        source.schema = Some(" selected ".into());
+        target.schema = Some("selected".into());
+        assert!(is_self_table_overwrite(&source, &target, "users", "users"));
+        target.schema = Some("other".into());
+        assert!(!is_self_table_overwrite(&source, &target, "users", "users"));
+        target.schema = source.schema.clone();
+        target.database = "other_catalog".into();
+        assert!(!is_self_table_overwrite(&source, &target, "users", "users"));
+        target.database = source.database.clone();
+        target.db_session_id = "other_session".into();
+        assert!(!is_self_table_overwrite(&source, &target, "users", "users"));
     }
 
     #[test]
@@ -631,43 +368,5 @@ mod tests {
             build_truncate_sql_ref(&tgt_ref),
             "TRUNCATE TABLE `tgtdb`.`users`"
         );
-    }
-
-    #[test]
-    fn ir_batch_insert_uses_adapter_literals() {
-        struct LitTarget;
-        impl SyncTargetAdapter for LitTarget {
-            fn ir_type_to_native(&self, _ir: &IRType) -> String {
-                "INT".into()
-            }
-            fn format_default(&self, _d: &crate::transfer::ir::IRDefault) -> Option<String> {
-                None
-            }
-            fn format_literal(&self, value: &Option<Value>, _ir: &IRType) -> String {
-                match value {
-                    Some(Value::Integer(n)) => n.to_string(),
-                    _ => "NULL".into(),
-                }
-            }
-        }
-
-        let cols = vec![ColumnMapping {
-            source_column: "id".into(),
-            target_column: "id".into(),
-            skip: false,
-            target_native_type: None,
-        }];
-        let refs: Vec<&ColumnMapping> = cols.iter().collect();
-        let mut ir_types = HashMap::new();
-        ir_types.insert("id".into(), IRType::Int32);
-        let sql = build_batch_insert_sql_ir(
-            "users",
-            &refs,
-            &[vec![Some(Value::Integer(42))]],
-            &LitTarget,
-            &ir_types,
-        );
-        assert!(sql.contains("INSERT INTO \"users\""));
-        assert!(sql.contains("(42)"));
     }
 }

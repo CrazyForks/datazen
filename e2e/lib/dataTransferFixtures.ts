@@ -65,7 +65,7 @@ export function pgWideTypesCreateSql(table: string): string {
     active BOOLEAN NOT NULL DEFAULT true,
     born DATE,
     day_time TIME,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
     updated_at TIMESTAMP NOT NULL DEFAULT now(),
     uid UUID,
     blob_data BYTEA
@@ -84,7 +84,7 @@ export function mysqlWideTypesCreateSql(table: string): string {
     weight DOUBLE,
     code CHAR(8) NOT NULL DEFAULT 'CODE0001',
     label VARCHAR(128) NOT NULL DEFAULT 'unnamed',
-    body TEXT,
+    body LONGTEXT,
     meta JSON,
     payload JSON,
     active TINYINT(1) NOT NULL DEFAULT 1,
@@ -118,7 +118,7 @@ export function pgWideTypesBulkInsertSql(table: string, count: number): string {
     (g % 2 = 0),
     DATE '2020-01-01' + ((g % 365))::int,
     TIME '08:30:00' + ((g % 3600) || ' seconds')::interval,
-    TIMESTAMPTZ '2024-01-01' + (g || ' minutes')::interval,
+    TIMESTAMP '2024-01-01' + (g || ' minutes')::interval,
     TIMESTAMP '2024-01-01' + (g || ' minutes')::interval,
     gen_random_uuid(),
     decode(lpad(to_hex(g), 8, '0'), 'hex')

@@ -222,6 +222,9 @@ const pack = {
   'common.queriesPerSec': 'Consultas / s',
   'common.dataSyncTitle': 'Sincronização de dados - DataZen',
   'common.unsupportedPair': 'Par não suportado',
+  'common.experimentalPair': 'Em fase experimental',
+  'common.experimentalPairHint':
+    'Este par de bancos de dados ainda não foi verificado por testes reais de migração',
   'common.schemaDiff': 'Diff de schema',
   'common.sqlPreviewLower': 'Visualização SQL',
   'common.selectDatabase': 'Selecionar banco…',

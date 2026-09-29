@@ -579,8 +579,8 @@ describe('Redis new pages E2E', () => {
       if (skipRequested() || !(await redisReachable())) return;
       await clickTab('console');
 
-      const hasRunBtn = await browser.execute(() =>
-        !!document.querySelector('[data-testid="redis-console-run"]'),
+      const hasRunBtn = await browser.execute(
+        () => !!document.querySelector('[data-testid="redis-console-run"]'),
       );
       expect(hasRunBtn).toBe(false);
     });
@@ -624,7 +624,9 @@ describe('Redis new pages E2E', () => {
       await browser.pause(300);
 
       const valueAfterTab = await browser.execute(() => {
-        const textarea = document.querySelector('[data-testid="redis-console-input"]') as HTMLTextAreaElement;
+        const textarea = document.querySelector(
+          '[data-testid="redis-console-input"]',
+        ) as HTMLTextAreaElement;
         return textarea?.value || '';
       });
       expect(valueAfterTab).toContain('PING');
@@ -652,9 +654,7 @@ describe('Redis new pages E2E', () => {
       // At least one key suggestion should mention "demo:"
       const hasDemoKey = await browser.execute(() => {
         const items = document.querySelectorAll('[data-testid^="redis-completion-item-"]');
-        return Array.from(items).some((el) =>
-          (el.textContent || '').includes('demo:'),
-        );
+        return Array.from(items).some((el) => (el.textContent || '').includes('demo:'));
       });
       expect(hasDemoKey).toBe(true);
     });
@@ -690,7 +690,9 @@ describe('Redis new pages E2E', () => {
 
       // A listbox or menu should appear (data-radix or headless menu)
       const hasDropdown = await browser.execute(() => {
-        const lists = document.querySelectorAll('[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper]');
+        const lists = document.querySelectorAll(
+          '[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper]',
+        );
         return lists.length > 0;
       });
       expect(hasDropdown).toBe(true);
@@ -709,9 +711,7 @@ describe('Redis new pages E2E', () => {
       const hasJumpWired = await browser.execute(() => {
         const btns = document.querySelectorAll('[data-overview-action]');
         if (btns.length === 0) return null; // overview not mounted
-        return Array.from(btns).every(
-          (b) => b.getAttribute('data-overview-jump') === 'wired',
-        );
+        return Array.from(btns).every((b) => b.getAttribute('data-overview-jump') === 'wired');
       });
       // If overview is not on screen, skip gracefully
       if (hasJumpWired === null) return;

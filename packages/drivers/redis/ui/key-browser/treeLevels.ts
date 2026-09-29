@@ -107,11 +107,23 @@ export function applyFetch(
   const done = result.cursor === 0;
   if (level.pass !== null) {
     const pass = mergeChildren(level.pass, result.children);
-    if (done) return { ...level, children: pass, pass: null, cursor: 0, done: true, loading: false, error: false };
+    if (done)
+      return {
+        ...level,
+        children: pass,
+        pass: null,
+        cursor: 0,
+        done: true,
+        loading: false,
+        error: false,
+      };
     return { ...level, pass, cursor: result.cursor, done: false, loading: false, error: false };
   }
   const base = mode === 'reset' ? EMPTY_LEVEL : level;
-  const children = mode === 'reset' ? mergeChildren([], result.children) : mergeChildren(base.children, result.children);
+  const children =
+    mode === 'reset'
+      ? mergeChildren([], result.children)
+      : mergeChildren(base.children, result.children);
   return { ...base, children, cursor: result.cursor, done, loading: false, error: false };
 }
 

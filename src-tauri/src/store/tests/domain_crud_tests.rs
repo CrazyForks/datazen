@@ -94,6 +94,10 @@ async fn sync_tasks_crud() {
         target_db_session_id: "t".into(),
         source_connection_id: "sc".into(),
         target_connection_id: "tc".into(),
+        source_database: Some("app".into()),
+        target_database: Some("app".into()),
+        source_schema: None,
+        target_schema: None,
         tables: vec!["users".into()],
         completed_tables: vec![],
         current_table: None,
@@ -104,6 +108,7 @@ async fn sync_tasks_crud() {
         error_message: None,
         created_at: now,
         updated_at: now,
+        resume_state: "unknown".into(),
     };
     store.save_sync_task(task.clone()).await.unwrap();
     assert_eq!(store.get_sync_tasks().await.len(), 1);

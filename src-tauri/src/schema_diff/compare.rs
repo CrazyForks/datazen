@@ -1,7 +1,10 @@
 //! Column (and index) comparison with source = desired.
 
-use super::types::{ChangedColumnDiff, ColumnSnapshot, TableColumnDiff};
-use crate::db::{ColumnSchema, IndexInfo, TableSchema};
+use super::types::{
+    ChangedColumnDiff, CheckConstraintSnapshot, ColumnSnapshot, TableColumnDiff, TableOptionChange,
+    TableOptionsDiff,
+};
+use crate::db::{CheckConstraint, ColumnSchema, IndexInfo, TableSchema};
 use datazen_driver_api::TypeNormalizer;
 use std::collections::HashMap;
 
@@ -81,6 +84,25 @@ pub fn diff_table_schemas(
         }
     }
 
+    let (missing_check_constraints, extra_check_constraints) =
+        diff_check_constraints(&src.check_constraints, &tgt.check_constraints);
+
+    let mut table_option_changes = Vec::new();
+    if src.table_options.comment != tgt.table_options.comment {
+        table_option_changes.push(TableOptionChange::Comment);
+    }
+    if src.table_options.engine != tgt.table_options.engine {
+        table_option_changes.push(TableOptionChange::Engine);
+    }
+    if src.table_options.charset != tgt.table_options.charset {
+        table_option_changes.push(TableOptionChange::Charset);
+    }
+    let table_options = (!table_option_changes.is_empty()).then(|| TableOptionsDiff {
+        source: src.table_options.clone(),
+        target: tgt.table_options.clone(),
+        changes: table_option_changes,
+    });
+
     TableColumnDiff {
         table: table.to_string(),
         added: missing_on_target.clone(),
@@ -88,7 +110,59 @@ pub fn diff_table_schemas(
         missing_on_target,
         extra_on_target,
         changed,
+        missing_check_constraints,
+        extra_check_constraints,
+        table_options,
     }
+}
+
+pub fn diff_check_constraints(
+    source: &[CheckConstraint],
+    target: &[CheckConstraint],
+) -> (Vec<CheckConstraintSnapshot>, Vec<CheckConstraintSnapshot>) {
+    let source_by_name = source
+        .iter()
+        .map(|constraint| (constraint.name.as_str(), constraint))
+        .collect::<HashMap<_, _>>();
+    let target_by_name = target
+        .iter()
+        .map(|constraint| (constraint.name.as_str(), constraint))
+        .collect::<HashMap<_, _>>();
+    let mut missing = Vec::new();
+    let mut extra = Vec::new();
+
+    for (name, source_constraint) in &source_by_name {
+        match target_by_name.get(name) {
+            None => missing.push(CheckConstraintSnapshot {
+                name: source_constraint.name.clone(),
+                expression: source_constraint.expression.clone(),
+            }),
+            Some(target_constraint)
+                if source_constraint.expression.trim() != target_constraint.expression.trim() =>
+            {
+                extra.push(CheckConstraintSnapshot {
+                    name: target_constraint.name.clone(),
+                    expression: target_constraint.expression.clone(),
+                });
+                missing.push(CheckConstraintSnapshot {
+                    name: source_constraint.name.clone(),
+                    expression: source_constraint.expression.clone(),
+                });
+            }
+            Some(_) => {}
+        }
+    }
+    for (name, target_constraint) in &target_by_name {
+        if !source_by_name.contains_key(name) {
+            extra.push(CheckConstraintSnapshot {
+                name: target_constraint.name.clone(),
+                expression: target_constraint.expression.clone(),
+            });
+        }
+    }
+    missing.sort_by(|left, right| left.name.cmp(&right.name));
+    extra.sort_by(|left, right| left.name.cmp(&right.name));
+    (missing, extra)
 }
 
 #[derive(Debug, Clone)]
@@ -97,18 +171,10 @@ pub struct IndexDiff {
     pub extra_on_target: Vec<IndexInfo>,
 }
 
-fn normalize_index_col(c: &str) -> &str {
-    c.split('(').next().unwrap_or(c).trim().trim_matches('`')
-}
-
 fn index_definition_equal(a: &IndexInfo, b: &IndexInfo) -> bool {
-    if a.is_unique != b.is_unique || a.columns.len() != b.columns.len() {
-        return false;
-    }
-    a.columns
-        .iter()
-        .zip(b.columns.iter())
-        .all(|(ca, cb)| normalize_index_col(ca) == normalize_index_col(cb))
+    a.is_unique == b.is_unique
+        && a.index_type.eq_ignore_ascii_case(&b.index_type)
+        && a.columns == b.columns
 }
 
 pub fn diff_indexes(src: &TableSchema, tgt: &TableSchema) -> IndexDiff {
@@ -153,7 +219,7 @@ pub fn diff_indexes(src: &TableSchema, tgt: &TableSchema) -> IndexDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::ColumnSchema;
+    use crate::db::{CheckConstraint, ColumnSchema, TableOptions};
 
     fn col(name: &str, ty: &str) -> ColumnSchema {
         ColumnSchema {
@@ -174,6 +240,8 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         }
     }
 
@@ -275,14 +343,91 @@ mod tests {
     }
 
     #[test]
-    fn index_matches_with_mysql_prefix_length() {
+    fn index_prefix_length_difference_is_not_treated_as_equal() {
         let mut src = schema(vec![col("id", "int"), col("region", "text")]);
-        src.indexes.push(index("idx_region", &["region"], false));
+        src.indexes
+            .push(index("idx_region", &["region(10)"], false));
         let mut tgt = schema(vec![col("id", "int"), col("region", "text")]);
         tgt.indexes
             .push(index("idx_region", &["region(255)"], false));
         let diff = diff_indexes(&src, &tgt);
-        assert!(diff.missing_on_target.is_empty());
-        assert!(diff.extra_on_target.is_empty());
+        assert_eq!(diff.missing_on_target[0].columns, vec!["region(10)"]);
+        assert_eq!(diff.extra_on_target[0].columns, vec!["region(255)"]);
+    }
+
+    #[test]
+    fn index_type_difference_is_not_treated_as_equal() {
+        let mut src = schema(vec![col("id", "int")]);
+        src.indexes.push(index("idx_id", &["id"], false));
+        let mut tgt = schema(vec![col("id", "int")]);
+        let mut hash = index("idx_id", &["id"], false);
+        hash.index_type = "hash".into();
+        tgt.indexes.push(hash);
+
+        let diff = diff_indexes(&src, &tgt);
+        assert_eq!(diff.missing_on_target.len(), 1);
+        assert_eq!(diff.extra_on_target.len(), 1);
+    }
+
+    #[test]
+    fn check_constraints_are_diffed_by_name_without_changing_expression_semantics() {
+        let mut src = schema(vec![col("id", "int")]);
+        src.check_constraints.push(CheckConstraint {
+            name: "users_age_check".into(),
+            expression: "age >= 0".into(),
+        });
+        let mut tgt = schema(vec![col("id", "int")]);
+        tgt.check_constraints.push(CheckConstraint {
+            name: "users_age_check".into(),
+            expression: "  age >= 0  ".into(),
+        });
+        assert!(diff_table_schemas("users", &src, &tgt, None)
+            .missing_check_constraints
+            .is_empty());
+
+        tgt.check_constraints[0].expression = "age > 0".into();
+        let diff = diff_table_schemas("users", &src, &tgt, None);
+        assert_eq!(diff.missing_check_constraints[0].name, "users_age_check");
+        assert_eq!(diff.extra_check_constraints[0].expression, "age > 0");
+
+        src.check_constraints[0].expression = "name = 'A B'".into();
+        tgt.check_constraints[0].expression = "name = 'a b'".into();
+        let diff = diff_table_schemas("users", &src, &tgt, None);
+        assert_eq!(diff.missing_check_constraints[0].expression, "name = 'A B'");
+        assert_eq!(diff.extra_check_constraints[0].expression, "name = 'a b'");
+
+        src.check_constraints[0].expression = "name = 'a  b'".into();
+        tgt.check_constraints[0].expression = "name = 'a b'".into();
+        let diff = diff_table_schemas("users", &src, &tgt, None);
+        assert_eq!(
+            diff.missing_check_constraints[0].expression,
+            "name = 'a  b'"
+        );
+        assert_eq!(diff.extra_check_constraints[0].expression, "name = 'a b'");
+    }
+
+    #[test]
+    fn table_options_are_diffed_without_fabricating_unsupported_values() {
+        let mut src = schema(vec![col("id", "int")]);
+        src.table_options = TableOptions {
+            comment: Some("orders".into()),
+            engine: Some("InnoDB".into()),
+            charset: Some("utf8mb4".into()),
+            ..TableOptions::default()
+        };
+        let mut tgt = schema(vec![col("id", "int")]);
+        tgt.table_options = TableOptions {
+            comment: None,
+            engine: Some("InnoDB".into()),
+            charset: Some("latin1".into()),
+            ..TableOptions::default()
+        };
+        let diff = diff_table_schemas("orders", &src, &tgt, None);
+        let options = diff.table_options.expect("table option diff");
+        assert_eq!(options.source.comment.as_deref(), Some("orders"));
+        assert_eq!(options.target.charset.as_deref(), Some("latin1"));
+        assert!(options.changes.contains(&TableOptionChange::Comment));
+        assert!(options.changes.contains(&TableOptionChange::Charset));
+        assert!(!options.changes.contains(&TableOptionChange::Engine));
     }
 }

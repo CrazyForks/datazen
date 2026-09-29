@@ -215,6 +215,8 @@ const pack = {
   'common.queriesPerSec': '每秒查询数',
   'common.dataSyncTitle': '数据同步 - DataZen',
   'common.unsupportedPair': '不支持该组合',
+  'common.experimentalPair': '实验性',
+  'common.experimentalPairHint': '此数据库配对尚未通过真实迁移测试',
   'common.schemaDiff': '结构对比',
   'common.sqlPreviewLower': 'SQL 预览',
   'common.selectDatabase': '选择数据库',

@@ -15,4 +15,4 @@ export function pickDefaultSchema(schemas: string[], previous?: string): string 
   return schemas[0] ?? '';
 }
 
-export type SyncState = 'idle' | 'inspecting' | 'comparing' | 'compared' | 'executing' | 'done';
+export type SyncState = 'idle' | 'inspecting' | 'comparing' | 'compared' | 'executing' | 'unknown' | 'done';

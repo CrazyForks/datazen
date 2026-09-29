@@ -85,6 +85,26 @@ impl DatabaseDriver for PostgresDriver {
         "postgresql".into()
     }
 
+    fn format_sql_literal(&self, value: &Option<Value>) -> String {
+        match value {
+            None | Some(Value::Null) => "NULL".into(),
+            Some(Value::Bool(true)) => "TRUE".into(),
+            Some(Value::Bool(false)) => "FALSE".into(),
+            Some(Value::Integer(n)) => n.to_string(),
+            Some(Value::Float(n)) => n.to_string(),
+            Some(Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
+            Some(Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
+            Some(Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),
+            Some(Value::Bytes(bytes)) => format!(
+                "'\\x{}'",
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            ),
+        }
+    }
+
     fn dialect_notes(&self) -> Option<String> {
         Some(
             "PostgreSQL uses LIMIT/OFFSET for pagination, ILIKE for case-insensitive \
@@ -332,6 +352,46 @@ impl DatabaseDriver for PostgresDriver {
         Self::query_with_params_impl(self, handle, sql, params).await
     }
 
+    fn parameter_placeholder(
+        &self,
+        index: usize,
+        data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        let normalized = data_type.unwrap_or("").trim().to_ascii_lowercase();
+        let base = normalized.split('(').next().unwrap_or("").trim();
+        let cast = match base {
+            "uuid" => Some("uuid"),
+            "numeric" | "decimal" => Some("numeric"),
+            "bigint" | "int8" | "bigserial" => Some("bigint"),
+            "integer" | "int" | "int4" | "serial" => Some("integer"),
+            "smallint" | "int2" | "smallserial" => Some("smallint"),
+            "timestamp with time zone" | "timestamptz" => Some("timestamptz"),
+            "timestamp without time zone" | "timestamp" => Some("timestamp"),
+            "time with time zone" | "timetz" => Some("timetz"),
+            "time without time zone" | "time" => Some("time"),
+            "date" => Some("date"),
+            "json" => Some("json"),
+            "jsonb" => Some("jsonb"),
+            "interval" => Some("interval"),
+            "inet" => Some("inet"),
+            "cidr" => Some("cidr"),
+            _ => None,
+        };
+        Ok(match cast {
+            Some(cast) => format!("${index}::{cast}"),
+            None => format!("${index}"),
+        })
+    }
+
+    async fn execute_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<u64, DriverError> {
+        Self::execute_params_impl(self, handle, sql, params).await
+    }
+
     async fn execute(&self, handle: &ConnectionHandle, sql: &str) -> Result<u64, DriverError> {
         Self::execute_impl(self, handle, sql).await
     }
@@ -341,6 +401,51 @@ impl DatabaseDriver for PostgresDriver {
         handle: &ConnectionHandle,
     ) -> Result<TransactionHandle, DriverError> {
         Self::begin_transaction_impl(self, handle).await
+    }
+
+    async fn advance_transfer_identity_sequences(
+        &self,
+        handle: &ConnectionHandle,
+        schema: Option<&str>,
+        table: &str,
+        columns: &[String],
+    ) -> Result<(), DriverError> {
+        self.advance_transfer_identity_sequences_impl(handle, schema, table, columns)
+            .await
+    }
+
+    fn transfer_explicit_identity_insert_clause(&self) -> Option<&'static str> {
+        Some("OVERRIDING SYSTEM VALUE")
+    }
+
+    fn transfer_sql_file_insert_batch_size(&self) -> usize {
+        500
+    }
+
+    fn render_transfer_sql_file_insert(
+        &self,
+        insert_template: &str,
+        identity_override_marker: &str,
+    ) -> Result<String, DriverError> {
+        crate::transfer_identity::render_sql_file_insert(insert_template, identity_override_marker)
+    }
+
+    fn render_transfer_identity_sequence_sync_sql(
+        &self,
+        schema: Option<&str>,
+        table: &str,
+        columns: &[String],
+    ) -> Result<Vec<String>, DriverError> {
+        Ok(crate::transfer_identity::render_sync_sql(
+            self, schema, table, columns,
+        ))
+    }
+
+    async fn begin_read_snapshot(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        Self::begin_read_snapshot_impl(self, handle).await
     }
 
     async fn commit(&self, tx: TransactionHandle) -> Result<(), DriverError> {
@@ -388,6 +493,14 @@ impl DatabaseDriver for PostgresDriver {
 
     async fn get_server_info(&self, handle: &ConnectionHandle) -> Result<ServerInfo, DriverError> {
         Self::get_server_info_impl(self, handle).await
+    }
+
+    async fn physical_database_identity(
+        &self,
+        handle: &ConnectionHandle,
+        database: &str,
+    ) -> Result<Option<String>, DriverError> {
+        Self::physical_database_identity_impl(self, handle, database).await
     }
 
     async fn dump_table_ddl(

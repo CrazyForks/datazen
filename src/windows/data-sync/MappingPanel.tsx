@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { useI18n } from '../../hooks/useI18n';
@@ -11,6 +12,8 @@ import {
   tableKey,
   type DataSyncTableResult,
 } from './mappingView';
+import { SourceFilterEditor } from '../data-transfer/SourceFilterEditor';
+import { RecordsetEditor } from './RecordsetEditor';
 
 interface MappingPanelProps {
   rows: DataSyncTableResult[];
@@ -19,6 +22,7 @@ interface MappingPanelProps {
   onToggleDisabled: (sourceTable: string) => void;
   onOpenSchemaDiff: () => void;
   onOpenDataTransfer?: () => void;
+  onUpdateSourceFilter?: (sourceTable: string, filter: DataSyncTableResult['sourceFilter']) => void;
 }
 
 export function MappingPanel({
@@ -28,8 +32,10 @@ export function MappingPanel({
   onToggleDisabled,
   onOpenSchemaDiff,
   onOpenDataTransfer,
+  onUpdateSourceFilter,
 }: MappingPanelProps) {
   const { t } = useI18n();
+  const [filterTable, setFilterTable] = useState<string | null>(null);
   const summary = summarizeMappings(rows);
 
   if (rows.length === 0) return null;
@@ -85,6 +91,36 @@ export function MappingPanel({
                     : t(mappingLabelKey(row.status))}
                 </div>
                 <div className="flex w-24 justify-end gap-1">
+                  {row.status === 'MATCHED' && onUpdateSourceFilter && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-[10px]"
+                      data-testid="data-sync-source-filter"
+                      onClick={() =>
+                        setFilterTable((current) =>
+                          current === row.sourceTable ? null : row.sourceTable,
+                        )
+                      }
+                    >
+                      {t('sync.sourceFilter')}
+                    </Button>
+                  )}
+                  {row.status === 'MATCHED' && onUpdateSourceFilter && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-[10px]"
+                      data-testid="data-sync-recordset"
+                      onClick={() =>
+                        setFilterTable((current) =>
+                          current === row.sourceTable ? null : row.sourceTable,
+                        )
+                      }
+                    >
+                      {t('sync.recordset')}
+                    </Button>
+                  )}
                   {row.status === 'INCOMPATIBLE' && (
                     <>
                       <Button
@@ -116,6 +152,35 @@ export function MappingPanel({
                   title={row.incompatibleReason}
                 >
                   {row.incompatibleReason}
+                </div>
+              )}
+              {filterTable === row.sourceTable && onUpdateSourceFilter && row.status === 'MATCHED' && (
+                <div className="ml-9 mt-2">
+                  <RecordsetEditor
+                    primaryKeys={row.primaryKeys ?? []}
+                    recordset={row.sourceFilter?.recordset}
+                    onChange={(recordset) => {
+                      const current = row.sourceFilter;
+                      if (recordset) {
+                        onUpdateSourceFilter(row.sourceTable, {
+                          ...(current ?? { filters: [] }),
+                          recordset,
+                        });
+                        return;
+                      }
+                      if (current?.filters?.length) {
+                        const { recordset: _recordset, ...withoutRecordset } = current;
+                        onUpdateSourceFilter(row.sourceTable, withoutRecordset);
+                      } else {
+                        onUpdateSourceFilter(row.sourceTable, undefined);
+                      }
+                    }}
+                  />
+                  <SourceFilterEditor
+                    columns={row.columns ?? []}
+                    filter={row.sourceFilter}
+                    onChange={(filter) => onUpdateSourceFilter(row.sourceTable, filter)}
+                  />
                 </div>
               )}
             </div>

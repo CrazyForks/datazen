@@ -231,6 +231,24 @@ impl SyncTargetAdapter for ClickHouseSyncAdapter {
         '`'
     }
 
+    fn qualify_relation(&self, database: &str, schema: Option<&str>, table: &str) -> String {
+        let namespace = if database.trim().is_empty() {
+            schema.filter(|value| !value.trim().is_empty())
+        } else {
+            Some(database)
+        };
+        match namespace {
+            Some(namespace) => {
+                format!(
+                    "{}.{}",
+                    self.quote_ident(namespace),
+                    self.quote_ident(table)
+                )
+            }
+            None => self.quote_ident(table),
+        }
+    }
+
     fn supports_primary_key(&self) -> bool {
         false
     }
@@ -345,6 +363,14 @@ mod tests {
         assert_eq!(
             adapter.format_literal(&Some(Value::String("a'b".into())), &IRType::Text),
             "'a''b'"
+        );
+    }
+
+    #[test]
+    fn ch_transfer_relation_uses_target_database() {
+        assert_eq!(
+            ClickHouseSyncAdapter.qualify_relation("analytics", None, "events"),
+            "`analytics`.`events`"
         );
     }
 }

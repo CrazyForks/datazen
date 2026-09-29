@@ -384,8 +384,6 @@ const locale = {
   'redis.overview.memory.bigKeyGone': 'gone',
   'redis.overview.typeUnknown': 'unknown',
 
-  // Card 3 · Key space grid
-
   // Card 4 · Performance (combined slowlog + big keys)
   'redis.overview.performance.title': 'Performance',
   'redis.overview.performance.empty': 'No performance data available',

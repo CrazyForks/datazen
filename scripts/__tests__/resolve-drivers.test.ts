@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { parseVariant, resolveDrivers, wantsCodegenOnly, writeIfChanged } from '../resolve-drivers.mjs';
+import {
+  parseVariant,
+  resolveDrivers,
+  wantsCodegenOnly,
+  writeIfChanged,
+} from '../resolve-drivers.mjs';
 
 const registry = {
   postgres: { source: 'path' },

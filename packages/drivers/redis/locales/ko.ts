@@ -95,6 +95,7 @@ const locale = {
   'redis.json.mode.pretty': '서식화',
   'redis.json.mode.minify': '최소화',
   'redis.json.saveDocument': '문서 저장',
+  'redis.keyBrowser.tree': '키 브라우저',
   'redis.keyName': '키 이름',
   'redis.loadMore': '더 로드하기',
   'redis.loadedCount': '{count}개 로드됨',

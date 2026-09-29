@@ -22,6 +22,37 @@ datazen_driver_api::inventory::submit! {
 // ── SyncSourceAdapter ──────────────────────────────────────────────
 
 impl SyncSourceAdapter for SqliteSyncAdapter {
+    fn sync_key_seek_value(
+        &self,
+        value: &Value,
+        contract: &datazen_driver_api::SyncKeyContract,
+    ) -> Result<Value, String> {
+        match &contract.kind {
+            datazen_driver_api::SyncKeyKind::Text {
+                collation: datazen_driver_api::SyncKeyCollation::Binary,
+            } => self
+                .normalize_sync_key(&Some(value.clone()), contract)
+                .map(|key| match key {
+                    datazen_driver_api::SyncKeyValue::Text(bytes) => Value::Bytes(bytes),
+                    _ => value.clone(),
+                }),
+            _ => Ok(value.clone()),
+        }
+    }
+
+    fn sync_key_order_expression(
+        &self,
+        quoted_column: &str,
+        contract: &datazen_driver_api::SyncKeyContract,
+    ) -> String {
+        match &contract.kind {
+            datazen_driver_api::SyncKeyKind::Text {
+                collation: datazen_driver_api::SyncKeyCollation::Binary,
+            } => format!("CAST({quoted_column} AS BLOB)"),
+            _ => quoted_column.to_string(),
+        }
+    }
+
     fn column_to_ir(&self, column: &ColumnSchema, _native_full_type: Option<&str>) -> IRColumn {
         let upper = column.data_type.trim().to_uppercase();
 
@@ -124,6 +155,10 @@ impl SyncTargetAdapter for SqliteSyncAdapter {
 
     fn auto_increment_keyword(&self) -> Option<&str> {
         Some("AUTOINCREMENT")
+    }
+
+    fn supports_explicit_identity_values(&self) -> bool {
+        true
     }
 }
 
@@ -256,5 +291,32 @@ mod tests {
             "X'abcd'"
         );
         assert_eq!(a.auto_increment_keyword(), Some("AUTOINCREMENT"));
+    }
+
+    #[test]
+    fn sqlite_sync_key_contract_exposes_binary_text_order() {
+        let a = SqliteSyncAdapter;
+        let contract = a.sync_key_contract(&col("name", "TEXT")).unwrap();
+        assert_eq!(
+            a.sync_key_order_expression("\"name\"", &contract),
+            "CAST(\"name\" AS BLOB)"
+        );
+        assert!(a.sync_key_contract(&col("value", "REAL")).is_err());
+    }
+
+    #[test]
+    fn sqlite_binary_text_seek_value_is_bound_as_blob() {
+        let a = SqliteSyncAdapter;
+        let contract = a.sync_key_contract(&col("name", "TEXT")).unwrap();
+        assert!(matches!(
+            a.sync_key_seek_value(&Value::String("a".into()), &contract)
+                .unwrap(),
+            Value::Bytes(bytes) if bytes == b"a"
+        ));
+        assert!(matches!(
+            a.sync_key_seek_value(&Value::Bytes(b"b".to_vec()), &contract)
+                .unwrap(),
+            Value::Bytes(bytes) if bytes == b"b"
+        ));
     }
 }

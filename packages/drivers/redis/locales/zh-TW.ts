@@ -91,6 +91,7 @@ const locale = {
   'redis.json.mode.pretty': '格式化',
   'redis.json.mode.minify': '壓縮格式',
   'redis.json.saveDocument': '儲存文件',
+  'redis.keyBrowser.tree': '金鑰瀏覽器',
   'redis.keyName': '鍵名',
   'redis.loadMore': '載入更多',
   'redis.loadedCount': '已載入 {count}',

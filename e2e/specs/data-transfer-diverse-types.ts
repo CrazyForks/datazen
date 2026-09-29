@@ -62,7 +62,11 @@ async function runDataTransferWizard(sourceName: string, targetName: string, tab
   }
 
   const execute = await $('[data-testid="data-transfer-execute"]');
-  await execute.waitForClickable({ timeout: 20000 });
+  const pageText = (await $('body').getText()).slice(-1800);
+  await execute.waitForClickable({
+    timeout: 20000,
+    timeoutMsg: `Transfer execute was disabled. Page state: ${pageText}`,
+  });
   await execute.click();
   await browser.pause(Math.min(30000, 3000 + Math.floor(TRANSFER_E2E_ROW_COUNT / 200) * 100));
 

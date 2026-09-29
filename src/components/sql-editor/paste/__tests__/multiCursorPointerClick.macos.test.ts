@@ -70,9 +70,13 @@ function open(anchor: number): EditorView {
 }
 
 describe('macOS pointer branch: the chord is Cmd, Control is not', () => {
-  const evt = (
-    over: Partial<Record<'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey', boolean>>,
-  ) => ({ altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, ...over });
+  const evt = (over: Partial<Record<'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey', boolean>>) => ({
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    ...over,
+  });
 
   it('agrees with every row of the documented macOS table', () => {
     // The inversion versus the non-mac branch is the whole point: Ctrl and

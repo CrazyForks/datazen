@@ -336,5 +336,9 @@ const pack = {
     'Une sonde WebSocket vérifie le relais : en mode raw_binary, elle prouve seulement que le relais est joignable, tandis que datazen_v1 ouvre un canal vers la cible.',
   'settings.tunnels.test.scope.general':
     'Une sonde réussie ne garantit jamais que votre base de données est joignable via ce tunnel.',
+  'settings.updater.manualDescription':
+    'Cette version ne dispose pas d’un canal de mise à jour signé. Installez une version correspondante depuis GitHub Releases pour la mettre à jour.',
+  'settings.updater.manualVariant': 'Version actuelle : {variant}',
+  'settings.updater.openReleases': 'Ouvrir la page Releases',
 } as const;
 export default pack;

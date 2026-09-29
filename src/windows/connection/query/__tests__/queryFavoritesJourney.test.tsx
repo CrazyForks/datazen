@@ -40,10 +40,9 @@ const backend = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../../commands/query', async () => {
-  const actual =
-    await vi.importActual<typeof import('../../../../commands/query')>(
-      '../../../../commands/query',
-    );
+  const actual = await vi.importActual<typeof import('../../../../commands/query')>(
+    '../../../../commands/query',
+  );
   const matches = (favorites: FavoriteQuery[], connectionId?: string) =>
     connectionId ? favorites.filter((f) => f.connectionId === connectionId) : favorites;
 

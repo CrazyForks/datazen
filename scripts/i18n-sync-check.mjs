@@ -23,7 +23,7 @@
  * runs the CLI (same convention as `check-id-terminology.mjs`).
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,12 +36,19 @@ const driversDir = resolve(root, 'packages/drivers');
 const LOCALE_FILES = ['de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'ru', 'zh-TW'];
 
 function extractKeys(filePath) {
-  const src = readFileSync(filePath, 'utf-8');
+  return extractHostKeysFromSources([readFileSync(filePath, 'utf-8')]);
+}
+
+/** Merge host dictionary keys parsed from one or more locale domain packs. */
+export function extractHostKeysFromSources(sources) {
   const keys = {};
   const re = /^\s*'([^']+)':\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/gm;
-  let m;
-  while ((m = re.exec(src)) !== null) {
-    keys[m[1]] = m[2] ?? m[3] ?? '';
+  for (const src of sources) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      keys[m[1]] = m[2] ?? m[3] ?? '';
+    }
   }
   return keys;
 }
@@ -74,8 +81,7 @@ function extractLocaleKeys(locale) {
  */
 export function extractPackKeys(src) {
   const keys = {};
-  const re =
-    /^\s*'([^']+)':\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`(?:[^`\\]|\\.)*`|$)/gm;
+  const re = /^\s*'([^']+)':\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`(?:[^`\\]|\\.)*`|$)/gm;
   let m;
   while ((m = re.exec(src)) !== null) {
     keys[m[1]] = m[2] ?? m[3] ?? '';
@@ -131,7 +137,9 @@ export function inspectDriverLocalePack(pack) {
   // shared registry at runtime.
   const indexPath = join(dir, 'index.ts');
   if (!existsSync(indexPath)) {
-    lines.push(`[driver.${driver}] locales/index.ts is missing — a driver pack must self-register via registerTranslations().`);
+    lines.push(
+      `[driver.${driver}] locales/index.ts is missing — a driver pack must self-register via registerTranslations().`,
+    );
     structural += 1;
   } else {
     const indexSrc = readFileSync(indexPath, 'utf-8');
@@ -139,7 +147,9 @@ export function inspectDriverLocalePack(pack) {
       (name) => !new RegExp(`from\\s+'\\./${name.replace(/\.ts$/, '')}'`).test(indexSrc),
     );
     if (notRegistered.length > 0) {
-      lines.push(`[driver.${driver}] locales/index.ts does not import ${notRegistered.length} locale file(s): ${notRegistered.join(', ')}`);
+      lines.push(
+        `[driver.${driver}] locales/index.ts does not import ${notRegistered.length} locale file(s): ${notRegistered.join(', ')}`,
+      );
       structural += notRegistered.length;
     }
   }
@@ -158,11 +168,15 @@ export function inspectDriverLocalePack(pack) {
 
     lines.push(`[driver.${driver}/${locale}]`);
     if (missingKeys.length > 0) {
-      lines.push(`  Missing ${missingKeys.length} key(s): ${missingKeys.slice(0, 10).join(', ')}${missingKeys.length > 10 ? '…' : ''}`);
+      lines.push(
+        `  Missing ${missingKeys.length} key(s): ${missingKeys.slice(0, 10).join(', ')}${missingKeys.length > 10 ? '…' : ''}`,
+      );
       missing += missingKeys.length;
     }
     if (extra.length > 0) {
-      lines.push(`  Extra ${extra.length} key(s): ${extra.slice(0, 5).join(', ')}${extra.length > 5 ? '…' : ''}`);
+      lines.push(
+        `  Extra ${extra.length} key(s): ${extra.slice(0, 5).join(', ')}${extra.length > 5 ? '…' : ''}`,
+      );
     }
   }
 
@@ -193,7 +207,13 @@ export function checkDriverLocalePacks(driversDir) {
  * fail the run even when no key is missing (an unregistered pack is worse
  * than an untranslated one).
  */
-export function buildSyncReport({ totalMissing, totalStale, totalStructural, driverPackCount, hostLocaleCount = LOCALE_FILES.length }) {
+export function buildSyncReport({
+  totalMissing,
+  totalStale,
+  totalStructural,
+  driverPackCount,
+  hostLocaleCount = LOCALE_FILES.length,
+}) {
   if (totalMissing === 0 && totalStale === 0 && totalStructural === 0) {
     return { lines: ['All locale files are in sync with en.ts.'], exitCode: 0 };
   }
@@ -208,18 +228,26 @@ export function buildSyncReport({ totalMissing, totalStale, totalStructural, dri
 
 function getEnKeysAtRef(ref) {
   try {
-    const content = execSync(`git show ${ref}:src/locales/en.ts`, {
-      cwd: root,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    const keys = {};
-    const re = /^\s*'([^']+)':\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/gm;
-    let m;
-    while ((m = re.exec(content)) !== null) {
-      keys[m[1]] = m[2] ?? m[3] ?? '';
-    }
-    return keys;
+    const paths = execFileSync(
+      'git',
+      ['ls-tree', '-r', '--name-only', ref, '--', 'src/locales/en'],
+      {
+        cwd: root,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    )
+      .split('\n')
+      .filter((path) => path.endsWith('.ts'));
+    const sourcePaths = paths.length > 0 ? paths : ['src/locales/en.ts'];
+    const sources = sourcePaths.map((path) =>
+      execFileSync('git', ['show', `${ref}:${path}`], {
+        cwd: root,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }),
+    );
+    return extractHostKeysFromSources(sources);
   } catch {
     return null;
   }
@@ -227,7 +255,7 @@ function getEnKeysAtRef(ref) {
 
 function getLatestTag() {
   try {
-    return execSync('git describe --tags --abbrev=0', {
+    return execFileSync('git', ['describe', '--tags', '--abbrev=0'], {
       cwd: root,
       encoding: 'utf-8',
     }).trim();
@@ -260,7 +288,9 @@ function runCli() {
           changedEnKeys.add(key);
         }
       }
-      console.log(`\nComparing en.ts against ${fromRef}: ${changedEnKeys.size} key(s) changed/added\n`);
+      console.log(
+        `\nComparing the English locale against ${fromRef}: ${changedEnKeys.size} key(s) changed/added\n`,
+      );
       if (verbose && changedEnKeys.size > 0) {
         for (const key of changedEnKeys) {
           const old = oldEnKeys[key];
@@ -290,9 +320,10 @@ function runCli() {
     const localeKeySet = new Set(Object.keys(localeKeys));
     const missing = [...enKeySet].filter((k) => !localeKeySet.has(k));
     const extra = [...localeKeySet].filter((k) => !enKeySet.has(k));
-    const stale = changedEnKeys.size > 0
-      ? [...changedEnKeys].filter((k) => localeKeySet.has(k) && localeKeys[k] === enKeys[k])
-      : [];
+    const stale =
+      changedEnKeys.size > 0
+        ? [...changedEnKeys].filter((k) => localeKeySet.has(k) && localeKeys[k] === enKeys[k])
+        : [];
 
     if (missing.length === 0 && extra.length === 0 && stale.length === 0) {
       continue;
@@ -300,14 +331,20 @@ function runCli() {
 
     console.log(`[${locale}]`);
     if (missing.length > 0) {
-      console.log(`  Missing ${missing.length} key(s): ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? '…' : ''}`);
+      console.log(
+        `  Missing ${missing.length} key(s): ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? '…' : ''}`,
+      );
       totalMissing += missing.length;
     }
     if (extra.length > 0) {
-      console.log(`  Extra ${extra.length} key(s): ${extra.slice(0, 5).join(', ')}${extra.length > 5 ? '…' : ''}`);
+      console.log(
+        `  Extra ${extra.length} key(s): ${extra.slice(0, 5).join(', ')}${extra.length > 5 ? '…' : ''}`,
+      );
     }
     if (stale.length > 0) {
-      console.log(`  Stale ${stale.length} key(s) (value equals en, may need translation): ${stale.slice(0, 10).join(', ')}${stale.length > 10 ? '…' : ''}`);
+      console.log(
+        `  Stale ${stale.length} key(s) (value equals en, may need translation): ${stale.slice(0, 10).join(', ')}${stale.length > 10 ? '…' : ''}`,
+      );
       totalStale += stale.length;
     }
   }

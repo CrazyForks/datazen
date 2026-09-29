@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use datazen_driver_api::TableSchema;
 
 use crate::transfer::adapter::{SyncSourceAdapter, SyncTargetAdapter};
-use crate::transfer::ddl::build_create_table_ddl;
 use crate::transfer::pairing::SyncPairing;
 
 use super::error::TransferError;
@@ -13,10 +12,7 @@ use super::model::{
     DdlPreviewItem, TableInspectResult, TableMappingStatus, TransferJob, TransferMode,
     TransferPreview, WriteMode, WritePlanItem,
 };
-use super::structure::{
-    apply_column_type_overrides, build_drop_table_sql, source_schema_to_target_ir,
-    table_mapping_for,
-};
+use super::structure::{mapped_create_ddl, table_mapping_for, target_relation_ref};
 
 /// Optional IR adapters for real DDL generation and execute eligibility.
 pub struct TransferPreviewAdapters<'a> {
@@ -34,7 +30,7 @@ pub fn build_preview(
 ) -> Result<TransferPreview, TransferError> {
     job.options.validate()?;
 
-    let mut warnings = Vec::new();
+    let mut warnings = vec!["Data writes use a transaction per table. Completed DDL remains applied on cancellation or data failure; commit/rollback failures have unknown outcomes.".into()];
     let mut ddl = Vec::new();
     let mut write_plans = Vec::new();
     let mut block_reason: Option<String> = None;
@@ -65,6 +61,16 @@ pub fn build_preview(
         });
     }
 
+    if let Some(adapters) = &adapters {
+        super::structure::validate_transfer_column_types(
+            job,
+            inspected,
+            source_schemas,
+            adapters.src_adapter,
+            adapters.tgt_adapter,
+        )?;
+    }
+
     for table in inspected.iter().filter(|t| t.enabled) {
         if table.status == TableMappingStatus::Incompatible {
             block_reason.get_or_insert_with(|| {
@@ -78,21 +84,36 @@ pub fn build_preview(
         }
 
         let table_mapping = table_mapping_for(job, &table.source_table);
+        if job.options.use_target_default_collation
+            && (needs_structure || job.write_mode == WriteMode::DropCreateInsert)
+        {
+            warnings.push(format!(
+                "Table '{}' will use the target database's default character set and collation. Text ordering, case/accent comparisons, and unique-index behavior may differ from the source.",
+                table.target_table
+            ));
+        }
 
-        let create_ddl_for_table = |source_table: &str, target_table: &str| -> Option<String> {
-            let schema = source_schemas.get(source_table)?;
-            if let Some(adapters) = &adapters {
-                // Full types are resolved at execute time; preview uses schema types only.
-                let mut ir =
-                    source_schema_to_target_ir(adapters.src_adapter, schema, None, target_table);
-                if let Some(mapping) = table_mapping {
-                    apply_column_type_overrides(&mut ir, mapping, adapters.tgt_adapter);
-                }
-                Some(build_create_table_ddl(&ir, adapters.tgt_adapter))
-            } else {
-                None
+        // Resolve once, using the same renderer as both execution paths, but
+        // only for operations that actually create structure. In particular,
+        // Data + Insert into an existing table must not be blocked by source
+        // DDL properties (collation, comments, generated columns, etc.) that
+        // are irrelevant to the data-only write. DropCreateInsert is itself a
+        // structure operation even when selected with Data mode.
+        let create_sql = if needs_structure || job.write_mode == WriteMode::DropCreateInsert {
+            match (&adapters, source_schemas.get(&table.source_table)) {
+                (Some(adapters), Some(schema)) => Some(mapped_create_ddl(
+                    adapters.src_adapter,
+                    adapters.tgt_adapter,
+                    schema,
+                    table,
+                    job,
+                )?),
+                _ => None,
             }
+        } else {
+            None
         };
+        let create_ddl_for_table = |_source_table: &str, _target_table: &str| create_sql.clone();
 
         if needs_structure && table.create_new {
             if let Some(override_ddl) = table_mapping
@@ -104,6 +125,8 @@ pub fn build_preview(
                     source_table: table.source_table.clone(),
                     target_table: table.target_table.clone(),
                     ddl: override_ddl.to_string(),
+                    kind: super::model::DdlPreviewKind::Table,
+                    depends_on: Vec::new(),
                 });
             } else if let Some(ddl_sql) =
                 create_ddl_for_table(&table.source_table, &table.target_table)
@@ -112,6 +135,8 @@ pub fn build_preview(
                     source_table: table.source_table.clone(),
                     target_table: table.target_table.clone(),
                     ddl: ddl_sql,
+                    kind: super::model::DdlPreviewKind::Table,
+                    depends_on: Vec::new(),
                 });
             } else if let Some(schema) = source_schemas.get(&table.source_table) {
                 warnings.push(format!(
@@ -129,8 +154,10 @@ pub fn build_preview(
                             .iter()
                             .map(|c| format!("{} {}", c.name, c.data_type))
                             .collect::<Vec<_>>()
-                            .join(", ")
+                        .join(", ")
                     ),
+                    kind: super::model::DdlPreviewKind::Table,
+                    depends_on: Vec::new(),
                 });
             }
         }
@@ -173,7 +200,7 @@ pub fn build_preview(
                     if let Some(adapters) = &adapters {
                         preamble.push(format!(
                             "TRUNCATE TABLE {}",
-                            adapters.tgt_adapter.quote_ident(&table.target_table)
+                            target_relation_ref(job, &table.target_table, adapters.tgt_adapter)
                         ));
                     } else {
                         preamble.push(format!("TRUNCATE TABLE {}", table.target_table));
@@ -181,9 +208,9 @@ pub fn build_preview(
                 }
                 WriteMode::DropCreateInsert => {
                     if let Some(adapters) = &adapters {
-                        preamble.push(build_drop_table_sql(
-                            &table.target_table,
-                            adapters.tgt_adapter,
+                        preamble.push(format!(
+                            "DROP TABLE IF EXISTS {}",
+                            target_relation_ref(job, &table.target_table, adapters.tgt_adapter)
                         ));
                         if let Some(create_sql) =
                             create_ddl_for_table(&table.source_table, &table.target_table)
@@ -202,8 +229,26 @@ pub fn build_preview(
                 target_table: table.target_table.clone(),
                 write_mode: job.write_mode,
                 mapped_columns: active_cols,
-                estimated_rows: table.source_row_count,
+                estimated_rows: if table_mapping.is_some_and(|mapping| {
+                    mapping.source_filter.is_some() || mapping.recordset.is_some()
+                }) {
+                    // Inspection counts are intentionally unfiltered. Do not
+                    // present them as an exact estimate for a scoped copy.
+                    None
+                } else {
+                    table.source_row_count
+                },
                 preamble,
+                source_filter_preview: table_mapping
+                    .and_then(|mapping| mapping.source_filter.as_ref())
+                    .and_then(|filter| filter.preview_where('"').ok().flatten()),
+                recordset_preview: table_mapping
+                    .and_then(|mapping| mapping.recordset.as_ref())
+                    .and_then(|recordset| {
+                        source_schemas.get(&table.source_table).and_then(|schema| {
+                            super::recordset::preview_summary(schema, recordset, '"').ok()
+                        })
+                    }),
             });
         }
     }
@@ -222,6 +267,7 @@ pub fn build_preview(
             .any(|t| t.enabled && t.status != TableMappingStatus::Incompatible);
 
     Ok(TransferPreview {
+        plan_id: String::new(),
         pairing_path: pairing.path_label().into(),
         mode: job.mode,
         write_mode: job.write_mode,
@@ -231,14 +277,6 @@ pub fn build_preview(
         can_execute,
         block_reason,
     })
-}
-
-/// Build CREATE TABLE DDL when IR adapters are available.
-pub fn build_create_ddl(
-    ir_table: &crate::transfer::ir::IRTable,
-    tgt_adapter: &dyn SyncTargetAdapter,
-) -> String {
-    build_create_table_ddl(ir_table, tgt_adapter)
 }
 
 #[cfg(test)]
@@ -296,11 +334,12 @@ mod tests {
                 database: "src".into(),
                 schema: None,
             },
-            target: Endpoint {
+            target: Some(Endpoint {
                 db_session_id: "t".into(),
                 database: "tgt".into(),
                 schema: None,
-            },
+            }),
+            sql_file_target: None,
             mode,
             write_mode,
             tables: vec![TableMapping::auto("users")],
@@ -324,10 +363,13 @@ mod tests {
                 target_native_type: None,
             }],
             source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
             target_columns: vec!["id".into()],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: Some(10),
+            recordset: None,
         }];
         let preview = build_preview(
             &job,
@@ -347,6 +389,26 @@ mod tests {
     #[test]
     fn preview_allows_ir_when_adapters_available() {
         let job = sample_job(TransferMode::Data, WriteMode::Insert);
+        let source_schemas = HashMap::from([(
+            "users".into(),
+            TableSchema {
+                table_name: "users".into(),
+                columns: vec![datazen_driver_api::ColumnSchema {
+                    name: "id".into(),
+                    data_type: "integer".into(),
+                    nullable: false,
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: true,
+                    is_auto_increment: false,
+                }],
+                primary_keys: vec!["id".into()],
+                indexes: vec![],
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                table_options: Default::default(),
+            },
+        )]);
         let inspected = vec![TableInspectResult {
             source_table: "users".into(),
             target_table: "users".into(),
@@ -360,16 +422,19 @@ mod tests {
                 target_native_type: None,
             }],
             source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
             target_columns: vec!["id".into()],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: Some(10),
+            recordset: None,
         }];
         let preview = build_preview(
             &job,
             &inspected,
             &SyncPairing::Ir,
-            &HashMap::new(),
+            &source_schemas,
             true,
             Some(TransferPreviewAdapters {
                 src_adapter: &DummySource,
@@ -379,6 +444,161 @@ mod tests {
         .unwrap();
         assert!(preview.can_execute, "{:?}", preview.block_reason);
         assert!(preview.block_reason.is_none());
+    }
+
+    #[test]
+    fn data_only_preview_skips_unportable_source_table_options() {
+        let job = sample_job(TransferMode::Data, WriteMode::Insert);
+        let inspected = vec![TableInspectResult {
+            source_table: "users".into(),
+            target_table: "users".into(),
+            status: TableMappingStatus::Matched,
+            create_new: false,
+            enabled: true,
+            column_mappings: vec![super::super::model::ColumnMapping {
+                source_column: "id".into(),
+                target_column: "id".into(),
+                skip: false,
+                target_native_type: None,
+            }],
+            source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
+            target_columns: vec!["id".into()],
+            source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
+            incompatible_reason: None,
+            source_row_count: Some(1),
+            recordset: None,
+        }];
+        let mut schemas = HashMap::new();
+        schemas.insert(
+            "users".into(),
+            TableSchema {
+                table_name: "users".into(),
+                columns: vec![datazen_driver_api::ColumnSchema {
+                    name: "id".into(),
+                    data_type: "int".into(),
+                    nullable: false,
+                    default_value: None,
+                    comment: None,
+                    is_primary_key: true,
+                    is_auto_increment: false,
+                }],
+                primary_keys: vec!["id".into()],
+                indexes: vec![],
+                foreign_keys: vec![],
+                check_constraints: vec![],
+                table_options: datazen_driver_api::TableOptions {
+                    charset: Some("utf8mb4".into()),
+                    collation: Some("utf8mb4_0900_ai_ci".into()),
+                    comment: Some("source-only comment".into()),
+                    ..Default::default()
+                },
+            },
+        );
+
+        let preview = build_preview(
+            &job,
+            &inspected,
+            &SyncPairing::Ir,
+            &schemas,
+            true,
+            Some(TransferPreviewAdapters {
+                src_adapter: &DummySource,
+                tgt_adapter: &DummyTarget,
+            }),
+        )
+        .expect("data-only preview does not render source DDL");
+
+        assert!(preview.can_execute, "{:?}", preview.block_reason);
+        assert!(preview.block_reason.is_none());
+        assert!(preview.ddl.is_empty());
+        assert_eq!(preview.write_plans.len(), 1);
+
+        let mut drop_create_job = job;
+        drop_create_job.write_mode = WriteMode::DropCreateInsert;
+        drop_create_job.options.confirmed_destructive = true;
+        let error = build_preview(
+            &drop_create_job,
+            &inspected,
+            &SyncPairing::Ir,
+            &schemas,
+            true,
+            Some(TransferPreviewAdapters {
+                src_adapter: &DummySource,
+                tgt_adapter: &DummyTarget,
+            }),
+        )
+        .expect_err("DropCreateInsert still validates source DDL options");
+        assert!(error.to_string().contains("source table collation"));
+    }
+
+    #[test]
+    fn preview_marks_scoped_rows_and_exposes_recordset_summary() {
+        let mut job = sample_job(TransferMode::Data, WriteMode::Insert);
+        job.tables[0].recordset = Some(super::super::model::TransferRecordset {
+            order_by: None,
+            start: None,
+            end: None,
+            tuple_range: None,
+            limit: Some(25),
+        });
+        let schema = TableSchema {
+            table_name: "users".into(),
+            columns: vec![datazen_driver_api::ColumnSchema {
+                name: "id".into(),
+                data_type: "INTEGER".into(),
+                nullable: false,
+                default_value: None,
+                comment: None,
+                is_primary_key: true,
+                is_auto_increment: false,
+            }],
+            primary_keys: vec!["id".into()],
+            indexes: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
+        };
+        let inspected = vec![TableInspectResult {
+            source_table: "users".into(),
+            target_table: "users".into(),
+            status: TableMappingStatus::Matched,
+            create_new: false,
+            enabled: true,
+            column_mappings: vec![super::super::model::ColumnMapping {
+                source_column: "id".into(),
+                target_column: "id".into(),
+                skip: false,
+                target_native_type: None,
+            }],
+            source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
+            target_columns: vec!["id".into()],
+            source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
+            incompatible_reason: None,
+            source_row_count: Some(100),
+            recordset: job.tables[0].recordset.clone(),
+        }];
+        let mut schemas = HashMap::new();
+        schemas.insert("users".into(), schema);
+        let preview = build_preview(
+            &job,
+            &inspected,
+            &SyncPairing::Direct {
+                family: "postgresql".into(),
+            },
+            &schemas,
+            true,
+            None,
+        )
+        .unwrap();
+        assert_eq!(preview.write_plans[0].estimated_rows, None);
+        assert_eq!(
+            preview.write_plans[0].recordset_preview.as_deref(),
+            Some(r#"ORDER BY "id" ASC LIMIT 25"#)
+        );
     }
 
     #[test]
@@ -398,6 +618,8 @@ mod tests {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         };
         let mut schemas = HashMap::new();
         schemas.insert("users".into(), schema);
@@ -410,10 +632,13 @@ mod tests {
             enabled: true,
             column_mappings: vec![],
             source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
             target_columns: vec![],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
+            recordset: None,
         }];
 
         let preview = build_preview(
@@ -450,6 +675,8 @@ mod tests {
                 target_native_type: Some("BIGINT".into()),
             }],
             ddl_override: None,
+            source_filter: None,
+            recordset: None,
         }];
         let schema = TableSchema {
             table_name: "users".into(),
@@ -465,6 +692,8 @@ mod tests {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         };
         let mut schemas = HashMap::new();
         schemas.insert("users".into(), schema);
@@ -477,10 +706,13 @@ mod tests {
             enabled: true,
             column_mappings: vec![],
             source_columns: vec!["id".into()],
+            source_primary_keys: vec!["id".into()],
             target_columns: vec![],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
+            recordset: None,
         }];
 
         let preview = build_preview(
@@ -567,6 +799,8 @@ mod tests {
                 target_native_type: Some("DATETIME".into()),
             }],
             ddl_override: None,
+            source_filter: None,
+            recordset: None,
         }];
         let schema = TableSchema {
             table_name: "reviews".into(),
@@ -582,6 +816,8 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         };
         let mut schemas = HashMap::new();
         schemas.insert("reviews".into(), schema);
@@ -594,10 +830,13 @@ mod tests {
             enabled: true,
             column_mappings: vec![],
             source_columns: vec!["created_at".into()],
+            source_primary_keys: vec![],
             target_columns: vec![],
             source_column_types: HashMap::new(),
+            target_column_types: HashMap::new(),
             incompatible_reason: None,
             source_row_count: None,
+            recordset: None,
         }];
 
         let preview = build_preview(

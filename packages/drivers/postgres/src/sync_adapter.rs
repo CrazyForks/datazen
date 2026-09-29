@@ -15,7 +15,7 @@ datazen_driver_api::inventory::submit! {
     SyncAdapterFactory {
         // cloudberry: PG wire + catalogs; safe alias of PgSyncAdapter
         // questdb: PG wire + catalogs (ReuseDriver); cloudberry same family
-        db_types: &["postgresql", "cloudberry", "questdb"],
+        db_types: &["postgresql", "postgres", "cloudberry", "questdb"],
         create,
     }
 }
@@ -61,17 +61,103 @@ fn parse_pg_default(raw: &str, col: &ColumnSchema) -> Option<IRDefault> {
     }
     if d.contains("::") {
         let stripped = d.split("::").next().unwrap_or(d);
-        return Some(IRDefault::Literal(stripped.to_string()));
+        return if is_literal_default(stripped) {
+            Some(IRDefault::Literal(stripped.to_string()))
+        } else {
+            Some(IRDefault::RawExpression(d.to_string()))
+        };
     }
     let _ = col;
-    Some(IRDefault::Literal(d.to_string()))
+    if is_literal_default(d) {
+        Some(IRDefault::Literal(d.to_string()))
+    } else {
+        Some(IRDefault::RawExpression(d.to_string()))
+    }
+}
+
+fn is_literal_default(value: &str) -> bool {
+    let value = value.trim();
+    value.parse::<i64>().is_ok()
+        || value.parse::<f64>().is_ok()
+        || matches!(
+            value.to_ascii_lowercase().as_str(),
+            "true" | "false" | "null"
+        )
+        || (value.starts_with('\'') && value.ends_with('\''))
 }
 
 // ── SyncSourceAdapter ──────────────────────────────────────────────
 
 impl SyncSourceAdapter for PgSyncAdapter {
+    fn validate_transfer_source_column(&self, column: &ColumnSchema) -> Result<(), String> {
+        let native = column.data_type.trim().to_ascii_lowercase();
+        if native == "array" || native.ends_with("[]") || native.ends_with(" array") {
+            return Err(format!(
+                "PostgreSQL array type '{}' is not supported because the PostgreSQL transfer decoder does not yet decode arrays; convert it to a scalar JSON value before transferring",
+                column.data_type
+            ));
+        }
+        Ok(())
+    }
+
+    fn transfer_source_type_is_native_only(
+        &self,
+        _column: &ColumnSchema,
+        source_ir: &IRColumn,
+    ) -> bool {
+        matches!(source_ir.ir_type, IRType::Other(_))
+    }
+
+    fn transfer_source_text_limit_bytes(&self, column: &ColumnSchema) -> Option<u64> {
+        const PG_MAX_FIELD_BYTES: u64 = 1_073_741_823;
+        let native = column.data_type.trim().to_ascii_lowercase();
+        if native == "text" || native == "character varying" || native == "varchar" {
+            return Some(PG_MAX_FIELD_BYTES);
+        }
+        for prefix in ["character varying(", "varchar(", "character("] {
+            if let Some(length) = native
+                .strip_prefix(prefix)
+                .and_then(|rest| rest.strip_suffix(')'))
+                .and_then(|length| length.parse::<u64>().ok())
+            {
+                return length.checked_mul(4);
+            }
+        }
+        None
+    }
+
+    fn transfer_source_requires_collation_preservation(&self, column: &ColumnSchema) -> bool {
+        let native = column.data_type.trim().to_ascii_lowercase();
+        native == "text"
+            || native.starts_with("character varying")
+            || native.starts_with("varchar")
+            || native == "character"
+            || native.starts_with("character(")
+            || native == "char"
+            || native.starts_with("char(")
+            || native == "bpchar"
+    }
+
+    fn sync_key_order_expression(
+        &self,
+        quoted_column: &str,
+        contract: &datazen_driver_api::SyncKeyContract,
+    ) -> String {
+        match &contract.kind {
+            datazen_driver_api::SyncKeyKind::Text {
+                collation: datazen_driver_api::SyncKeyCollation::Binary,
+            } => format!(r#"{quoted_column} COLLATE "C""#),
+            _ => quoted_column.to_string(),
+        }
+    }
+
     fn full_column_types_query(&self, table: &str) -> Option<String> {
-        let escaped = table.replace('\'', "''");
+        let (schema, name) = crate::sql::parse_pg_table_ref(table);
+        let relation = match schema {
+            Some(schema) => format!("{}.{}", self.quote_ident(schema), self.quote_ident(name)),
+            None => self.quote_ident(name),
+        };
+        let escaped = relation.replace('\'', "''");
         Some(format!(
             r#"SELECT a.attname::text AS col_name,
                   format_type(a.atttypid, a.atttypmod) AS full_type
@@ -80,6 +166,152 @@ impl SyncSourceAdapter for PgSyncAdapter {
              AND a.attnum > 0
              AND NOT a.attisdropped
            ORDER BY a.attnum"#
+        ))
+    }
+
+    fn unsupported_transfer_structure_query(
+        &self,
+        _database: &str,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Option<String> {
+        let (parsed_schema, name) = crate::sql::parse_pg_table_ref(table);
+        let schema = schema.or(parsed_schema);
+        let relation = match schema {
+            Some(schema) => format!("{}.{}", self.quote_ident(schema), self.quote_ident(name)),
+            None => self.quote_ident(name),
+        };
+        let escaped = relation.replace('\'', "''");
+        Some(format!(
+            "SELECT CASE WHEN COALESCE(to_jsonb(a)->>'attidentity', '') = 'a' \
+                       THEN format('identity column %I (GENERATED ALWAYS)', a.attname)::text \
+                       ELSE format('generated column %I', a.attname)::text END AS unsupported_object \
+             FROM pg_catalog.pg_attribute a \
+             WHERE a.attrelid = '{escaped}'::regclass AND a.attnum > 0 \
+               AND NOT a.attisdropped \
+               AND (COALESCE(to_jsonb(a)->>'attgenerated', '') <> '' \
+                    OR COALESCE(to_jsonb(a)->>'attidentity', '') = 'a') \
+             UNION ALL \
+             SELECT format('index %I (expression, predicate, or INCLUDE column)', ix.relname)::text \
+             FROM pg_catalog.pg_index i \
+             JOIN pg_catalog.pg_class ix ON ix.oid = i.indexrelid \
+             WHERE i.indrelid = '{escaped}'::regclass \
+               AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL \
+                    OR COALESCE((to_jsonb(i)->>'indnkeyatts')::integer, i.indnatts) < i.indnatts) \
+             UNION ALL \
+             SELECT format('index %I (sort order, operator class, or collation)', ix.relname)::text \
+             FROM pg_catalog.pg_index i \
+             JOIN pg_catalog.pg_class ix ON ix.oid = i.indexrelid \
+             JOIN LATERAL unnest(i.indclass) WITH ORDINALITY AS classes(opclass_oid, ordinality) ON true \
+             JOIN pg_catalog.pg_opclass opc ON opc.oid = classes.opclass_oid \
+             JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS keys(attnum, ordinality) \
+               ON keys.ordinality = classes.ordinality \
+             LEFT JOIN pg_catalog.pg_attribute a \
+               ON a.attrelid = i.indrelid AND a.attnum = keys.attnum \
+             LEFT JOIN LATERAL unnest(i.indcollation) WITH ORDINALITY AS collations(collation_oid, ordinality) \
+               ON collations.ordinality = classes.ordinality \
+             LEFT JOIN LATERAL unnest(i.indoption) WITH ORDINALITY AS options(option_bits, ordinality) \
+               ON options.ordinality = classes.ordinality \
+             WHERE i.indrelid = '{escaped}'::regclass \
+               AND (NOT opc.opcdefault \
+                    OR collations.collation_oid IS DISTINCT FROM a.attcollation \
+                    OR COALESCE(options.option_bits, 0) <> 0) \
+             UNION ALL \
+             SELECT format('foreign key %I (MATCH type, validation state, or SET NULL column list)', con.conname)::text \
+             FROM pg_catalog.pg_constraint con \
+             WHERE con.conrelid = '{escaped}'::regclass AND con.contype = 'f' \
+               AND (con.confmatchtype <> 's' OR NOT con.convalidated \
+                    OR NULLIF(to_jsonb(con)->>'confdelsetcols', 'null') IS NOT NULL) \
+             UNION ALL \
+             SELECT format('sequence on column %I (unowned, shared, or non-default sequence options)', a.attname)::text \
+             FROM pg_catalog.pg_attribute a \
+             LEFT JOIN pg_catalog.pg_attrdef ad \
+               ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
+             CROSS JOIN LATERAL ( \
+               SELECT pg_get_expr(ad.adbin, ad.adrelid) AS expression \
+             ) default_expression \
+             LEFT JOIN LATERAL ( \
+               SELECT count(DISTINCT d.refobjid)::integer AS sequence_count, \
+                      (array_agg(DISTINCT d.refobjid))[1] AS sequence_oid \
+               FROM pg_catalog.pg_depend d \
+               JOIN pg_catalog.pg_class candidate_seq \
+                 ON candidate_seq.oid = d.refobjid AND candidate_seq.relkind = 'S' \
+               WHERE d.classid = 'pg_attrdef'::regclass AND d.objid = ad.oid \
+                 AND d.refclassid = 'pg_class'::regclass \
+             ) default_sequence ON true \
+             LEFT JOIN LATERAL ( \
+               SELECT count(DISTINCT d.objid)::integer AS sequence_count, \
+                      (array_agg(DISTINCT d.objid))[1] AS sequence_oid \
+               FROM pg_catalog.pg_depend d \
+               JOIN pg_catalog.pg_class candidate_seq \
+                 ON candidate_seq.oid = d.objid AND candidate_seq.relkind = 'S' \
+               WHERE d.classid = 'pg_class'::regclass AND d.objsubid = 0 \
+                 AND d.refclassid = 'pg_class'::regclass \
+                 AND d.refobjid = a.attrelid AND d.refobjsubid = a.attnum \
+                 AND d.deptype IN ('a', 'i') \
+             ) owned_sequence ON true \
+             CROSS JOIN LATERAL ( \
+               SELECT CASE WHEN COALESCE(to_jsonb(a)->>'attidentity', '') <> '' \
+                           THEN owned_sequence.sequence_oid \
+                           ELSE default_sequence.sequence_oid END AS sequence_oid \
+             ) sequence_candidate \
+             LEFT JOIN pg_catalog.pg_class seq \
+               ON seq.oid = sequence_candidate.sequence_oid AND seq.relkind = 'S' \
+             LEFT JOIN pg_catalog.pg_sequence seq_options ON seq_options.seqrelid = seq.oid \
+             LEFT JOIN LATERAL ( \
+               SELECT count(*)::integer AS owner_count, \
+                      bool_or(d.refobjid = a.attrelid AND d.refobjsubid = a.attnum) AS owner_matches_column, \
+                      bool_or(d.deptype = 'a') AS has_auto_owner, \
+                      bool_or(d.deptype = 'i') AS has_internal_owner \
+               FROM pg_catalog.pg_depend d \
+               WHERE d.classid = 'pg_class'::regclass AND d.objid = seq.oid \
+                 AND d.objsubid = 0 AND d.refclassid = 'pg_class'::regclass \
+                 AND d.deptype IN ('a', 'i') \
+             ) sequence_owners ON true \
+             LEFT JOIN LATERAL ( \
+               SELECT count(DISTINCT d.objid)::integer AS default_count, \
+                      bool_or(d.objid = ad.oid) AS includes_current_default \
+               FROM pg_catalog.pg_depend d \
+               WHERE d.classid = 'pg_attrdef'::regclass \
+                 AND d.refclassid = 'pg_class'::regclass \
+                 AND d.refobjid = seq.oid \
+             ) sequence_defaults ON true \
+             WHERE a.attrelid = '{escaped}'::regclass AND a.attnum > 0 \
+               AND NOT a.attisdropped \
+               AND (COALESCE(to_jsonb(a)->>'attidentity', '') <> '' \
+                    OR COALESCE(lower(default_expression.expression), '') LIKE '%nextval(%') \
+               AND (sequence_candidate.sequence_oid IS NULL \
+                    OR seq.oid IS NULL \
+                    OR (CASE WHEN COALESCE(to_jsonb(a)->>'attidentity', '') <> '' THEN \
+                           owned_sequence.sequence_count <> 1 \
+                           OR sequence_defaults.default_count <> 0 \
+                         ELSE default_sequence.sequence_count <> 1 \
+                           OR owned_sequence.sequence_count <> 1 \
+                           OR owned_sequence.sequence_oid IS DISTINCT FROM default_sequence.sequence_oid \
+                           OR sequence_defaults.default_count <> 1 \
+                           OR sequence_defaults.includes_current_default IS DISTINCT FROM true \
+                           OR lower(default_expression.expression) NOT LIKE 'nextval(%::regclass)' \
+                           OR length(lower(default_expression.expression)) \
+                              - length(replace(lower(default_expression.expression), 'nextval(', '')) \
+                              <> length('nextval(') \
+                         END) \
+                    OR sequence_owners.owner_count <> 1 \
+                    OR sequence_owners.owner_matches_column IS DISTINCT FROM true \
+                    OR sequence_owners.has_auto_owner IS DISTINCT FROM \
+                       (COALESCE(to_jsonb(a)->>'attidentity', '') = '') \
+                    OR sequence_owners.has_internal_owner IS DISTINCT FROM \
+                       (COALESCE(to_jsonb(a)->>'attidentity', '') <> '') \
+                    OR seq_options.seqtypid IS DISTINCT FROM a.atttypid \
+                    OR seq_options.seqstart IS DISTINCT FROM 1 \
+                    OR seq_options.seqincrement IS DISTINCT FROM 1 \
+                    OR seq_options.seqmin IS DISTINCT FROM 1 \
+                    OR seq_options.seqmax IS DISTINCT FROM CASE a.atttypid \
+                         WHEN 'smallint'::regtype THEN 32767::bigint \
+                         WHEN 'integer'::regtype THEN 2147483647::bigint \
+                         WHEN 'bigint'::regtype THEN 9223372036854775807::bigint \
+                         ELSE NULL::bigint END \
+                    OR seq_options.seqcache IS DISTINCT FROM 1 \
+                    OR seq_options.seqcycle IS DISTINCT FROM false)"
         ))
     }
 
@@ -230,6 +462,22 @@ impl SyncTargetAdapter for PgSyncAdapter {
             }
         }
     }
+
+    fn auto_increment_keyword(&self) -> Option<&str> {
+        Some("GENERATED BY DEFAULT AS IDENTITY")
+    }
+
+    fn supports_explicit_identity_values(&self) -> bool {
+        true
+    }
+
+    fn foreign_key_names_are_table_scoped(&self) -> bool {
+        true
+    }
+
+    fn object_names_are_case_sensitive(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -268,6 +516,47 @@ mod tests {
                 scale: 2
             }
         );
+    }
+
+    #[test]
+    fn transfer_preflight_rejects_postgres_arrays() {
+        let adapter = PgSyncAdapter;
+        assert!(adapter
+            .validate_transfer_source_column(&col("tags", "text[]"))
+            .unwrap_err()
+            .contains("does not yet decode arrays"));
+        assert!(adapter
+            .validate_transfer_source_column(&col("tags", "ARRAY"))
+            .unwrap_err()
+            .contains("does not yet decode arrays"));
+        assert!(adapter
+            .validate_transfer_source_column(&col("name", "text"))
+            .is_ok());
+    }
+
+    #[test]
+    fn transfer_preflight_marks_custom_native_types_for_target_validation() {
+        let adapter = PgSyncAdapter;
+        let column = col("mood", "mood");
+        let enum_ir = adapter.column_to_ir(&column, None);
+        assert!(matches!(enum_ir.ir_type, IRType::Other(_)));
+        assert!(adapter.transfer_source_type_is_native_only(&column, &enum_ir));
+    }
+
+    #[test]
+    fn transfer_preflight_marks_postgres_character_collation_as_unproven() {
+        let adapter = PgSyncAdapter;
+        assert!(adapter.transfer_source_requires_collation_preservation(&col("body", "text")));
+        assert!(
+            adapter.transfer_source_requires_collation_preservation(&col(
+                "label",
+                "character varying(120)"
+            ))
+        );
+        assert!(
+            adapter.transfer_source_requires_collation_preservation(&col("code", "character(8)"))
+        );
+        assert!(!adapter.transfer_source_requires_collation_preservation(&col("id", "integer")));
     }
 
     #[test]
@@ -331,8 +620,16 @@ mod tests {
         let adapter = PgSyncAdapter;
         let sql = adapter.full_column_types_query("public.users").unwrap();
         assert!(sql.contains("format_type"));
-        assert!(sql.contains("public.users"));
+        assert!(sql.contains("\"public\".\"users\""));
         assert!(!sql.contains("database_type"));
+    }
+
+    #[test]
+    fn full_types_preserve_schema_case_and_literal_dot_in_table() {
+        let sql = PgSyncAdapter
+            .full_column_types_query("Selected.literal.table")
+            .unwrap();
+        assert!(sql.contains("'\"Selected\".\"literal.table\"'::regclass"));
     }
 
     #[test]
@@ -373,6 +670,41 @@ mod tests {
                 precision: 19,
                 scale: 2
             }
+        );
+    }
+
+    #[test]
+    fn pg_sync_key_contract_covers_text_decimal_and_timestamp() {
+        let adapter = PgSyncAdapter;
+        let text = adapter.sync_key_contract(&col("name", "text")).unwrap();
+        assert_eq!(
+            text.kind,
+            datazen_driver_api::SyncKeyKind::Text {
+                collation: datazen_driver_api::SyncKeyCollation::Binary
+            }
+        );
+        assert_eq!(
+            adapter.sync_key_order_expression(r#""name""#, &text),
+            r#""name" COLLATE "C""#
+        );
+        let decimal = adapter
+            .sync_key_contract(&col("amount", "numeric(18,4)"))
+            .unwrap();
+        assert_eq!(
+            decimal.kind,
+            datazen_driver_api::SyncKeyKind::Decimal { scale: Some(4) }
+        );
+        let timestamp = adapter
+            .sync_key_contract(&col("created", "timestamp with time zone"))
+            .unwrap();
+        assert_eq!(
+            adapter
+                .normalize_sync_key(
+                    &Some(Value::String("2026-01-01T00:00:00+08:00".into())),
+                    &timestamp,
+                )
+                .unwrap(),
+            datazen_driver_api::SyncKeyValue::Timestamp("2025-12-31 16:00:00Z".into())
         );
     }
 
@@ -426,5 +758,70 @@ mod tests {
                 with_timezone: true
             }
         );
+    }
+
+    #[test]
+    fn pg_structure_preflight_detects_always_identity_and_name_scope_contract() {
+        let adapter = PgSyncAdapter;
+        let query = adapter
+            .unsupported_transfer_structure_query("application", Some("public"), "users")
+            .expect("PostgreSQL structure preflight");
+        assert!(query.contains("to_jsonb(a)->>'attidentity'"));
+        assert!(query.contains("GENERATED ALWAYS"));
+        assert!(query.contains("opc.opcdefault"));
+        assert!(query.contains("i.indoption"));
+        assert!(query.contains("collations.collation_oid IS DISTINCT FROM a.attcollation"));
+        assert!(query.contains("con.confmatchtype <> 's'"));
+        assert!(query.contains("NOT con.convalidated"));
+        assert!(query.contains("confdelsetcols"));
+        assert!(!adapter.index_names_are_table_scoped());
+        assert!(adapter.foreign_key_names_are_table_scoped());
+        assert!(adapter.object_names_are_case_sensitive());
+    }
+
+    #[test]
+    fn pg_structure_refuses_unmapped_mysql_collation_despite_utf8_encoding() {
+        let options = datazen_driver_api::TableOptions {
+            engine: Some("InnoDB".into()),
+            charset: Some("utf8mb4".into()),
+            collation: Some("utf8mb4_0900_ai_ci".into()),
+            ..Default::default()
+        };
+        let error = PgSyncAdapter
+            .render_source_table_options(&options)
+            .expect_err("UTF8-compatible encoding does not prove collation equivalence");
+        assert!(error.contains("utf8mb4_0900_ai_ci"), "{error}");
+        assert!(error.contains("no proven equivalent"), "{error}");
+        assert!(error.contains("UTF8MB4 character encoding can map to PostgreSQL UTF8"));
+        assert!(error.contains("sort, case, or accent rules"));
+    }
+
+    #[test]
+    fn test_tester_pg_structure_preflight_covers_sequence_ownership_and_options() {
+        let query = PgSyncAdapter
+            .unsupported_transfer_structure_query("application", Some("public"), "users")
+            .expect("PostgreSQL structure preflight");
+        let lower = query.to_ascii_lowercase();
+        for required_catalog_evidence in [
+            "pg_depend",
+            "pg_sequence",
+            "deptype in ('a', 'i')",
+            "sequence_defaults.default_count <> 1",
+            "sequence_owners.owner_count <> 1",
+            "sequence_owners.owner_matches_column",
+            "seqtypid",
+            "seqstart",
+            "seqincrement",
+            "seqmin",
+            "seqmax",
+            "seqcache",
+            "seqcycle",
+            "nextval(",
+        ] {
+            assert!(
+                lower.contains(required_catalog_evidence),
+                "sequence structure preflight must inspect {required_catalog_evidence} so custom, shared, or non-default sequences are rejected before DDL"
+            );
+        }
     }
 }

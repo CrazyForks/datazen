@@ -24,10 +24,7 @@ export function HomeHero({ connectionCount, groupCount, dbTypes }: HomeHeroProps
         <h2 className="text-lg font-bold tracking-tight text-fg sm:text-xl">
           {t('connWin.home.selectConnectionTitle')}
         </h2>
-        <p
-          className="mt-1 text-sm text-fg-muted"
-          data-testid="home-hero-subtitle"
-        >
+        <p className="mt-1 text-sm text-fg-muted" data-testid="home-hero-subtitle">
           <b className="font-semibold text-fg">{connectionCount}</b>{' '}
           {t('connWin.home.hero.subtitleConnections', { count: connectionCount })}
           <span className="mx-2 text-fg-muted/60">·</span>

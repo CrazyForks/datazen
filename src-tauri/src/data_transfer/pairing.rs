@@ -1,12 +1,13 @@
 //! Data Transfer pairing: SQL Direct + IR; cross-category forbidden.
 
 use crate::transfer::pairing::{resolve_sync_pairing, SyncPairing};
+use datazen_driver_api::normalize_driver_id;
 
 use super::error::TransferError;
 use super::model::TransferPairingView;
 
 pub fn classify_transfer_pair(source: &str, target: &str) -> TransferPairingView {
-    match resolve_sync_pairing(source, target) {
+    match resolve_transfer_pairing(source, target) {
         SyncPairing::Direct { family } => TransferPairingView {
             path: "direct".into(),
             supported: true,
@@ -29,10 +30,22 @@ pub fn classify_transfer_pair(source: &str, target: &str) -> TransferPairingView
 }
 
 pub fn enforce_transfer_pairing(source: &str, target: &str) -> Result<SyncPairing, TransferError> {
-    match resolve_sync_pairing(source, target) {
+    match resolve_transfer_pairing(source, target) {
         SyncPairing::Unsupported { reason } => Err(TransferError::unsupported(reason)),
         ok @ (SyncPairing::Direct { .. } | SyncPairing::Ir) => Ok(ok),
     }
+}
+
+fn resolve_transfer_pairing(source: &str, target: &str) -> SyncPairing {
+    let pairing = resolve_sync_pairing(source, target);
+    if !matches!(pairing, SyncPairing::Unsupported { .. })
+        && (normalize_driver_id(source) == "redis" || normalize_driver_id(target) == "redis")
+    {
+        return SyncPairing::Unsupported {
+            reason: "Data Transfer has no Redis source and target adapters".into(),
+        };
+    }
+    pairing
 }
 
 pub fn is_same_family(pairing: &SyncPairing) -> bool {
@@ -68,5 +81,15 @@ mod tests {
     #[test]
     fn enforce_rejects_cross_category() {
         assert!(enforce_transfer_pairing("postgresql", "mongodb").is_err());
+    }
+
+    #[test]
+    fn redis_is_rejected_before_adapter_resolution() {
+        let view = classify_transfer_pair("redis", "redis");
+        assert!(!view.supported);
+        assert_eq!(view.path, "unsupported");
+        assert!(view.reason.unwrap().contains("Redis"));
+        assert!(enforce_transfer_pairing("redis", "redis").is_err());
+        assert!(classify_transfer_pair("mongodb", "mongodb").supported);
     }
 }

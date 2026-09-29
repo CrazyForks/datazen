@@ -27,7 +27,10 @@ import { createMultipleSelectionsExtension } from '../multipleSelections';
 const DOC = 'SELECT a\nSELECT b\nSELECT c';
 
 /** jsdom 的 navigator.platform 为空 ⇒ CodeMirror currentPlatform === 'key' ⇒ Mod ≡ Ctrl。 */
-function mountView(anchor = 12, extra: Extension[] = []): {
+function mountView(
+  anchor = 12,
+  extra: Extension[] = [],
+): {
   view: EditorView;
   parent: HTMLElement;
 } {
@@ -88,9 +91,7 @@ function winnerAmongFour(init: KeyboardEventInit): string | null {
   const state = EditorState.create({
     doc: 'x',
     extensions: [
-      keymap.of(
-        variants.map((name) => ({ key: name, run: () => (hit.push(name), true) })),
-      ),
+      keymap.of(variants.map((name) => ({ key: name, run: () => (hit.push(name), true) }))),
     ],
   });
   const view = new EditorView({ state, parent });
@@ -116,7 +117,9 @@ describe('[tester] 裁定 1 · Mod-d 族键名可达性（非 mac 分支，Mod �
     // 真实浏览器：Ctrl+D，key="d"，keyCode=68
     expect(reachableAlone('Mod-d', { key: 'd', code: 'KeyD', keyCode: 68, ...MOD })).toBe(true);
     // 真实浏览器：Ctrl+Shift+D，key="D"，keyCode=68
-    expect(reachableAlone('Mod-D', { key: 'D', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD })).toBe(true);
+    expect(
+      reachableAlone('Mod-D', { key: 'D', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD }),
+    ).toBe(true);
     // CapsLock：key="D" 但 shiftKey=false
     expect(reachableAlone('Mod-D', { key: 'D', code: 'KeyD', keyCode: 68, ...MOD })).toBe(true);
   });
@@ -152,7 +155,9 @@ describe('[tester] 裁定 1 · Mod-d 族键名可达性（非 mac 分支，Mod �
       reachableAlone('Shift-Mod-d', { key: 'đ', code: 'KeyD', keyCode: REAL_D_KEYCODE, ...MOD }),
     ).toBe(false);
     // US 布局 + 无 Shift：主查表 "Ctrl-d" 命中 Mod-d，回退分支不再进入 ⇒ 本键不可达。
-    expect(reachableAlone('Shift-Mod-d', { key: 'd', code: 'KeyD', keyCode: 68, ...MOD })).toBe(false);
+    expect(reachableAlone('Shift-Mod-d', { key: 'd', code: 'KeyD', keyCode: 68, ...MOD })).toBe(
+      false,
+    );
   });
 
   it('Shift-Mod-D 在真实浏览器形态下不可达（US 与非 US 布局均不可达）', () => {
@@ -183,9 +188,9 @@ describe('[tester] 裁定 1 · Mod-d 族键名可达性（非 mac 分支，Mod �
     // 记录一个**精确**事实：不是「所有平台都不可达」，而是
     // 「真实浏览器（keyCode 恒有值）不可达；keyCode 缺失时经第三条 else-if 分支可达」。
     // 这条断言用于把上述结论钉死，防止日后被误读成「绝对死键」。
-    expect(
-      reachableAlone('Shift-Mod-D', { key: 'D', code: 'KeyD', shiftKey: true, ...MOD }),
-    ).toBe(true);
+    expect(reachableAlone('Shift-Mod-D', { key: 'D', code: 'KeyD', shiftKey: true, ...MOD })).toBe(
+      true,
+    );
   });
 
   it('边界：keyCode 缺失 + 非 US 布局字符 ⇒ 四条全部落空（真实浏览器不会发生）', () => {
@@ -196,13 +201,13 @@ describe('[tester] 裁定 1 · Mod-d 族键名可达性（非 mac 分支，Mod �
 
   it('命中顺序矩阵：与 Coder 声称的完全一致', () => {
     expect(winnerAmongFour({ key: 'd', code: 'KeyD', keyCode: 68, ...MOD })).toBe('Mod-d');
-    expect(
-      winnerAmongFour({ key: 'D', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD }),
-    ).toBe('Mod-D');
+    expect(winnerAmongFour({ key: 'D', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD })).toBe(
+      'Mod-D',
+    );
     expect(winnerAmongFour({ key: 'D', code: 'KeyD', keyCode: 68, ...MOD })).toBe('Mod-D');
-    expect(
-      winnerAmongFour({ key: 'đ', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD }),
-    ).toBe('Shift-Mod-d');
+    expect(winnerAmongFour({ key: 'đ', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD })).toBe(
+      'Shift-Mod-d',
+    );
   });
 });
 

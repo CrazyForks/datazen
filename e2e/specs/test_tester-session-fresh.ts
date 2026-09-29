@@ -45,7 +45,9 @@ async function seededConfig(): Promise<SeededPgRow & { database: string }> {
   const conns = await invokeBackend<SeededPgRow[]>('get_connections');
   const cfg =
     conns.find((c) => c.name === E2E_PG_CONN_NAME && c.database?.startsWith('e2e_w')) ??
-    conns.find((c) => c.name === E2E_PG_CONN_NAME && typeof c.database === 'string' && c.database) ??
+    conns.find(
+      (c) => c.name === E2E_PG_CONN_NAME && typeof c.database === 'string' && c.database,
+    ) ??
     conns.find((c) => c.name === E2E_PG_CONN_NAME);
   if (!cfg?.id || !cfg.database) {
     throw new Error(

@@ -138,7 +138,10 @@ function info(overrides: Partial<KeyObjectInfo> = {}): KeyObjectInfo {
   };
 }
 
-function slotProps(state: KvSlotState, overrides: Partial<KvStatusBarProps> = {}): KvStatusBarProps {
+function slotProps(
+  state: KvSlotState,
+  overrides: Partial<KvStatusBarProps> = {},
+): KvStatusBarProps {
   return {
     connectionId: 'conn-1',
     dbSessionId: 'sess-1',
@@ -208,9 +211,9 @@ describe('[tester] KvSlotState read staleness (useKeyObjectInfo docblock claim)'
     await waitFor(() => expect(pending.has('second')).toBe(true));
     // Selection moved to `second`, its read has not landed: the bar must not
     // attribute `first`'s type / size / TTL to it (R3 in the track ledger).
-    expect(
-      container.querySelector('[data-status-state]')?.getAttribute('data-status-state'),
-    ).toBe('loading');
+    expect(container.querySelector('[data-status-state]')?.getAttribute('data-status-state')).toBe(
+      'loading',
+    );
     expect(container.querySelector('[data-part="selected-key"]')?.textContent).toBe('second');
     expect(container.querySelector('[data-part="type"]')).toBeNull();
     expect(container.querySelector('[data-part="size"]')).toBeNull();
@@ -250,9 +253,9 @@ describe('[tester] KvSlotState read staleness (useKeyObjectInfo docblock claim)'
     pending.get('fast')!.resolve(info({ type: 'list' }));
 
     await waitFor(() =>
-      expect(container.querySelector('[data-status-state]')?.getAttribute('data-status-state')).toBe(
-        'ready',
-      ),
+      expect(
+        container.querySelector('[data-status-state]')?.getAttribute('data-status-state'),
+      ).toBe('ready'),
     );
     expect(container.querySelector('[data-part="type"]')?.textContent).toBe('list');
   });
@@ -266,9 +269,9 @@ describe('[tester] KvStatusBar per-field degradation (PRD §3.4 "不渲染，不
     act(() => relay.selectKey('partial'));
 
     await waitFor(() =>
-      expect(container.querySelector('[data-status-state]')?.getAttribute('data-status-state')).toBe(
-        'ready',
-      ),
+      expect(
+        container.querySelector('[data-status-state]')?.getAttribute('data-status-state'),
+      ).toBe('ready'),
     );
     expect(container.querySelector('[data-part="type"]')).toBeNull();
     expect(container.querySelector('[data-part="size"]')).toBeNull();
@@ -315,9 +318,9 @@ describe('[tester] KvStatusBar per-field degradation (PRD §3.4 "不渲染，不
     );
     act(() => relay.selectKey('orphan'));
     await waitFor(() =>
-      expect(container.querySelector('[data-status-state]')?.getAttribute('data-status-state')).toBe(
-        'unavailable',
-      ),
+      expect(
+        container.querySelector('[data-status-state]')?.getAttribute('data-status-state'),
+      ).toBe('unavailable'),
     );
     expect(commandInvoke).not.toHaveBeenCalled();
   });
@@ -334,9 +337,9 @@ describe('[tester] KeyPropsSidebar null arms', () => {
 
     await waitFor(() =>
       expect(
-        document.querySelector('[data-testid="redis-kv-key-props-sidebar"]')?.getAttribute(
-          'data-props-state',
-        ),
+        document
+          .querySelector('[data-testid="redis-kv-key-props-sidebar"]')
+          ?.getAttribute('data-props-state'),
       ).toBe('ready'),
     );
     const aside = document.querySelector('[data-testid="redis-kv-key-props-sidebar"]')!;
@@ -356,9 +359,7 @@ describe('[tester] KeyPropsSidebar null arms', () => {
     render(<RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />);
     act(() => relay.selectKey('hot'));
     await waitFor(() =>
-      expect(
-        document.querySelector('[data-attr="freq"] dd')?.getAttribute('data-value'),
-      ).toBe('7'),
+      expect(document.querySelector('[data-attr="freq"] dd')?.getAttribute('data-value')).toBe('7'),
     );
     expect(document.querySelector('[data-attr="freq"] dd')?.getAttribute('data-fallback-key')).toBe(
       null,
@@ -381,9 +382,9 @@ describe('[tester] KeyPropsSidebar stale payload — sidebar half of redis-kvbar
     await waitFor(() => expect(pending.has('first')).toBe(true));
     pending.get('first')!.resolve(info());
     await waitFor(() =>
-      expect(
-        document.querySelector('[data-props-state]')?.getAttribute('data-props-state'),
-      ).toBe('ready'),
+      expect(document.querySelector('[data-props-state]')?.getAttribute('data-props-state')).toBe(
+        'ready',
+      ),
     );
 
     act(() => relay.selectKey('second'));
@@ -412,9 +413,9 @@ describe('[tester] PTTL sentinels reach the renderer (BUG-004)', () => {
     act(() => relay.selectKey('racing'));
 
     await waitFor(() =>
-      expect(
-        document.querySelector('[data-props-state]')?.getAttribute('data-props-state'),
-      ).toBe('ready'),
+      expect(document.querySelector('[data-props-state]')?.getAttribute('data-props-state')).toBe(
+        'ready',
+      ),
     );
     const dd = document.querySelector('[data-attr="ttl"] dd')!;
     expect(dd.getAttribute('data-fallback-key')).toBe('redis.keyProps.missing');
@@ -438,9 +439,9 @@ describe('[tester] PTTL sentinels reach the renderer (BUG-004)', () => {
     act(() => relay.selectKey('eternal'));
 
     await waitFor(() =>
-      expect(
-        document.querySelector('[data-props-state]')?.getAttribute('data-props-state'),
-      ).toBe('ready'),
+      expect(document.querySelector('[data-props-state]')?.getAttribute('data-props-state')).toBe(
+        'ready',
+      ),
     );
     const dd = document.querySelector('[data-attr="ttl"] dd')!;
     expect(dd.getAttribute('data-fallback-key')).toBe('redis.noExpiry');
@@ -481,12 +482,18 @@ describe('[tester] maxmemory_policy read shape', () => {
       }));
     });
 
-    const { rerender } = render(<RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />);
+    const { rerender } = render(
+      <RedisKeyPropsSidebar {...slotProps(relay)} open onClose={() => {}} />,
+    );
     act(() => relay.selectKey('user:1'));
     await waitFor(() => expect(policies.has('sess-1')).toBe(true));
 
     rerender(
-      <RedisKeyPropsSidebar {...slotProps(relay, { dbSessionId: 'sess-2' })} open onClose={() => {}} />,
+      <RedisKeyPropsSidebar
+        {...slotProps(relay, { dbSessionId: 'sess-2' })}
+        open
+        onClose={() => {}}
+      />,
     );
     await waitFor(() => expect(policies.has('sess-2')).toBe(true));
 
@@ -499,8 +506,8 @@ describe('[tester] maxmemory_policy read shape', () => {
 
     policies.get('sess-1')!.resolve('allkeys-lfu');
     await new Promise((r) => setTimeout(r, 0));
-    expect(document.querySelector('[data-attr="maxmemory-policy"] dd')?.getAttribute('data-value')).toBe(
-      'noeviction',
-    );
+    expect(
+      document.querySelector('[data-attr="maxmemory-policy"] dd')?.getAttribute('data-value'),
+    ).toBe('noeviction');
   });
 });

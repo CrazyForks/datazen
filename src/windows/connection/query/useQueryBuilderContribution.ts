@@ -11,10 +11,7 @@ export function useQueryBuilderContribution() {
     (listener: () => void) => contribution?.subscribe(listener) ?? subscribeNone(),
     [contribution],
   );
-  const getSnapshot = useCallback(
-    () => contribution?.getOpenPanelId() ?? null,
-    [contribution],
-  );
+  const getSnapshot = useCallback(() => contribution?.getOpenPanelId() ?? null, [contribution]);
   const openPanelId = useSyncExternalStore(subscribe, getSnapshot, getClosedSnapshot);
 
   return { contribution, openPanelId };

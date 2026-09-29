@@ -56,9 +56,7 @@ export function foldSettingEnabled(proSettings?: ProSettingsBag): boolean {
  * stays mounted so flipping the setting back on is an ordinary reconfigure, not
  * a remount that would lose the editor's scroll and selection.
  */
-export function createFoldCompartmentExtensions(
-  opts?: CreateFoldCompartmentOptions,
-): Extension[] {
+export function createFoldCompartmentExtensions(opts?: CreateFoldCompartmentOptions): Extension[] {
   if (!foldSettingEnabled(opts?.proSettings)) return [];
   return createFoldExtensions(opts ? { proSettings: opts.proSettings } : undefined);
 }

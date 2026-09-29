@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Copy, Loader2 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { useCopyFeedback } from '../../components/ui/useCopyFeedback';
 import { useI18n } from '../../hooks/useI18n';
-import type { DataSyncOperation, DataSyncSqlStatement, SyncOptions } from '../../commands/sync';
+import type {
+  DataSyncOperation,
+  DataSyncSelectedRow,
+  DataSyncTableSelection,
+  DataSyncSqlStatement,
+  SyncOptions,
+} from '../../commands/sync';
 import { syncCommands } from '../../commands/sync';
-import {
-  buildClientSqlPreview,
-  filterStatementsByOp,
-  statementsToPreviewText,
-} from './clientSqlPreview';
+import { filterStatementsByOp, statementsToPreviewText } from './clientSqlPreview';
 import type { DataSyncTableResult } from './mappingView';
 
 type OpFilter = 'all' | DataSyncOperation;
@@ -26,6 +28,8 @@ interface SqlPreviewProps {
   targetSchema: string;
   tables: DataSyncTableResult[];
   options: SyncOptions;
+  selectedRows?: DataSyncSelectedRow[];
+  tableSelections?: DataSyncTableSelection[];
 }
 
 export function SqlPreview({
@@ -37,16 +41,22 @@ export function SqlPreview({
   targetSchema,
   tables,
   options,
+  selectedRows,
+  tableSelections,
 }: SqlPreviewProps) {
   const { t } = useI18n();
   const [opFilter, setOpFilter] = useState<OpFilter>('all');
   const [statements, setStatements] = useState<DataSyncSqlStatement[] | null>(null);
-  const [clientText, setClientText] = useState('');
+  const [previewError, setPreviewError] = useState('');
+  const generation = useRef(0);
   const [loading, setLoading] = useState(false);
   const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
 
   const loadPreview = useCallback(async () => {
+    const revision = ++generation.current;
     setLoading(true);
+    setStatements(null);
+    setPreviewError('');
     try {
       const stmts = await syncCommands.generateDataSyncSql(
         sourceConnId,
@@ -57,14 +67,17 @@ export function SqlPreview({
         targetDatabase,
         sourceSchema || undefined,
         targetSchema || undefined,
+        selectedRows,
+        ...(tableSelections?.length ? [tableSelections] : []),
       );
+      if (revision !== generation.current) return;
       setStatements(stmts);
-      setClientText('');
-    } catch {
+    } catch (error) {
+      if (revision !== generation.current) return;
       setStatements(null);
-      setClientText(buildClientSqlPreview(tables, options));
+      setPreviewError(error instanceof Error ? error.message : String(error));
     } finally {
-      setLoading(false);
+      if (revision === generation.current) setLoading(false);
     }
   }, [
     sourceConnId,
@@ -75,15 +88,23 @@ export function SqlPreview({
     targetDatabase,
     sourceSchema,
     targetSchema,
+    selectedRows,
+    tableSelections,
   ]);
 
   useEffect(() => {
     void loadPreview();
+    return () => {
+      generation.current += 1;
+    };
   }, [loadPreview]);
 
   const previewText = statements
     ? statementsToPreviewText(filterStatementsByOp(statements, opFilter), opFilter)
-    : clientText;
+    : '';
+  const isPreviewSizeLimitError = previewError.includes(
+    'Data Sync SQL preview exceeds the 16 MiB IPC limit',
+  );
 
   const handleCopy = () => copy(previewText);
 
@@ -118,6 +139,11 @@ export function SqlPreview({
           {copied ? t('common.copied') : t('common.copy')}
         </Button>
       </div>
+      {previewError && (
+        <div role="alert" className="p-3 text-sm text-red-500">
+          {isPreviewSizeLimitError ? t('sync.sqlPreviewLimitReached') : previewError}
+        </div>
+      )}
       <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-[11px] leading-relaxed text-fg-secondary">
         {previewText}
       </pre>

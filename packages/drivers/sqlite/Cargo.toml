@@ -17,4 +17,5 @@ tracing = "0.1"
 # F7: AST-level dialect-aware SQL target qualification (dialect binding lives in src/sql_target.rs)
 sqlparser = { version = "0.59", features = ["visitor"] }
 uuid = { version = "1", features = ["v4"] }
+same-file = "1.0.6"
 futures-util = "0.3"

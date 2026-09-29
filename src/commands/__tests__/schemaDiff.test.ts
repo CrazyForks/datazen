@@ -111,16 +111,55 @@ describe('schemaDiffCommands wrappers', () => {
     invokeMock.mockResolvedValue(undefined);
   });
 
-  it('compareTableSchemas forwards session ids and table name', async () => {
+  it('compareTableSchemas forwards endpoint-specific table names and schemas', async () => {
     const diff = { table: 'users' } as unknown as TableSchemaDiff;
     invokeMock.mockResolvedValueOnce(diff);
-    await expect(schemaDiffCommands.compareTableSchemas('src-1', 'tgt-1', 'users')).resolves.toBe(
-      diff,
-    );
+    await expect(
+      schemaDiffCommands.compareTableSchemas(
+        'src-1',
+        'tgt-1',
+        'source.users',
+        'target.users',
+        'source',
+        'target',
+      ),
+    ).resolves.toBe(diff);
     expect(invokeMock).toHaveBeenCalledWith('compare_table_schemas', {
       sourceDbSessionId: 'src-1',
       targetDbSessionId: 'tgt-1',
-      tableName: 'users',
+      sourceTableName: 'source.users',
+      targetTableName: 'target.users',
+      sourceSchema: 'source',
+      targetSchema: 'target',
+    });
+  });
+
+  it('persists only reusable Schema Diff profile configuration through IPC', async () => {
+    const profile = {
+      version: 1 as const,
+      id: 'profile-1',
+      name: 'Production schema',
+      sourceConnectionId: 'source',
+      targetConnectionId: 'target',
+      sourceDatabase: 'app',
+      targetDatabase: 'app',
+      sourceSchema: 'public',
+      targetSchema: 'public',
+      tables: ['public.users'],
+      allowDestructive: false,
+      includeIndexes: true,
+      requireRollback: false,
+      typeOverrides: [],
+      createdAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-21T00:00:00.000Z',
+    };
+    await schemaDiffCommands.getProfiles();
+    await schemaDiffCommands.saveProfile(profile);
+    await schemaDiffCommands.deleteProfile(profile.id);
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'get_schema_diff_profiles');
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'save_schema_diff_profile', { profile });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, 'delete_schema_diff_profile', {
+      profileId: profile.id,
     });
   });
 
@@ -222,6 +261,203 @@ describe('schemaDiffCommands wrappers', () => {
     });
   });
 
+  it('prepareUnifiedPlan sends exact mixed object identities with the table scope', async () => {
+    invokeMock.mockResolvedValueOnce(samplePlan({ planId: 'unified-review-1' }));
+    const sourceObjects = [
+      {
+        kind: 'function' as const,
+        schema: 'public',
+        name: 'calculate_total',
+        signature: 'integer, numeric',
+      },
+      {
+        kind: 'trigger' as const,
+        schema: 'public',
+        name: 'audit_row',
+        targetSchema: 'public',
+        targetName: 'orders',
+      },
+    ];
+    const targetObjects = [
+      {
+        kind: 'function' as const,
+        schema: 'app',
+        name: 'calculate_total',
+        signature: 'integer, numeric',
+      },
+    ];
+
+    await expect(
+      schemaDiffCommands.prepareUnifiedPlan({
+        sourceDbSessionId: 'source-session',
+        targetDbSessionId: 'target-session',
+        tableNames: ['public.orders'],
+        targetTableNames: ['app.orders'],
+        sourceSchema: 'public',
+        targetSchema: 'app',
+        allowDestructive: false,
+        includeIndexes: true,
+        typeOverrides: [{ table: 'orders', column: 'amount', targetType: 'DECIMAL(12,2)' }],
+        sourceObjects,
+        targetObjects,
+      }),
+    ).resolves.toMatchObject({ planId: 'unified-review-1' });
+
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_unified_plan', {
+      sourceDbSessionId: 'source-session',
+      targetDbSessionId: 'target-session',
+      tableNames: ['public.orders'],
+      targetTableNames: ['app.orders'],
+      targetOnlyTableNames: undefined,
+      sourceSchema: 'public',
+      targetSchema: 'app',
+      allowDestructive: false,
+      includeIndexes: true,
+      typeOverrides: [{ table: 'orders', column: 'amount', targetType: 'DECIMAL(12,2)' }],
+      sourceObjects: [
+        {
+          kind: 'function',
+          schema: 'public',
+          name: 'calculate_total',
+          signature: 'integer, numeric',
+          targetSchema: null,
+          targetName: null,
+        },
+        {
+          kind: 'trigger',
+          schema: 'public',
+          name: 'audit_row',
+          signature: null,
+          targetSchema: 'public',
+          targetName: 'orders',
+        },
+      ],
+      targetObjects: [
+        {
+          kind: 'function',
+          schema: 'app',
+          name: 'calculate_total',
+          signature: 'integer, numeric',
+          targetSchema: null,
+          targetName: null,
+        },
+      ],
+    });
+  });
+
+  it('forwards explicit target-only selectors without changing source selectors', async () => {
+    invokeMock.mockResolvedValueOnce(samplePlan({ tables: ['users', 'archive'] }));
+    await schemaDiffCommands.preparePlan({
+      sourceDbSessionId: 'src-target-picker',
+      targetDbSessionId: 'tgt-target-picker',
+      tableNames: ['users'],
+      targetOnlyTableNames: ['archive'],
+      allowDestructive: false,
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_diff_plan', {
+      sourceDbSessionId: 'src-target-picker',
+      targetDbSessionId: 'tgt-target-picker',
+      tableNames: ['users'],
+      allowDestructive: false,
+      includeIndexes: undefined,
+      typeOverrides: undefined,
+      targetOnlyTableNames: ['archive'],
+    });
+  });
+
+  it('prepareViewPlan forwards qualified selectors and normalizes requirements', async () => {
+    invokeMock.mockResolvedValueOnce({
+      ...samplePlan({ table: 'public.active_users', tables: ['public.active_users'] }),
+      requirements: [],
+    });
+    await expect(
+      schemaDiffCommands.prepareViewPlan({
+        sourceDbSessionId: 'src-view',
+        targetDbSessionId: 'tgt-view',
+        objectNames: ['public.active_users'],
+        allowDestructive: false,
+      }),
+    ).resolves.toMatchObject({ tables: ['public.active_users'] });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_view_plan', {
+      sourceDbSessionId: 'src-view',
+      targetDbSessionId: 'tgt-view',
+      objectNames: ['public.active_users'],
+      allowDestructive: false,
+    });
+  });
+
+  it('[tester] prepareRoutineTriggerPlan preserves a qualified object identity and destructive choice', async () => {
+    invokeMock.mockResolvedValueOnce(
+      samplePlan({
+        table: 'function:public:lookup:integer',
+        tables: ['function:public:lookup:integer'],
+      }),
+    );
+    await expect(
+      schemaDiffCommands.prepareRoutineTriggerPlan({
+        sourceDbSessionId: 'src-routine',
+        targetDbSessionId: 'tgt-routine',
+        kind: 'function',
+        objectNames: ['public.lookup(integer)'],
+        allowDestructive: true,
+      }),
+    ).resolves.toMatchObject({ tables: ['function:public:lookup:integer'] });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_routine_trigger_plan', {
+      sourceDbSessionId: 'src-routine',
+      targetDbSessionId: 'tgt-routine',
+      kind: 'function',
+      objectNames: ['public.lookup(integer)'],
+      allowDestructive: true,
+    });
+  });
+
+  it('[tester] prepareSequencePlan forwards only qualified selectors and destructive choice', async () => {
+    invokeMock.mockResolvedValueOnce(
+      samplePlan({
+        table: 'sequence:public:orders_id_seq',
+        tables: ['sequence:public:orders_id_seq'],
+      }),
+    );
+    await expect(
+      schemaDiffCommands.prepareSequencePlan({
+        sourceDbSessionId: 'src-sequence',
+        targetDbSessionId: 'tgt-sequence',
+        objectNames: ['public.orders_id_seq'],
+        allowDestructive: true,
+      }),
+    ).resolves.toMatchObject({ tables: ['sequence:public:orders_id_seq'] });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_sequence_plan', {
+      sourceDbSessionId: 'src-sequence',
+      targetDbSessionId: 'tgt-sequence',
+      objectNames: ['public.orders_id_seq'],
+      allowDestructive: true,
+    });
+  });
+
+  it('prepareTypePlan forwards qualified selectors and destructive choice', async () => {
+    invokeMock.mockResolvedValueOnce(
+      samplePlan({
+        table: 'type:public:mood',
+        tables: ['type:public:mood'],
+      }),
+    );
+    await expect(
+      schemaDiffCommands.prepareTypePlan({
+        sourceDbSessionId: 'src-type',
+        targetDbSessionId: 'tgt-type',
+        objectNames: ['public.mood'],
+        allowDestructive: true,
+      }),
+    ).resolves.toMatchObject({ tables: ['type:public:mood'] });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_schema_type_plan', {
+      sourceDbSessionId: 'src-type',
+      targetDbSessionId: 'tgt-type',
+      objectNames: ['public.mood'],
+      allowDestructive: true,
+    });
+  });
+
   it('executeDeploy forwards deploy options and confirm token', async () => {
     const plan = samplePlan();
     const result = { status: 'committed', executedCount: 1 };
@@ -277,4 +513,56 @@ describe('schemaDiffCommands wrappers', () => {
       targetSchema: undefined,
     });
   });
+});
+
+it('keeps the immutable plan identity and forwards required rollback to the backend', async () => {
+  const plan = samplePlan({ planId: 'reviewed-plan-42' });
+  invokeMock.mockResolvedValueOnce({ status: 'unknown' });
+  await schemaDiffCommands.executeDeploy({
+    targetDbSessionId: 'target',
+    plan,
+    requireRollback: true,
+    useTransaction: true,
+  });
+  expect(invokeMock).toHaveBeenLastCalledWith(
+    'execute_schema_diff_deploy',
+    expect.objectContaining({
+      plan: expect.objectContaining({ planId: 'reviewed-plan-42' }),
+      requireRollback: true,
+    }),
+  );
+});
+
+it('round-trips all requirement tags without losing table or column identity', async () => {
+  invokeMock.mockReset();
+  const requirements = [
+    { backfill: { table: 'users', column: 'status', reason: 'populate first' } },
+    { unsupported: { operation: 'users', reason: 'table unavailable' } },
+    { unsupported: { operation: 'users.id', reason: 'column unavailable' } },
+  ];
+  invokeMock.mockResolvedValueOnce({ ...samplePlan(), requirements });
+  const prepared = await schemaDiffCommands.preparePlan({
+    sourceDbSessionId: 'src',
+    targetDbSessionId: 'tgt',
+    tableNames: ['users'],
+    allowDestructive: false,
+  });
+  expect(prepared.requirements).toEqual([
+    { kind: 'Backfill', table: 'users', column: 'status', reason: 'populate first' },
+    { kind: 'Unsupported', table: 'users', column: '', reason: 'table unavailable' },
+    { kind: 'Unsupported', table: 'users', column: 'id', reason: 'column unavailable' },
+  ]);
+  await schemaDiffCommands.executeDeploy({ targetDbSessionId: 'tgt', plan: prepared });
+  expect(invokeMock).toHaveBeenLastCalledWith(
+    'execute_schema_diff_deploy',
+    expect.objectContaining({ plan: expect.objectContaining({ requirements }) }),
+  );
+});
+
+it('cancels only the requested job and propagates cancellation failures', async () => {
+  invokeMock.mockReset();
+  invokeMock.mockResolvedValueOnce(true).mockRejectedValueOnce(new Error('job not found'));
+  await expect(schemaDiffCommands.cancelDeploy('job-42')).resolves.toBe(true);
+  expect(invokeMock).toHaveBeenCalledWith('cancel_schema_diff_deploy', { jobId: 'job-42' });
+  await expect(schemaDiffCommands.cancelDeploy('missing')).rejects.toThrow('job not found');
 });

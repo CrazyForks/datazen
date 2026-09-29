@@ -133,7 +133,9 @@ export function QueryBuilderHostAdapter({
       schema={schema}
       currentSql={currentSql}
       catalog={catalog}
-      dialectFamily={DB_REGISTRY[databaseType as keyof typeof DB_REGISTRY]?.sqlDialect ?? databaseType}
+      dialectFamily={
+        DB_REGISTRY[databaseType as keyof typeof DB_REGISTRY]?.sqlDialect ?? databaseType
+      }
       enableFkPrediction={enableFkPrediction}
       ensureColumns={ensureColumns}
       loadTableSchema={loadTableSchema}
