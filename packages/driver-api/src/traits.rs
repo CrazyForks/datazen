@@ -13,6 +13,13 @@ use crate::{
     try_execute_schema_catalog_command, CommandResult, DriverCommandDefinition,
 };
 
+/// Lowercase hexadecimal encoding used by the default SQL literal formatter.
+/// Dialect implementations may reuse this convention or provide their own
+/// binary literal syntax.
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 #[async_trait]
 pub trait DatabaseDriver: Send + Sync {
     fn driver_type(&self) -> DatabaseType;
@@ -167,9 +174,11 @@ pub trait DatabaseDriver: Send + Sync {
                 format!("'{}'", escaped.replace('\'', "''"))
             }
             Some(Value::Bytes(b)) => {
-                let s = String::from_utf8_lossy(b);
-                let escaped = s.replace('\\', "\\\\");
-                format!("'{}'", escaped.replace('\'', "''"))
+                // Keep the default dialect conservative and lossless. Drivers
+                // with a stricter binary-literal grammar should override this
+                // method (PostgreSQL uses bytea hex input; MySQL/SQLite use
+                // X'...'). Never turn arbitrary bytes into replacement UTF-8.
+                format!("X'{}'", bytes_to_hex(b))
             }
             Some(Value::Timestamp(s)) => {
                 let escaped = s.replace('\\', "\\\\");
@@ -246,6 +255,18 @@ pub trait DatabaseDriver: Send + Sync {
 
     async fn get_databases(&self, handle: &ConnectionHandle) -> Result<Vec<String>, DriverError>;
 
+    /// Whether the current database identity can inspect the full foreign-key
+    /// dependency catalog across every database on this server. Destructive
+    /// planners must fail closed when this cannot be proven. Drivers that do
+    /// not have a server-wide namespace or cannot prove complete visibility
+    /// keep the default `false`.
+    async fn has_complete_foreign_key_catalog_visibility(
+        &self,
+        _handle: &ConnectionHandle,
+    ) -> Result<bool, DriverError> {
+        Ok(false)
+    }
+
     async fn get_tables(
         &self,
         handle: &ConnectionHandle,
@@ -321,6 +342,46 @@ pub trait DatabaseDriver: Send + Sync {
         Ok(())
     }
 
+    /// Stream a parameterized query. Drivers with a wire-level streaming
+    /// implementation may override this; the compatibility default binds the
+    /// values through `query_with_params` and emits the result in chunks.
+    ///
+    /// This is intentionally separate from `query_stream`: callers must never
+    /// interpolate user-controlled filter values into a streaming SELECT.
+    async fn query_stream_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+        limit: Option<u32>,
+        on_event: QueryStreamCallback,
+    ) -> Result<(), DriverError> {
+        if params.is_empty() {
+            return self.query_stream(handle, sql, limit, on_event).await;
+        }
+        let result = self.query_with_params(handle, sql, params).await?;
+        let mut rows = result.rows;
+        let truncated = limit.is_some_and(|cap| rows.len() > cap as usize);
+        if let Some(cap) = limit {
+            rows.truncate(cap as usize);
+        }
+        emit_multi_query_as_stream(
+            MultiQueryResult {
+                results: vec![StatementResult {
+                    sql: sql.to_string(),
+                    columns: result.columns,
+                    rows,
+                    rows_affected: result.rows_affected,
+                    execution_time_ms: result.execution_time_ms,
+                    truncated,
+                }],
+                total_time_ms: result.execution_time_ms,
+            },
+            &on_event,
+        );
+        Ok(())
+    }
+
     /// Register an opaque execution before the backend target is known.
     ///
     /// The default is a no-op so legacy drivers retain their query behavior;
@@ -377,6 +438,30 @@ pub trait DatabaseDriver: Send + Sync {
         sql: &str,
         params: &[Value],
     ) -> Result<QueryResult, DriverError>;
+
+    /// Render a parameter for this dialect. Unsupported drivers must fail before writes.
+    /// `data_type` comes from the inspected target column metadata.
+    fn parameter_placeholder(
+        &self,
+        _index: usize,
+        _data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        Err(DriverError::Unsupported(
+            "parameterized migration writes are not supported".into(),
+        ))
+    }
+
+    /// Execute bound DML and report actual affected rows; never serialize values as SQL.
+    async fn execute_with_params(
+        &self,
+        _handle: &ConnectionHandle,
+        _sql: &str,
+        _params: &[Value],
+    ) -> Result<u64, DriverError> {
+        Err(DriverError::Unsupported(
+            "parameterized migration writes are not supported".into(),
+        ))
+    }
 
     async fn execute(&self, handle: &ConnectionHandle, sql: &str) -> Result<u64, DriverError>;
 
@@ -515,6 +600,81 @@ pub trait DatabaseDriver: Send + Sync {
         ))
     }
 
+    /// Synchronize generated identity/serial sequences after a Data Transfer
+    /// table batch has inserted explicit values. The call runs inside the
+    /// table's active data transaction, after every batch succeeded and before
+    /// commit. Drivers whose generated-value state advances automatically may
+    /// keep the default no-op implementation.
+    async fn advance_transfer_identity_sequences(
+        &self,
+        _handle: &ConnectionHandle,
+        _schema: Option<&str>,
+        _table: &str,
+        _columns: &[String],
+    ) -> Result<(), DriverError> {
+        Ok(())
+    }
+
+    /// Return the clause required by this dialect to accept explicit values
+    /// for generated identity columns during Data Transfer. This is a
+    /// transfer-only DML extension; the default keeps existing drivers and
+    /// other migration paths unchanged.
+    fn transfer_explicit_identity_insert_clause(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Maximum row count for one Data Transfer SQL-file INSERT statement.
+    /// Drivers may raise this above one when their SQL-file renderer can
+    /// safely process multi-row VALUES statements in a single parse/execute.
+    fn transfer_sql_file_insert_batch_size(&self) -> usize {
+        1
+    }
+
+    /// Render a Data Transfer SQL-file INSERT when the target schema cannot
+    /// be inspected while exporting. The template may contain multiple
+    /// VALUES rows. `identity_override_marker` is a unique placeholder
+    /// immediately before `VALUES`; the default removes it.
+    fn render_transfer_sql_file_insert(
+        &self,
+        insert_template: &str,
+        identity_override_marker: &str,
+    ) -> Result<String, DriverError> {
+        if identity_override_marker.is_empty()
+            || insert_template.matches(identity_override_marker).count() != 1
+        {
+            return Err(DriverError::Unsupported(
+                "Data Transfer SQL-file INSERT has an invalid identity override marker".into(),
+            ));
+        }
+        Ok(insert_template.replacen(&format!("{identity_override_marker} "), "", 1))
+    }
+
+    /// Render Data Transfer sequence synchronization statements for an SQL
+    /// file targeting this driver's dialect. Drivers without such a concept
+    /// may keep the empty default.
+    fn render_transfer_identity_sequence_sync_sql(
+        &self,
+        _schema: Option<&str>,
+        _table: &str,
+        _columns: &[String],
+    ) -> Result<Vec<String>, DriverError> {
+        Ok(Vec::new())
+    }
+
+    /// Begin a read-only transaction with a stable snapshot for a multi-page
+    /// comparison. Drivers must override this when their normal transaction
+    /// isolation does not guarantee that every statement sees the same
+    /// committed view. The default fails closed so a caller cannot silently
+    /// downgrade a consistency-sensitive comparison to auto-commit reads.
+    async fn begin_read_snapshot(
+        &self,
+        _handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        Err(DriverError::Unsupported(
+            "stable read snapshots are not supported by this driver".into(),
+        ))
+    }
+
     async fn commit(&self, _tx: TransactionHandle) -> Result<(), DriverError> {
         Err(DriverError::TransactionError(
             "Not supported for this driver type".into(),
@@ -525,6 +685,31 @@ pub trait DatabaseDriver: Send + Sync {
         Err(DriverError::TransactionError(
             "Not supported for this driver type".into(),
         ))
+    }
+
+    /// Validate that target catalog snapshots used to prepare an atomic
+    /// schema migration still match before the host executes its first write.
+    /// The host invokes this inside the transaction only for reviewed plans
+    /// that require atomic execution.
+    async fn validate_schema_migration_plan(
+        &self,
+        _handle: &ConnectionHandle,
+        _target: SqlTarget<'_>,
+        _expected_target_schemas: &[TableSchema],
+    ) -> Result<(), DriverError> {
+        Ok(())
+    }
+
+    /// Validate driver-specific invariants before committing a reviewed
+    /// schema migration. Drivers that need no extra validation may keep the
+    /// default. The host invokes this only for plans whose statements require
+    /// an atomic transaction.
+    async fn validate_schema_migration(
+        &self,
+        _handle: &ConnectionHandle,
+        _target: SqlTarget<'_>,
+    ) -> Result<(), DriverError> {
+        Ok(())
     }
 
     async fn explain(
@@ -575,6 +760,18 @@ pub trait DatabaseDriver: Send + Sync {
             server_version: String::new(),
             server_type: self.driver_type(),
         })
+    }
+
+    /// Return a stable identity for the physical server and selected database
+    /// when the driver can discover one. Schema Diff uses it to reject aliases
+    /// that point both endpoints at the same database. This must not include
+    /// credentials or other secrets.
+    async fn physical_database_identity(
+        &self,
+        _handle: &ConnectionHandle,
+        _database: &str,
+    ) -> Result<Option<String>, DriverError> {
+        Ok(None)
     }
 
     /// Close whatever the driver opened for `database` on this handle — the
@@ -1029,6 +1226,8 @@ mod structure_defaults_tests {
                 primary_keys: vec![],
                 indexes: vec![],
                 foreign_keys: vec![],
+                check_constraints: vec![],
+                table_options: TableOptions::default(),
             })
         }
 
@@ -1100,6 +1299,33 @@ mod structure_defaults_tests {
     async fn default_ddl_atomicity_is_unknown() {
         let driver = StubDriver;
         assert_eq!(driver.ddl_atomicity(), DdlAtomicity::Unknown);
+    }
+
+    #[tokio::test]
+    async fn default_fk_catalog_visibility_fails_closed() {
+        let driver = StubDriver;
+        let handle = ConnectionHandle {
+            id: "conn".into(),
+            pool_id: "pool".into(),
+        };
+
+        assert!(!driver
+            .has_complete_foreign_key_catalog_visibility(&handle)
+            .await
+            .expect("default visibility capability"));
+    }
+
+    #[tokio::test]
+    async fn default_read_snapshot_fails_closed() {
+        let driver = StubDriver;
+        let handle = ConnectionHandle {
+            id: "conn".into(),
+            pool_id: "pool".into(),
+        };
+        let err = driver.begin_read_snapshot(&handle).await.unwrap_err();
+        assert!(
+            matches!(err, DriverError::Unsupported(message) if message.contains("stable read snapshots"))
+        );
     }
 
     #[tokio::test]
@@ -1248,6 +1474,8 @@ mod structure_defaults_tests {
                     primary_keys: vec![], // intentionally empty to test fallback
                     indexes: vec![],
                     foreign_keys: vec![],
+                    check_constraints: vec![],
+                    table_options: TableOptions::default(),
                 })
             }
 

@@ -92,10 +92,10 @@ async function rightClickConn() {
   }, E2E_PG_CONN_NAME);
   // 连接菜单是异步构建的（先 await 后端命令再 show）；本 spec 开头 reload 后
   // 首次打开更慢，固定 pause(400) 会与渲染竞争 → 等待真实菜单出现。
-  await browser.waitUntil(
-    async () => (await $('[data-testid="web-context-menu"]')).isExisting(),
-    { timeout: 8000, timeoutMsg: '连接右键菜单未渲染' },
-  );
+  await browser.waitUntil(async () => (await $('[data-testid="web-context-menu"]')).isExisting(), {
+    timeout: 8000,
+    timeoutMsg: '连接右键菜单未渲染',
+  });
 }
 
 async function menuText(): Promise<string> {
@@ -279,10 +279,10 @@ describe('运维 §5.4: 进程列表与服务器状态 (OPS-PROC)', () => {
     const menu = await $('[data-testid="web-context-menu"]');
     expect(await menu.isExisting()).toBe(true);
     await dismissMenu();
-    await browser.waitUntil(
-      async () => !(await menu.isExisting()),
-      { timeout: 3000, timeoutMsg: 'dismissMenu 后右键菜单仍未从 DOM 消失（RC-3 关闭派发失效）' },
-    );
+    await browser.waitUntil(async () => !(await menu.isExisting()), {
+      timeout: 3000,
+      timeoutMsg: 'dismissMenu 后右键菜单仍未从 DOM 消失（RC-3 关闭派发失效）',
+    });
     expect(await menu.isExisting()).toBe(false);
   });
 

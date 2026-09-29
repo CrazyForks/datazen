@@ -20,7 +20,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use datazen_driver_api::{ConnectionConfig, DatabaseDriver, DriverError, SqlTarget, Value};
+use datazen_driver_api::{
+    ConnectionConfig, DatabaseDriver, DriverError, SqlTarget, TransactionHandle, Value,
+};
 use datazen_driver_mysql::MysqlDriver;
 
 #[derive(Clone, Debug)]
@@ -420,4 +422,222 @@ async fn connection_without_a_default_database_needs_an_explicit_target() {
 
     driver.disconnect(handle).await.expect("disconnect");
     println!("✅  MySQL no-default-database live checks passed");
+}
+
+#[tokio::test]
+async fn get_table_schema_preserves_numeric_string_and_tinyint_defaults() {
+    let Some(cfg) = load_mysql_config() else {
+        return;
+    };
+    let driver = MysqlDriver::new(false);
+    let handle = match driver.connect(&connection_config(&cfg)).await {
+        Ok(handle) => handle,
+        Err(e) => {
+            eprintln!(
+                "⏭  Skipping: cannot connect to MySQL at {}:{}: {e}",
+                cfg.host, cfg.port
+            );
+            return;
+        }
+    };
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after UNIX epoch")
+        .as_nanos();
+    let table = format!("codex_mysql_default_meta_{}_{}", std::process::id(), nonce);
+    driver
+        .query(
+            &handle,
+            &format!(
+                "CREATE TABLE `{table}` (\
+                    amount DECIMAL(18,6) NOT NULL DEFAULT 0, \
+                    code VARCHAR(32) NOT NULL DEFAULT 'CODE0001', \
+                    active TINYINT(1) NOT NULL DEFAULT 1\
+                )"
+            ),
+        )
+        .await
+        .expect("create temporary schema-metadata fixture");
+
+    let schema_result = driver
+        .get_table_schema(&handle, &table, &cfg.database_b, None)
+        .await;
+    let columns_result = driver
+        .get_columns(&handle, &table, &cfg.database_b, None)
+        .await;
+    let all_columns_result = driver.get_all_columns(&handle, &cfg.database_b, None).await;
+    let cleanup_result = driver
+        .query(&handle, &format!("DROP TABLE IF EXISTS `{table}`"))
+        .await;
+    let disconnect_result = driver.disconnect(handle).await;
+
+    cleanup_result.expect("drop temporary schema-metadata fixture");
+    disconnect_result.expect("disconnect from MySQL");
+    let schema = schema_result.expect("read temporary schema metadata");
+    let (columns, _) = columns_result.expect("read per-table information_schema metadata");
+    let mut all_columns = all_columns_result.expect("read batch information_schema metadata");
+    let batch_columns = all_columns
+        .remove(&table)
+        .expect("batch metadata contains the temporary table")
+        .0;
+
+    for (source, columns) in [
+        ("SHOW FULL COLUMNS", schema.columns),
+        ("per-table information_schema", columns),
+        ("batch information_schema", batch_columns),
+    ] {
+        let defaults: HashMap<&str, Option<&str>> = columns
+            .iter()
+            .map(|column| (column.name.as_str(), column.default_value.as_deref()))
+            .collect();
+
+        assert_eq!(
+            defaults.get("amount"),
+            Some(&Some("0.000000")),
+            "{source} lost the DECIMAL default"
+        );
+        assert_eq!(
+            defaults.get("code"),
+            Some(&Some("CODE0001")),
+            "{source} lost the string default"
+        );
+        assert_eq!(
+            defaults.get("active"),
+            Some(&Some("1")),
+            "{source} lost the TINYINT(1) default"
+        );
+    }
+}
+
+#[tokio::test]
+async fn read_snapshot_is_repeatable_read_only_and_releases_after_commit() {
+    let Some(cfg) = load_mysql_config() else {
+        return;
+    };
+    let driver = MysqlDriver::new(false);
+    let reader = match driver.connect(&connection_config(&cfg)).await {
+        Ok(handle) => handle,
+        Err(e) => {
+            eprintln!(
+                "⏭  Skipping: cannot connect to MySQL at {}:{}: {e}",
+                cfg.host, cfg.port
+            );
+            return;
+        }
+    };
+    let writer = match driver.connect(&connection_config(&cfg)).await {
+        Ok(handle) => handle,
+        Err(e) => {
+            let _ = driver.disconnect(reader).await;
+            eprintln!("⏭  Skipping: cannot open a second MySQL connection: {e}");
+            return;
+        }
+    };
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after UNIX epoch")
+        .as_nanos();
+    let table = format!("codex_mysql_snapshot_{}_{}", std::process::id(), nonce);
+    driver
+        .execute(
+            &writer,
+            &format!(
+                "CREATE TABLE `{table}` (id INT PRIMARY KEY, amount INT NOT NULL) ENGINE=InnoDB"
+            ),
+        )
+        .await
+        .expect("create InnoDB snapshot fixture");
+    driver
+        .execute(
+            &writer,
+            &format!("INSERT INTO `{table}` (id, amount) VALUES (1, 10)"),
+        )
+        .await
+        .expect("seed snapshot fixture");
+
+    let mut active_snapshot: Option<TransactionHandle> = None;
+    let journey_result: Result<(i64, i64), DriverError> = async {
+        active_snapshot = Some(driver.begin_read_snapshot(&reader).await?);
+
+        let write_result = driver
+            .execute(
+                &reader,
+                &format!("UPDATE `{table}` SET amount = 99 WHERE id = 1"),
+            )
+            .await;
+        if write_result.is_ok() {
+            return Err(DriverError::TransactionError(
+                "a read snapshot allowed a write".into(),
+            ));
+        }
+
+        driver
+            .execute(
+                &writer,
+                &format!("UPDATE `{table}` SET amount = 20 WHERE id = 1"),
+            )
+            .await?;
+
+        let old_rows = driver
+            .query(
+                &reader,
+                &format!("SELECT amount FROM `{table}` WHERE id = 1"),
+            )
+            .await?;
+        let old_value = old_rows
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(cell_as_i64)
+            .ok_or_else(|| DriverError::QueryFailed("snapshot query returned no value".into()))?;
+        driver
+            .rollback(active_snapshot.take().expect("first snapshot is active"))
+            .await?;
+
+        active_snapshot = Some(driver.begin_read_snapshot(&reader).await?);
+        let new_rows = driver
+            .query(
+                &reader,
+                &format!("SELECT amount FROM `{table}` WHERE id = 1"),
+            )
+            .await?;
+        let new_value = new_rows
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(cell_as_i64)
+            .ok_or_else(|| {
+                DriverError::QueryFailed("new snapshot query returned no value".into())
+            })?;
+        driver
+            .commit(active_snapshot.take().expect("second snapshot is active"))
+            .await?;
+
+        Ok((old_value, new_value))
+    }
+    .await;
+
+    if let Some(tx) = active_snapshot.take() {
+        let _ = driver.rollback(tx).await;
+    }
+    let cleanup_result = driver
+        .execute(&writer, &format!("DROP TABLE IF EXISTS `{table}`"))
+        .await;
+    let reader_disconnect_result = driver.disconnect(reader).await;
+    let writer_disconnect_result = driver.disconnect(writer).await;
+
+    cleanup_result.expect("drop InnoDB snapshot fixture");
+    reader_disconnect_result.expect("disconnect snapshot reader");
+    writer_disconnect_result.expect("disconnect snapshot writer");
+    let (old_value, new_value) = journey_result.expect("complete MySQL snapshot journey");
+    assert_eq!(
+        old_value, 10,
+        "first snapshot must retain the pre-update value"
+    );
+    assert_eq!(
+        new_value, 20,
+        "later snapshot must observe the committed update"
+    );
 }

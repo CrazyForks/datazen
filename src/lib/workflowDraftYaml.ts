@@ -1,5 +1,5 @@
 import type { WorkflowStepType } from '../types';
-import type { WorkflowDraft } from '../windows/workflow/WorkflowForm';
+import type { WorkflowDraft, WorkflowStepDraft } from '../windows/workflow/WorkflowForm';
 
 export function draftToYamlObject(d: WorkflowDraft): Record<string, unknown> {
   return {
@@ -12,25 +12,38 @@ export function draftToYamlObject(d: WorkflowDraft): Record<string, unknown> {
       description: v.description,
       required: v.required,
     })),
-    steps: d.steps.map((s) =>
-      s.type === 'command'
-        ? {
-            type: s.type,
-            id: s.id,
-            command: s.command ?? '',
-            connection: s.connection,
-            // A command step's database belongs in `input.database`.
-            input: s.database ? { ...(s.input ?? {}), database: s.database } : (s.input ?? {}),
-          }
-        : {
-            type: s.type,
-            id: s.id,
-            sql: s.sql,
-            prompt: s.prompt,
-            connection: s.connection,
-            database: s.database,
-          },
-    ),
+    steps: d.steps.map((s) => {
+      if (s.type === 'migration') {
+        return {
+          type: s.type,
+          id: s.id,
+          operation: s.operation ?? 'dataSync',
+          profileId: s.profileId ?? '',
+          profileRevision: s.profileRevision,
+          destructivePolicy: s.destructivePolicy ?? 'reject',
+          sqlFileTokenVariable: s.sqlFileTokenVariable,
+        };
+      }
+      if (s.type === 'command') {
+        const input: Record<string, unknown> = { ...(s.input ?? {}) };
+        if (s.database) input.database = s.database;
+        return {
+          type: s.type,
+          id: s.id,
+          command: s.command ?? '',
+          connection: s.connection,
+          input,
+        };
+      }
+      return {
+        type: s.type,
+        id: s.id,
+        sql: s.sql,
+        prompt: s.prompt,
+        connection: s.connection,
+        database: s.database,
+      };
+    }),
     connection: d.connection,
     database: d.database,
     schedule: d.scheduleEnabled
@@ -51,8 +64,7 @@ export function yamlObjectToDraft(obj: Record<string, unknown>): WorkflowDraft {
     : [];
   const steps = Array.isArray(obj.steps)
     ? (obj.steps as Array<Record<string, unknown>>).map((s) => {
-        // A command step carries its database in `input.database`; surfacing it
-        // as a plain `database` key would be dropped by the Rust deserializer.
+        // Command-step databases are persisted inside input.database.
         const input = (s.input ?? {}) as Record<string, unknown>;
         const database =
           s.database != null
@@ -66,8 +78,22 @@ export function yamlObjectToDraft(obj: Record<string, unknown>): WorkflowDraft {
           sql: String(s.sql ?? ''),
           prompt: String(s.prompt ?? ''),
           command: s.command != null ? String(s.command) : '',
+          input,
           connection: s.connection != null ? String(s.connection) : undefined,
           database,
+          operation:
+            s.type === 'migration'
+              ? (String(s.operation ?? 'dataSync') as WorkflowStepDraft['operation'])
+              : undefined,
+          profileId: s.type === 'migration' ? String(s.profileId ?? '') : undefined,
+          profileRevision:
+            s.type === 'migration' ? String(s.profileRevision ?? '') || undefined : undefined,
+          destructivePolicy:
+            s.type === 'migration'
+              ? (String(s.destructivePolicy ?? 'reject') as WorkflowStepDraft['destructivePolicy'])
+              : undefined,
+          sqlFileTokenVariable:
+            s.type === 'migration' ? String(s.sqlFileTokenVariable ?? '') || undefined : undefined,
         };
       })
     : [];

@@ -138,7 +138,9 @@ describe('[tester] createExtraKeymap vs the real createBaseEditorExtensions', ()
       // composition — without it, "the hook won" would be vacuous.
       const init = claimedByRealHost(candidates);
       const calls: string[] = [];
-      const view = createRealEditor([keymap.of([{ key: label, run: () => (calls.push('pro'), true) }])]);
+      const view = createRealEditor([
+        keymap.of([{ key: label, run: () => (calls.push('pro'), true) }]),
+      ]);
       const before = signature(view);
 
       press(view, init);

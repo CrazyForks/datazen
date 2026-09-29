@@ -83,12 +83,7 @@ describe('@datazen/ui Select data-* forwarding', () => {
 
   it('opens the listbox from the located element, so the locator is a working handle', () => {
     render(
-      <Select
-        value="http"
-        options={OPTIONS}
-        onChange={() => {}}
-        data-testid="connection-picker"
-      />,
+      <Select value="http" options={OPTIONS} onChange={() => {}} data-testid="connection-picker" />,
     );
 
     const trigger = screen.getByTestId('connection-picker');

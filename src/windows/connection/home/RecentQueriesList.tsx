@@ -141,7 +141,11 @@ export function RecentQueriesList({
                           item.success ? 'bg-success' : 'bg-danger',
                         )}
                       />
-                      <span className="truncate" title={sourceName} data-testid={`home-query-source-${item.id}`}>
+                      <span
+                        className="truncate"
+                        title={sourceName}
+                        data-testid={`home-query-source-${item.id}`}
+                      >
                         {sourceName}
                       </span>
                       {relative && (

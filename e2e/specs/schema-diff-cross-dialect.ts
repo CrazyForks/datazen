@@ -27,6 +27,13 @@ import {
   teardownSchemaDiffFixture,
 } from '../lib/schemaDiffFixtures.js';
 
+async function expectPlanHasNoBlockingRequirements() {
+  const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+  if (await requirements.isExisting()) {
+    throw new Error(`Schema Diff plan is blocked:\n${await requirements.getText()}`);
+  }
+}
+
 describe('PG→MySQL 跨方言宽类型 (SD-CROSS-PG-MYSQL)', function () {
   this.timeout(120000);
   let mainWindow: string;
@@ -66,6 +73,7 @@ describe('PG→MySQL 跨方言宽类型 (SD-CROSS-PG-MYSQL)', function () {
 
   it('SD-XPG-002: 计划应含 MySQL 类型映射（DATETIME/TINYINT 等）', async () => {
     await clickSchemaDiffGeneratePlan();
+    await expectPlanHasNoBlockingRequirements();
     const body = await $('body').getText();
     expect(body).toContain(t('schemaDiff.stepPlan'));
     const lower = body.toLowerCase();
@@ -76,6 +84,7 @@ describe('PG→MySQL 跨方言宽类型 (SD-CROSS-PG-MYSQL)', function () {
   });
 
   it('SD-XPG-003: 部署后 MySQL 目标应含宽类型列', async () => {
+    await expectPlanHasNoBlockingRequirements();
     await advanceSchemaDiffToReview();
     await deploySchemaDiffPlan();
     const exists = await columnExists(TGT_ID, TABLE, 'label', 'mysql');
@@ -123,6 +132,7 @@ describe('MySQL→PG 跨方言宽类型 (SD-CROSS-MYSQL-PG)', function () {
 
   it('SD-XMYSQL-002: 计划应含 PG 映射类型', async () => {
     await clickSchemaDiffGeneratePlan();
+    await expectPlanHasNoBlockingRequirements();
     const body = await $('body').getText();
     expect(body).toContain(t('schemaDiff.stepPlan'));
     const lower = body.toLowerCase();
@@ -133,6 +143,7 @@ describe('MySQL→PG 跨方言宽类型 (SD-CROSS-MYSQL-PG)', function () {
   });
 
   it('SD-XMYSQL-003: 部署后 PG 目标应含宽类型列', async () => {
+    await expectPlanHasNoBlockingRequirements();
     await advanceSchemaDiffToReview();
     await deploySchemaDiffPlan();
     const exists = await columnExists(TGT_ID, TABLE, 'label', 'postgresql');

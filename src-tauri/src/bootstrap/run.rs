@@ -331,6 +331,8 @@ pub fn run() {
             crate::commands::session_transaction_status,
             // ── 查询历史维护 ──
             crate::commands::purge_history,
+            crate::commands::get_migration_run,
+            crate::commands::list_migration_runs,
             // ── 驱动命令网关 ──
             crate::commands::execute_driver_command,
             crate::commands::execute_driver_command_stream,
@@ -453,12 +455,35 @@ pub fn run() {
             crate::commands::classify_transfer_pair,
             crate::commands::execute_data_transfer,
             crate::commands::inspect_data_transfer,
+            crate::commands::inspect_sql_file_transfer,
+            crate::commands::pick_data_transfer_sql_file,
             crate::commands::preview_data_transfer,
+            crate::commands::delete_transfer_profile,
+            crate::commands::get_transfer_profiles,
+            crate::commands::save_transfer_profile,
+            // This post-commit acknowledgement-loss seam is intentionally
+            // absent from release builds and from non-webdriver builds.
+            #[cfg(all(debug_assertions, feature = "webdriver"))]
+            crate::commands::arm_data_transfer_test_commit_ack_loss,
+            #[cfg(all(debug_assertions, feature = "webdriver"))]
+            crate::commands::reset_data_transfer_test_commit_ack_loss,
             // ── 结构比对 ──
             crate::commands::cancel_schema_diff_deploy,
             crate::commands::compare_table_schemas,
+            crate::commands::delete_schema_diff_profile,
             crate::commands::execute_schema_diff_deploy,
+            crate::commands::get_schema_diff_profiles,
             crate::commands::prepare_schema_diff_plan,
+            crate::commands::schema_diff::unified_plan::prepare_schema_unified_plan,
+            crate::commands::prepare_schema_routine_trigger_plan,
+            crate::commands::prepare_schema_sequence_plan,
+            crate::commands::prepare_schema_type_plan,
+            crate::commands::prepare_schema_view_plan,
+            crate::commands::save_schema_diff_profile,
+            crate::commands::get_data_sync_comparison_page,
+            crate::commands::get_sync_profiles,
+            crate::commands::save_sync_profile,
+            crate::commands::delete_sync_profile,
             // ── 主题 ──
             crate::commands::set_surface_background,
             // ── 子窗口与引导 ──
@@ -471,6 +496,8 @@ pub fn run() {
             crate::commands::test_inject_dialog_result,
             #[cfg(feature = "webdriver")]
             crate::commands::test_reset_dialog_queue,
+            #[cfg(feature = "webdriver")]
+            crate::commands::set_data_sync_test_commit_fault,
             // ── 应用菜单 ──
             crate::app_menu::rebuild_menu,
         ])

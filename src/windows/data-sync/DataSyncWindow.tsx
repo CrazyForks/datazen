@@ -6,9 +6,23 @@ import { StatusBar } from '../../components/StatusBar';
 import { LocaleDomainLoading } from '../../components/LocaleDomainLoading';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
+import { Select } from '../../components/ui/Select';
 import { CopyableError } from '../../components/ui/CopyableError';
 import { aiCommands } from '../../commands/ai';
-import { syncCommands, type DataSyncRowChange, type SyncOptions } from '../../commands/sync';
+import {
+  syncCommands,
+  DEFAULT_SYNC_OPTIONS,
+  type DataSyncExecutionResult,
+  type DataSyncRowChange,
+  type DataSyncSelectedRow,
+  type DataSyncSelectionExclusion,
+  type DataSyncTableSelection,
+  type DataSyncSourceFilter,
+  type DataSyncTableMapping,
+  type DataSyncTableResult,
+  type SyncProfile,
+  type SyncOptions,
+} from '../../commands/sync';
 import { databaseCommands } from '../../commands/database';
 import { useI18n } from '../../hooks/useI18n';
 import { useLocaleDomains } from '../../hooks/useLocaleDomains';
@@ -31,7 +45,10 @@ import {
   type DedicatedSideSession,
 } from '../../lib/dedicatedDbSession';
 import { useSyncPairingState } from '../../lib/syncPairing';
+import { isVerifiedMigrationPair } from '../../lib/migrationVerification';
 import { DB_REGISTRY } from '../../lib/databaseTypes';
+import { MigrationRunHistoryDialog } from '../../components/migration/MigrationRunHistoryDialog';
+import type { MigrationRunRecord } from '../../commands/history';
 import type { ConnectionConfig } from '../../types';
 import { pickDefaultSchema, uniqueSchemasFromTables } from './utils';
 import { CompareSummary } from './CompareSummary';
@@ -47,7 +64,9 @@ import {
   markDisabledTables,
   mergeCompareIntoMappings,
   operationAllowed,
-  selectedRowCount,
+  rowKeyString,
+  defaultRowSelected,
+  rowDiffCounts,
   summarizeCompare,
   tableHasRowDiffs,
   tableKey,
@@ -60,6 +79,37 @@ import {
   WIZARD_STEPS,
   NARROW_WIZARD_STEPS,
 } from './useDataSyncWizardState';
+
+function selectedRowToken(
+  row: Pick<DataSyncSelectedRow, 'sourceTable' | 'targetTable' | 'operation' | 'key'>,
+): string {
+  return `${row.sourceTable}\u0000${row.targetTable}\u0000${row.operation}\u0000${rowKeyString(row.key)}`;
+}
+
+function scopeSelectsOperation(
+  scope: DataSyncTableSelection,
+  operation: DataSyncRowChange['operation'],
+  options: SyncOptions,
+): boolean {
+  return (
+    operation !== 'UNCHANGED' &&
+    scope.operations.includes(operation) &&
+    (scope.selectionMode === 'all' || defaultRowSelected(operation, options))
+  );
+}
+
+function scopeForOperation(
+  scopes: DataSyncTableSelection[],
+  table: Pick<DataSyncTableResult, 'sourceTable' | 'targetTable'>,
+  operation: DataSyncRowChange['operation'],
+): DataSyncTableSelection | undefined {
+  return scopes.find(
+    (scope) =>
+      scope.sourceTable === table.sourceTable &&
+      scope.targetTable === table.targetTable &&
+      scope.operations.includes(operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>),
+  );
+}
 
 export function DataSyncWindow() {
   const localesReady = useLocaleDomains(['sync']);
@@ -82,6 +132,9 @@ export function DataSyncWindow() {
   const [targetSchemas, setTargetSchemas] = useState<string[]>([]);
   const [sourceSchema, setSourceSchema] = useState('');
   const [targetSchema, setTargetSchema] = useState('');
+  const [syncProfiles, setSyncProfiles] = useState<SyncProfile[]>([]);
+  const [profileName, setProfileName] = useState('');
+  const [selectedProfileId, setSelectedProfileId] = useState('');
   const {
     syncOptions,
     setSyncOptions,
@@ -114,8 +167,40 @@ export function DataSyncWindow() {
   const [explainOpen, setExplainOpen] = useState(false);
   const [explainLoading, setExplainLoading] = useState(false);
   const [explainText, setExplainText] = useState('');
+  const [writeOutcomeUncertain, setWriteOutcomeUncertain] = useState(false);
+  const [scopeReconfirmationRequired, setScopeReconfirmationRequired] = useState(false);
+  const [lastExecutionResult, setLastExecutionResult] = useState<DataSyncExecutionResult | null>(
+    null,
+  );
+  const [selectedRows, setSelectedRows] = useState<DataSyncSelectedRow[]>([]);
+  const [tableSelections, setTableSelections] = useState<DataSyncTableSelection[]>([]);
+  const [pageLoading, setPageLoading] = useState(false);
+  const [pageIndex, setPageIndex] = useState<Record<string, number>>({});
+  const [pageCursors, setPageCursors] = useState<
+    Record<string, { current: string | null; next: string | null; previous: string[] }>
+  >({});
   const jobIdRef = useRef<string | null>(null);
+  const jobKindRef = useRef<'compare' | 'execute' | null>(null);
+  const cancelRequestedJobRef = useRef<string | null>(null);
+  const cancellingStatusJobRef = useRef<string | null>(null);
   const compareGenerationRef = useRef(0);
+  const writeInFlightRef = useRef(false);
+  const syncStateRef = useRef(syncState);
+  const selectedRowsRef = useRef<DataSyncSelectedRow[]>([]);
+  const tableSelectionsRef = useRef<DataSyncTableSelection[]>([]);
+  const loadedPageRef = useRef<Set<string>>(new Set());
+  const pendingProfileMappingsRef = useRef<DataSyncTableMapping[] | null>(null);
+  selectedRowsRef.current = selectedRows;
+  tableSelectionsRef.current = tableSelections;
+  syncStateRef.current = syncState;
+
+  useEffect(() => {
+    setSelectedRows([]);
+    setTableSelections([]);
+    setPageIndex({});
+    setPageCursors({});
+    loadedPageRef.current.clear();
+  }, [sourceId, targetId, sourceDatabase, targetDatabase, sourceSchema, targetSchema]);
 
   useEffect(() => {
     void loadSettings();
@@ -181,17 +266,28 @@ export function DataSyncWindow() {
 
   const targetOptions = useMemo(() => {
     const hint = t('common.unsupportedPair');
+    const experimentalHint = t('common.experimentalPairHint');
     const srcType = sourceConn?.databaseType;
     return connections.map((c) => {
       const unsupported = Boolean(
         srcType && Object.hasOwn(targetSupport, c.id) && !targetSupport[c.id],
       );
       const base = `${c.name} (${c.databaseType})`;
+      const experimental = Boolean(
+        srcType &&
+          !unsupported &&
+          Object.hasOwn(targetSupport, c.id) &&
+          !isVerifiedMigrationPair(srcType, c.databaseType),
+      );
       return {
         value: c.id,
-        label: unsupported ? `${base} — ${hint}` : base,
+        label: unsupported
+          ? `${base} — ${hint}`
+          : experimental
+            ? `${base} — ${experimentalHint}`
+            : base,
         disabled: unsupported,
-        title: unsupported ? hint : undefined,
+        title: unsupported ? hint : experimental ? experimentalHint : undefined,
       };
     });
   }, [connections, sourceConn?.databaseType, targetSupport, t]);
@@ -482,6 +578,7 @@ export function DataSyncWindow() {
   }, [sourceId, targetId, sourceDatabase, targetDatabase, sourceSchema, targetSchema]);
 
   const handleSwap = useCallback(() => {
+    pendingProfileMappingsRef.current = null;
     setSourceId(targetId);
     setTargetId(sourceId);
     setSourceDatabase(targetDatabase);
@@ -509,6 +606,7 @@ export function DataSyncWindow() {
 
   const handleSourceChange = useCallback(
     (id: string) => {
+      pendingProfileMappingsRef.current = null;
       setSourceId(id);
       resetCompareState();
     },
@@ -517,6 +615,7 @@ export function DataSyncWindow() {
 
   const handleTargetChange = useCallback(
     (id: string) => {
+      pendingProfileMappingsRef.current = null;
       setTargetId(id);
       resetCompareState();
     },
@@ -525,6 +624,7 @@ export function DataSyncWindow() {
 
   const handleSourceDatabaseChange = useCallback(
     (db: string) => {
+      pendingProfileMappingsRef.current = null;
       setSourceDatabase(db);
       resetCompareState();
     },
@@ -533,6 +633,7 @@ export function DataSyncWindow() {
 
   const handleTargetDatabaseChange = useCallback(
     (db: string) => {
+      pendingProfileMappingsRef.current = null;
       setTargetDatabase(db);
       resetCompareState();
     },
@@ -541,6 +642,7 @@ export function DataSyncWindow() {
 
   const handleSourceSchemaChange = useCallback(
     (schema: string) => {
+      pendingProfileMappingsRef.current = null;
       setSourceSchema(schema);
       resetCompareState();
     },
@@ -549,11 +651,237 @@ export function DataSyncWindow() {
 
   const handleTargetSchemaChange = useCallback(
     (schema: string) => {
+      pendingProfileMappingsRef.current = null;
       setTargetSchema(schema);
       resetCompareState();
     },
     [resetCompareState],
   );
+
+  const loadSyncProfiles = useCallback(() => {
+    void syncCommands
+      .getSyncProfiles()
+      .then(setSyncProfiles)
+      .catch(() => setSyncProfiles([]));
+  }, []);
+
+  const currentProfileTables = useCallback((): DataSyncTableMapping[] => {
+    if (mappingResults.length === 0) return pendingProfileMappingsRef.current ?? [];
+    return mappingResults
+      .filter((row) => row.sourceTable.trim() && row.targetTable.trim())
+      .map((row) => ({
+        sourceTable: row.sourceTable,
+        targetTable: row.targetTable,
+        enabled: !disabledTables.has(row.sourceTable) && row.status !== 'DISABLED',
+        sourceFilter: row.sourceFilter,
+      }));
+  }, [disabledTables, mappingResults]);
+
+  const saveCurrentProfile = useCallback(async () => {
+    const name = profileName.trim();
+    if (!name || !sourceId || !targetId) {
+      setErrorMsg(t('sync.profile.missingFields'));
+      setErrorOpen(true);
+      return;
+    }
+    const existing = syncProfiles.find((profile) => profile.id === selectedProfileId);
+    const now = new Date().toISOString();
+    const profile: SyncProfile = {
+      version: 1,
+      id: existing?.id ?? crypto.randomUUID(),
+      name,
+      sourceConnectionId: sourceId,
+      targetConnectionId: targetId,
+      sourceDatabase: sourceDatabase || null,
+      targetDatabase: targetDatabase || null,
+      sourceSchema: sourceSchema || null,
+      targetSchema: targetSchema || null,
+      tables: currentProfileTables(),
+      options: syncOptions,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    try {
+      await syncCommands.saveSyncProfile(profile);
+      setSelectedProfileId(profile.id);
+      setProfileName(profile.name);
+      loadSyncProfiles();
+      setStatusMsg(t('sync.profile.saved'));
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : String(error));
+      setErrorOpen(true);
+    }
+  }, [
+    currentProfileTables,
+    loadSyncProfiles,
+    profileName,
+    selectedProfileId,
+    sourceDatabase,
+    sourceId,
+    sourceSchema,
+    syncOptions,
+    syncProfiles,
+    t,
+    targetDatabase,
+    targetId,
+    targetSchema,
+  ]);
+
+  const loadSelectedProfile = useCallback(() => {
+    const profile = syncProfiles.find((candidate) => candidate.id === selectedProfileId);
+    if (!profile) return;
+    const sourceExists = connections.some(
+      (connection) => connection.id === profile.sourceConnectionId,
+    );
+    const targetExists = connections.some(
+      (connection) => connection.id === profile.targetConnectionId,
+    );
+    if (!sourceExists || !targetExists) {
+      setErrorMsg(t('sync.profile.missingConnection'));
+      setErrorOpen(true);
+      return;
+    }
+    pendingProfileMappingsRef.current = profile.tables;
+    setProfileName(profile.name);
+    setSourceId(profile.sourceConnectionId);
+    setTargetId(profile.targetConnectionId);
+    setSourceDatabase(profile.sourceDatabase ?? '');
+    setTargetDatabase(profile.targetDatabase ?? '');
+    setSourceSchema(profile.sourceSchema ?? '');
+    setTargetSchema(profile.targetSchema ?? '');
+    setSyncOptions(profile.options);
+    resetCompareState();
+    setSelectedRows([]);
+    setTableSelections([]);
+    setStep('endpoints');
+    setStatusMsg(t('sync.profile.loaded'));
+  }, [connections, resetCompareState, selectedProfileId, setSyncOptions, setStep, syncProfiles, t]);
+
+  const deleteSelectedProfile = useCallback(async () => {
+    if (!selectedProfileId) return;
+    try {
+      await syncCommands.deleteSyncProfile(selectedProfileId);
+      setSelectedProfileId('');
+      setProfileName('');
+      loadSyncProfiles();
+      setStatusMsg(t('sync.profile.deleted'));
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : String(error));
+      setErrorOpen(true);
+    }
+  }, [loadSyncProfiles, selectedProfileId, t]);
+
+  const reconcileUnknownRun = useCallback(
+    async (run: MigrationRunRecord): Promise<boolean> => {
+      if (run.operation !== 'dataSync' || run.outcome !== 'unknown') return false;
+      if (writeInFlightRef.current) {
+        setErrorMsg(t('migrationHistory.syncReconcileBusy'));
+        setErrorOpen(true);
+        return false;
+      }
+
+      const [latestProfiles, latestConnections] = await Promise.all([
+        syncCommands.getSyncProfiles(),
+        invoke<ConnectionConfig[]>('get_connections'),
+      ]);
+      setSyncProfiles(latestProfiles);
+      setConnections(latestConnections);
+      const savedProfile = run.profileId
+        ? latestProfiles.find((profile) => profile.id === run.profileId)
+        : undefined;
+      const sameRevision =
+        !!savedProfile &&
+        !!run.profileRevision &&
+        Date.parse(savedProfile.updatedAt) === Date.parse(run.profileRevision);
+      const reusableProfile =
+        sameRevision &&
+        (!run.sourceConnectionId || run.sourceConnectionId === savedProfile.sourceConnectionId) &&
+        (!run.targetConnectionId || run.targetConnectionId === savedProfile.targetConnectionId)
+          ? savedProfile
+          : undefined;
+      const sourceConnectionId =
+        run.sourceConnectionId ?? reusableProfile?.sourceConnectionId ?? '';
+      const targetConnectionId =
+        run.targetConnectionId ?? reusableProfile?.targetConnectionId ?? '';
+      const connectionIds = new Set(latestConnections.map((connection) => connection.id));
+      if (
+        (sourceConnectionId && !connectionIds.has(sourceConnectionId)) ||
+        (targetConnectionId && !connectionIds.has(targetConnectionId))
+      ) {
+        setErrorMsg(t('migrationHistory.syncReconcileMissingConnection'));
+        setErrorOpen(true);
+        return false;
+      }
+
+      let profileScopeCanBeRestored = Boolean(reusableProfile);
+      let sourceDatabasesForRestore: string[] = [];
+      let targetDatabasesForRestore: string[] = [];
+      if (reusableProfile) {
+        try {
+          const [sourceCatalog, targetCatalog] = await Promise.all([
+            listDatabasesDedicated(sourceConnectionId),
+            listDatabasesDedicated(targetConnectionId),
+          ]);
+          sourceDatabasesForRestore = sourceCatalog.databases ?? [];
+          targetDatabasesForRestore = targetCatalog.databases ?? [];
+          profileScopeCanBeRestored = Boolean(
+            reusableProfile.sourceDatabase &&
+              reusableProfile.targetDatabase &&
+              sourceDatabasesForRestore.includes(reusableProfile.sourceDatabase) &&
+              targetDatabasesForRestore.includes(reusableProfile.targetDatabase),
+          );
+        } catch {
+          profileScopeCanBeRestored = false;
+        }
+      }
+
+      compareGenerationRef.current += 1;
+      jobIdRef.current = null;
+      jobKindRef.current = null;
+      cancelRequestedJobRef.current = null;
+      const restoredProfile = profileScopeCanBeRestored ? reusableProfile : undefined;
+      pendingProfileMappingsRef.current = restoredProfile?.tables ?? null;
+      setSelectedProfileId(restoredProfile?.id ?? '');
+      setProfileName(restoredProfile?.name ?? '');
+      setSourceId(sourceConnectionId);
+      setTargetId(targetConnectionId);
+      setSourceDatabase(restoredProfile?.sourceDatabase ?? '');
+      setTargetDatabase(restoredProfile?.targetDatabase ?? '');
+      setSourceSchema(restoredProfile?.sourceSchema ?? '');
+      setTargetSchema(restoredProfile?.targetSchema ?? '');
+      setSourceDatabases(sourceDatabasesForRestore);
+      setTargetDatabases(targetDatabasesForRestore);
+      setSourceSchemas([]);
+      setTargetSchemas([]);
+      setSyncOptions(restoredProfile?.options ?? DEFAULT_SYNC_OPTIONS);
+      resetCompareState();
+      setSelectedRows([]);
+      setTableSelections([]);
+      setPageIndex({});
+      setPageCursors({});
+      loadedPageRef.current.clear();
+      setLastExecutionResult(null);
+      setWriteOutcomeUncertain(true);
+      setScopeReconfirmationRequired(!restoredProfile);
+      setSyncState('unknown');
+      setStep('endpoints');
+      setStatusMsg(
+        restoredProfile
+          ? t('migrationHistory.syncReconcileProfileReady')
+          : reusableProfile
+            ? t('migrationHistory.syncReconcileScopeUnavailable')
+            : run.profileId
+              ? t('migrationHistory.syncReconcileProfileChanged')
+              : t('migrationHistory.syncReconcileNeedsScope'),
+      );
+      return true;
+    },
+    [resetCompareState, setStep, setSyncOptions, t],
+  );
+
+  useEffect(() => {
+    loadSyncProfiles();
+  }, [loadSyncProfiles]);
 
   const validateEndpoints = useCallback((): boolean => {
     if (!sourceId || !targetId) {
@@ -594,21 +922,42 @@ export function DataSyncWindow() {
       const srcConnId = source?.dbSessionId;
       const tgtConnId = target?.dbSessionId;
       if (!srcConnId || !tgtConnId) {
-        setSyncState('idle');
+        setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
         return false;
       }
 
-      const inspected = await syncCommands.inspectDataSync(
-        srcConnId,
-        tgtConnId,
-        sourceDatabase,
-        targetDatabase,
-        sourceSchema || undefined,
-        targetSchema || undefined,
-      );
+      const profileMappings = pendingProfileMappingsRef.current;
+      const profileDisabled = profileMappings
+        ? new Set(
+            profileMappings
+              .filter((mapping) => !mapping.enabled)
+              .map((mapping) => mapping.sourceTable),
+          )
+        : disabledTables;
+
+      const inspected = profileMappings
+        ? await syncCommands.inspectDataSync(
+            srcConnId,
+            tgtConnId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+            profileMappings,
+          )
+        : await syncCommands.inspectDataSync(
+            srcConnId,
+            tgtConnId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+          );
       if (generation !== compareGenerationRef.current) return false;
-      const withDisabled = markDisabledTables(inspected, disabledTables);
+      if (profileMappings) setDisabledTables(profileDisabled);
+      const withDisabled = markDisabledTables(inspected, profileDisabled);
       setMappingResults(withDisabled);
+      pendingProfileMappingsRef.current = null;
       setInspectionComplete(true);
       setSyncState('idle');
       return true;
@@ -616,7 +965,7 @@ export function DataSyncWindow() {
       if (generation !== compareGenerationRef.current) return false;
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setErrorOpen(true);
-      setSyncState('idle');
+      setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
       return false;
     }
   }, [
@@ -629,6 +978,8 @@ export function DataSyncWindow() {
     sourceSchema,
     targetSchema,
     disabledTables,
+    setDisabledTables,
+    writeOutcomeUncertain,
   ]);
 
   const handleCompare = useCallback(async (): Promise<boolean> => {
@@ -640,10 +991,18 @@ export function DataSyncWindow() {
 
     const generation = ++compareGenerationRef.current;
     setSyncState('comparing');
+    setLastExecutionResult(null);
     setSelectedTableKey(null);
+    setSelectedRows([]);
+    setTableSelections([]);
+    setPageIndex({});
+    setPageCursors({});
+    loadedPageRef.current.clear();
     setStatusMsg('');
     const jobId = crypto.randomUUID();
     jobIdRef.current = jobId;
+    jobKindRef.current = 'compare';
+    cancelRequestedJobRef.current = null;
 
     try {
       const { source, target } = await refreshEndpointSessions();
@@ -651,41 +1010,84 @@ export function DataSyncWindow() {
       const srcConnId = source?.dbSessionId;
       const tgtConnId = target?.dbSessionId;
       if (!srcConnId || !tgtConnId) {
-        setSyncState('idle');
+        setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
         return false;
       }
 
       const toCompare = tablesForCompare(mappingResults);
-      const compared = await syncCommands.compareDataSync(
-        srcConnId,
-        tgtConnId,
-        toCompare,
-        jobId,
-        sourceDatabase,
-        targetDatabase,
-        sourceSchema || undefined,
-        targetSchema || undefined,
-        syncOptions,
+      const filters = Object.fromEntries(
+        mappingResults
+          .filter((row) => row.status === 'MATCHED' && row.sourceFilter)
+          .map((row) => [row.sourceTable, row.sourceFilter as DataSyncSourceFilter]),
       );
+      const comparedResponse = Object.keys(filters).length
+        ? await syncCommands.compareDataSync(
+            srcConnId,
+            tgtConnId,
+            toCompare,
+            jobId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+            syncOptions,
+            filters,
+          )
+        : await syncCommands.compareDataSync(
+            srcConnId,
+            tgtConnId,
+            toCompare,
+            jobId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+            syncOptions,
+          );
 
       if (generation !== compareGenerationRef.current) return false;
+      const compared = Array.isArray(comparedResponse) ? comparedResponse : comparedResponse.tables;
+      const pagedComparison =
+        !Array.isArray(comparedResponse) && comparedResponse.contractVersion != null;
+      if (jobIdRef.current === jobId && jobKindRef.current === 'compare') {
+        jobIdRef.current = null;
+        jobKindRef.current = null;
+      }
       const merged = mergeCompareIntoMappings(mappingResults, compared).map((row) => {
-        if (row.status !== 'MATCHED' || !row.rows) return row;
-        return {
-          ...row,
-          rows: applyOptionsToRows(row.rows, syncOptions),
-        };
+        if (!pagedComparison && row.rows) {
+          return { ...row, rows: applyOptionsToRows(row.rows, syncOptions) };
+        }
+        return { ...row, rows: undefined };
       });
+      if (!pagedComparison) {
+        setSelectedRows(
+          merged.flatMap((table) =>
+            (table.rows ?? [])
+              .filter((row) => row.selected && row.operation !== 'UNCHANGED')
+              .map((row) => ({
+                sourceTable: table.sourceTable,
+                targetTable: table.targetTable,
+                operation: row.operation,
+                key: row.key,
+              })),
+          ),
+        );
+      }
       setMappingResults(merged);
+      setWriteOutcomeUncertain(false);
       const firstDiff = merged.find((r) => r.status === 'MATCHED' && tableHasRowDiffs(r));
       if (firstDiff) setSelectedTableKey(tableKey(firstDiff));
       setSyncState('compared');
       return true;
     } catch (e) {
       if (generation !== compareGenerationRef.current) return false;
+      if (jobIdRef.current === jobId && jobKindRef.current === 'compare') {
+        jobIdRef.current = null;
+        jobKindRef.current = null;
+      }
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setErrorOpen(true);
-      setSyncState('idle');
+      setSyncState(writeOutcomeUncertain ? 'unknown' : 'idle');
       return false;
     }
   }, [
@@ -699,18 +1101,45 @@ export function DataSyncWindow() {
     sourceSchema,
     targetSchema,
     syncOptions,
+    writeOutcomeUncertain,
+    setLastExecutionResult,
   ]);
 
   const handleCancel = useCallback(async () => {
+    const cancellationGeneration = ++compareGenerationRef.current;
+    // Reassert the fence before yielding so a comparison completion queued in the same tick cannot win.
+    if (writeOutcomeUncertain) setWriteOutcomeUncertain(true);
     const jobId = jobIdRef.current;
+    const jobKind = jobKindRef.current;
+    const cancelledPhase = syncStateRef.current;
+    if (jobId) cancelRequestedJobRef.current = jobId;
+
+    if (jobKind === 'execute' && writeInFlightRef.current) {
+      cancellingStatusJobRef.current = jobId;
+      setStatusMsg(t('sync.cancellingExecution'));
+    } else {
+      setSyncState(
+        writeOutcomeUncertain ? 'unknown' : mappingResults.length > 0 ? 'compared' : 'idle',
+      );
+      setExecuteProgress('');
+      setStatusMsg(t('sync.compareCancelled'));
+    }
+
     if (jobId) {
       await syncCommands.cancelDataSync(jobId);
-      jobIdRef.current = null;
     }
-    compareGenerationRef.current += 1;
-    setSyncState(mappingResults.length > 0 ? 'compared' : 'idle');
-    setStatusMsg(t('sync.compareCancelled'));
-  }, [mappingResults.length, t]);
+    if (
+      cancellationGeneration !== compareGenerationRef.current ||
+      jobIdRef.current !== jobId ||
+      jobKindRef.current !== jobKind
+    )
+      return;
+    if (jobKind === 'execute' && syncStateRef.current !== cancelledPhase) return;
+    if (jobKind === 'execute' && writeInFlightRef.current) return;
+    jobIdRef.current = null;
+    jobKindRef.current = null;
+    if (cancelRequestedJobRef.current === jobId) cancelRequestedJobRef.current = null;
+  }, [mappingResults.length, t, writeOutcomeUncertain]);
 
   const toggleDisabledTable = useCallback((sourceTable: string) => {
     setSyncState('idle');
@@ -730,15 +1159,70 @@ export function DataSyncWindow() {
     );
   }, []);
 
-  const handleOptionsChange = useCallback((next: SyncOptions) => {
-    setSyncOptions(next);
-    setMappingResults((rows) =>
-      rows.map((row) => {
-        if (!row.rows) return row;
-        return { ...row, rows: applyOptionsToRows(row.rows, next) };
-      }),
-    );
-  }, []);
+  const updateSourceFilter = useCallback(
+    (sourceTable: string, sourceFilter: DataSyncSourceFilter | undefined) => {
+      setSyncState('idle');
+      setMappingResults((rows) =>
+        rows.map((row) =>
+          row.sourceTable === sourceTable ? { ...row, sourceFilter, rows: undefined } : row,
+        ),
+      );
+    },
+    [],
+  );
+
+  const handleOptionsChange = useCallback(
+    (next: SyncOptions) => {
+      const previousPolicy = syncOptions.conflictPolicy ?? 'abort';
+      const nextPolicy = next.conflictPolicy ?? 'abort';
+      setSyncOptions(next);
+      if (
+        previousPolicy !== nextPolicy &&
+        (syncState === 'compared' || step === 'preview' || step === 'result')
+      ) {
+        // The server binds conflict handling to the immutable comparison plan.
+        // Drop row-level comparison state before allowing the user to continue.
+        setMappingResults((rows) => rows.map((row) => ({ ...row, rows: undefined })));
+        setSelectedTableKey(null);
+        setSyncState('idle');
+        setStep('setup');
+        return;
+      }
+      setMappingResults((rows) =>
+        rows.map((row) => {
+          if (!row.rows) return row;
+          return { ...row, rows: applyOptionsToRows(row.rows, next) };
+        }),
+      );
+      setSelectedRows((rows) =>
+        rows.filter((row) => {
+          if (row.operation === 'INSERT') return next.insert;
+          if (row.operation === 'UPDATE') return next.update;
+          if (row.operation === 'DELETE') return next.delete;
+          return false;
+        }),
+      );
+      setTableSelections((scopes) =>
+        scopes
+          .map((scope) => ({
+            ...scope,
+            operations: scope.operations.filter((operation) => operationAllowed(operation, next)),
+            excludedRows: scope.excludedRows.filter((row) => operationAllowed(row.operation, next)),
+          }))
+          .filter((scope) => scope.operations.length > 0),
+      );
+    },
+    [
+      setMappingResults,
+      setSelectedTableKey,
+      setStep,
+      setSyncOptions,
+      setSyncState,
+      step,
+      syncOptions.conflictPolicy,
+      syncState,
+    ],
+  );
 
   const handleEnableDelete = useCallback(() => {
     setDeleteConfirmOpen(true);
@@ -749,30 +1233,193 @@ export function DataSyncWindow() {
     setDeleteConfirmOpen(false);
   }, []);
 
+  const compared =
+    syncState === 'compared' ||
+    syncState === 'executing' ||
+    syncState === 'unknown' ||
+    syncState === 'done';
+
   const selectedTable = useMemo(
     () => mappingResults.find((r) => tableKey(r) === selectedTableKey) ?? null,
     [mappingResults, selectedTableKey],
   );
 
+  const loadTablePage = useCallback(
+    async (
+      table: NonNullable<typeof selectedTable>,
+      direction: 'initial' | 'previous' | 'next' = 'initial',
+    ) => {
+      if (table.status !== 'MATCHED') return;
+      const key = `${table.sourceTable}\u0000${table.targetTable}`;
+      const current = pageCursors[key] ?? {
+        current: table.firstCursor ?? null,
+        next: null,
+        previous: [],
+      };
+      const cursor =
+        direction === 'next'
+          ? current.next
+          : direction === 'previous'
+            ? (current.previous[current.previous.length - 1] ?? null)
+            : current.current;
+      if (direction === 'next' && !current.next) return;
+      if (direction === 'previous' && current.previous.length === 0) return;
+      setPageLoading(true);
+      try {
+        const page = await syncCommands.getDataSyncComparisonPage(
+          cursor,
+          table.sourceTable,
+          table.targetTable,
+          table.pageSize,
+        );
+        const pageToken = `${key}\u0000${cursor ?? ''}`;
+        const firstLoad = !loadedPageRef.current.has(pageToken);
+        loadedPageRef.current.add(pageToken);
+        const selectedTokenSet = new Set(
+          selectedRowsRef.current
+            .filter(
+              (row) =>
+                row.sourceTable === table.sourceTable && row.targetTable === table.targetTable,
+            )
+            .map(selectedRowToken),
+        );
+        const pageRows = page.rows.map((row) => {
+          const scope = scopeForOperation(tableSelectionsRef.current, table, row.operation);
+          return {
+            ...row,
+            selected:
+              scope && scopeSelectsOperation(scope, row.operation, syncOptions)
+                ? !scope.excludedRows.some(
+                    (excluded) =>
+                      excluded.operation === row.operation &&
+                      rowKeyString(excluded.key) === rowKeyString(row.key),
+                  )
+                : firstLoad
+                  ? row.selected
+                  : selectedTokenSet.has(
+                      selectedRowToken({
+                        sourceTable: table.sourceTable,
+                        targetTable: table.targetTable,
+                        operation: row.operation,
+                        key: row.key,
+                      }),
+                    ),
+          };
+        });
+        if (firstLoad) {
+          setSelectedRows((previous) => {
+            const known = new Set(previous.map(selectedRowToken));
+            const additions = pageRows
+              .filter((row) => row.selected && row.operation !== 'UNCHANGED')
+              .filter(
+                (row) =>
+                  !tableSelectionsRef.current.some(
+                    (scope) =>
+                      scope.sourceTable === table.sourceTable &&
+                      scope.targetTable === table.targetTable &&
+                      scopeSelectsOperation(scope, row.operation, syncOptions),
+                  ),
+              )
+              .map((row) => ({
+                sourceTable: table.sourceTable,
+                targetTable: table.targetTable,
+                operation: row.operation,
+                key: row.key,
+              }))
+              .filter((row) => !known.has(selectedRowToken(row)));
+            return additions.length ? [...previous, ...additions] : previous;
+          });
+        }
+        setMappingResults((previous) =>
+          previous.map((row) =>
+            tableKey(row) === tableKey(table) ? { ...row, rows: pageRows } : row,
+          ),
+        );
+        const nextPrevious =
+          direction === 'next'
+            ? [...current.previous, current.current ?? '']
+            : direction === 'previous'
+              ? current.previous.slice(0, -1)
+              : [];
+        setPageCursors((previous) => ({
+          ...previous,
+          [key]: { current: cursor, next: page.nextCursor, previous: nextPrevious },
+        }));
+        setPageIndex((previous) => ({
+          ...previous,
+          [key]: Math.max(
+            0,
+            (previous[key] ?? 0) + (direction === 'next' ? 1 : direction === 'previous' ? -1 : 0),
+          ),
+        }));
+      } catch (error) {
+        setErrorMsg(error instanceof Error ? error.message : String(error));
+        setErrorOpen(true);
+      } finally {
+        setPageLoading(false);
+      }
+    },
+    [pageCursors, setMappingResults, syncOptions],
+  );
+
+  useEffect(() => {
+    if (!compared || !selectedTable || selectedTable.rows || selectedTable.status !== 'MATCHED')
+      return;
+    void loadTablePage(selectedTable, 'initial');
+  }, [compared, selectedTableKey, selectedTable, loadTablePage]);
+
   const totalSelectedRows = useMemo(() => {
-    let n = 0;
-    for (const row of mappingResults) {
-      n += selectedRowCount(row, syncOptions);
-    }
-    return n;
-  }, [mappingResults, syncOptions]);
+    const scopedCount = tableSelections.reduce((total, scope) => {
+      const table = mappingResults.find(
+        (row) => row.sourceTable === scope.sourceTable && row.targetTable === scope.targetTable,
+      );
+      if (!table) return total;
+      const counts = rowDiffCounts(table);
+      return (
+        total +
+        scope.operations.reduce((subtotal, operation) => {
+          if (scope.selectionMode === 'defaults' && !defaultRowSelected(operation, syncOptions)) {
+            return subtotal;
+          }
+          const count =
+            operation === 'INSERT'
+              ? counts.inserts
+              : operation === 'UPDATE'
+                ? counts.updates
+                : counts.deletes;
+          const excluded = scope.excludedRows.filter((row) => row.operation === operation).length;
+          return subtotal + Math.max(0, count - excluded);
+        }, 0)
+      );
+    }, 0);
+    const explicitCount = selectedRows.filter((row) => {
+      if (!operationAllowed(row.operation, syncOptions)) return false;
+      return !tableSelections.some(
+        (scope) =>
+          scope.sourceTable === row.sourceTable &&
+          scope.targetTable === row.targetTable &&
+          scopeSelectsOperation(scope, row.operation, syncOptions),
+      );
+    }).length;
+    return scopedCount + explicitCount;
+  }, [mappingResults, selectedRows, syncOptions, tableSelections]);
 
   const hasSelectedDeletes = useMemo(() => {
-    for (const table of mappingResults) {
-      for (const row of table.rows ?? []) {
-        if (row.selected && row.operation === 'DELETE' && syncOptions.delete) return true;
-      }
-    }
-    return false;
-  }, [mappingResults, syncOptions]);
+    return (
+      syncOptions.delete &&
+      (selectedRows.some((row) => row.operation === 'DELETE') ||
+        tableSelections.some((scope) => scopeSelectsOperation(scope, 'DELETE', syncOptions)))
+    );
+  }, [selectedRows, syncOptions.delete, tableSelections]);
 
   const runExecute = useCallback(async () => {
     if (!sourceId || !targetId) return;
+    if (writeOutcomeUncertain) {
+      setErrorMsg(t('sync.executionUnknown'));
+      setErrorOpen(true);
+      setSyncState('unknown');
+      return;
+    }
     if (targetReadOnly) {
       setErrorMsg(t('sync.targetReadOnly'));
       setErrorOpen(true);
@@ -782,7 +1429,12 @@ export function DataSyncWindow() {
     setExecuteProgress(t('sync.executing'));
     const jobId = crypto.randomUUID();
     jobIdRef.current = jobId;
+    jobKindRef.current = 'execute';
+    cancelRequestedJobRef.current = null;
+    cancellingStatusJobRef.current = null;
 
+    let writeStarted = false;
+    let executionResolved = false;
     try {
       const { source, target } = await refreshEndpointSessions();
       const srcConnId = source?.dbSessionId;
@@ -793,104 +1445,202 @@ export function DataSyncWindow() {
       }
 
       const tablesWithSelection = mappingResults.filter(
-        (r) => r.status === 'MATCHED' && selectedRowCount(r, syncOptions) > 0,
+        (r) =>
+          r.status === 'MATCHED' &&
+          (selectedRows.some(
+            (selected) =>
+              selected.sourceTable === r.sourceTable && selected.targetTable === r.targetTable,
+          ) ||
+            tableSelections.some(
+              (scope) => scope.sourceTable === r.sourceTable && scope.targetTable === r.targetTable,
+            )),
       );
 
-      let executed = false;
-      let usedApplyFallback = false;
-      try {
-        const stmts = await syncCommands.generateDataSyncSql(
-          srcConnId,
-          tgtConnId,
-          tablesWithSelection,
-          syncOptions,
-          sourceDatabase,
-          targetDatabase,
-          sourceSchema || undefined,
-          targetSchema || undefined,
-        );
-        const selected = stmts.filter((s) => operationAllowed(s.operation, syncOptions));
-        if (selected.length > 0) {
-          setExecuteProgress(t('sync.executingSql', { count: selected.length }));
-          const result = await syncCommands.executeDataSync(
-            tgtConnId,
-            selected,
-            jobId,
-            targetDatabase,
-            targetSchema || undefined,
-          );
-          if (result.rolledBack) {
-            setErrorMsg(t('sync.rolledBack'));
-            setErrorOpen(true);
-            setSyncState('compared');
-            return;
-          }
-          executed = true;
-        }
-      } catch {
-        /* backend generate not available */
-      }
-
-      if (!executed) {
-        usedApplyFallback = true;
-        const tableNames = tablesWithSelection.map((r) => r.sourceTable);
-        setExecuteProgress(t('sync.executingTables', { count: tableNames.length }));
-        const result = await syncCommands.applyDataSync(
-          srcConnId,
-          tgtConnId,
-          tableNames,
-          jobId,
-          sourceDatabase,
-          targetDatabase,
-          sourceSchema || undefined,
-          targetSchema || undefined,
-          syncOptions,
-        );
-        if (result.rolledBack) {
-          setErrorMsg(t('sync.rolledBack'));
-          setErrorOpen(true);
-          setSyncState('compared');
-          return;
-        }
-      }
-
-      setExecuteProgress(t('sync.recomparing'));
-      const recompared = await syncCommands.compareDataSync(
+      const stmts = await syncCommands.generateDataSyncSql(
         srcConnId,
         tgtConnId,
-        tablesWithSelection.map((r) => r.sourceTable),
-        jobId,
+        tablesWithSelection,
+        syncOptions,
         sourceDatabase,
         targetDatabase,
         sourceSchema || undefined,
         targetSchema || undefined,
-        syncOptions,
+        selectedRows,
+        ...(tableSelections.length ? [tableSelections] : []),
       );
+      if (jobIdRef.current !== jobId || cancelRequestedJobRef.current === jobId) return;
+      const selected = stmts.filter((statement) =>
+        operationAllowed(statement.operation, syncOptions),
+      );
+      if (selected.length === 0) {
+        setSyncState('compared');
+        setExecuteProgress('');
+        return;
+      }
+      setExecuteProgress(t('sync.executingSql', { count: selected.length }));
+      writeStarted = true;
+      writeInFlightRef.current = true;
+      const selectedProfile = syncProfiles.find((profile) => profile.id === selectedProfileId);
+      const profileRef = selectedProfile
+        ? { id: selectedProfile.id, revision: selectedProfile.updatedAt }
+        : undefined;
+      const result = tableSelections.length
+        ? profileRef
+          ? await syncCommands.executeDataSync(
+              tgtConnId,
+              selected,
+              jobId,
+              targetDatabase,
+              selectedRows,
+              tableSelections,
+              profileRef,
+            )
+          : await syncCommands.executeDataSync(
+              tgtConnId,
+              selected,
+              jobId,
+              targetDatabase,
+              selectedRows,
+              tableSelections,
+            )
+        : profileRef
+          ? await syncCommands.executeDataSync(
+              tgtConnId,
+              selected,
+              jobId,
+              targetDatabase,
+              undefined,
+              undefined,
+              profileRef,
+            )
+          : await syncCommands.executeDataSync(tgtConnId, selected, jobId, targetDatabase);
+      writeStarted = false;
+      executionResolved = true;
+      writeInFlightRef.current = false;
+      setLastExecutionResult(result);
+
+      const executionOutcome = result.outcome ?? (result.rolledBack ? 'rolled_back' : 'committed');
+      if (executionOutcome === 'not_started') {
+        setErrorMsg(result.error || t('sync.executionNotStarted'));
+        setErrorOpen(true);
+        setWriteOutcomeUncertain(false);
+        setSyncState('compared');
+        setExecuteProgress('');
+        return;
+      }
+      if (executionOutcome === 'unknown') {
+        setErrorMsg(`${t('sync.executionUnknown')} ${result.error || ''}`.trim());
+        setErrorOpen(true);
+        setWriteOutcomeUncertain(true);
+        setSyncState('unknown');
+        setStep('result');
+        setExecuteProgress('');
+        return;
+      }
+
+      setExecuteProgress(t('sync.recomparing'));
+      const recompareFilters = Object.fromEntries(
+        tablesWithSelection
+          .filter((row) => row.sourceFilter)
+          .map((row) => [row.sourceTable, row.sourceFilter as DataSyncSourceFilter]),
+      );
+      const recomparedResponse = Object.keys(recompareFilters).length
+        ? await syncCommands.compareDataSync(
+            srcConnId,
+            tgtConnId,
+            tablesWithSelection.map((r) => r.sourceTable),
+            jobId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+            syncOptions,
+            recompareFilters,
+          )
+        : await syncCommands.compareDataSync(
+            srcConnId,
+            tgtConnId,
+            tablesWithSelection.map((r) => r.sourceTable),
+            jobId,
+            sourceDatabase,
+            targetDatabase,
+            sourceSchema || undefined,
+            targetSchema || undefined,
+            syncOptions,
+          );
+      const recompared = Array.isArray(recomparedResponse)
+        ? recomparedResponse
+        : recomparedResponse.tables;
+      const pagedRecompare =
+        !Array.isArray(recomparedResponse) && recomparedResponse.contractVersion != null;
+      if (pagedRecompare) {
+        setSelectedRows([]);
+        setTableSelections([]);
+        setPageIndex({});
+        setPageCursors({});
+        loadedPageRef.current.clear();
+      }
       setMappingResults((prev) => {
         const merged = mergeCompareIntoMappings(prev, recompared);
         return merged.map((row) => {
+          if (pagedRecompare) return { ...row, rows: undefined };
           if (row.status !== 'MATCHED' || !row.rows) return row;
           return { ...row, rows: applyOptionsToRows(row.rows, syncOptions) };
         });
       });
+      if (!pagedRecompare) {
+        setSelectedRows(
+          (recompared as DataSyncTableResult[]).flatMap((table) =>
+            (table.rows ?? [])
+              .filter((row) => row.selected && row.operation !== 'UNCHANGED')
+              .map((row) => ({
+                sourceTable: table.sourceTable,
+                targetTable: table.targetTable,
+                operation: row.operation,
+                key: row.key,
+              })),
+          ),
+        );
+      }
+      setWriteOutcomeUncertain(false);
       setSyncState('done');
       setStep('result');
       setExecuteProgress('');
-      if (usedApplyFallback) {
-        setStatusMsg(t('sync.applyFallbackUsed'));
-      } else {
-        setStatusMsg('');
-      }
+      setStatusMsg('');
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
+      setErrorMsg(
+        `${writeStarted ? t('sync.executionUnknown') + ' ' : ''}${e instanceof Error ? e.message : String(e)}`,
+      );
       setErrorOpen(true);
-      setSyncState('compared');
+      if (writeStarted) {
+        setWriteOutcomeUncertain(true);
+        setSyncState('unknown');
+      } else if (executionResolved) {
+        setWriteOutcomeUncertain(false);
+        setSyncState('done');
+        setStep('result');
+      } else {
+        setSyncState('compared');
+      }
       setExecuteProgress('');
+    } finally {
+      writeInFlightRef.current = false;
+      if (cancellingStatusJobRef.current === jobId) {
+        cancellingStatusJobRef.current = null;
+        setStatusMsg((current) => (current === t('sync.cancellingExecution') ? '' : current));
+      }
+      if (jobIdRef.current === jobId && jobKindRef.current === 'execute') {
+        jobIdRef.current = null;
+        jobKindRef.current = null;
+      }
+      if (cancelRequestedJobRef.current === jobId) cancelRequestedJobRef.current = null;
     }
   }, [
     sourceId,
     targetId,
     mappingResults,
+    selectedRows,
+    tableSelections,
     syncOptions,
     refreshEndpointSessions,
     sourceDatabase,
@@ -899,6 +1649,7 @@ export function DataSyncWindow() {
     targetSchema,
     targetReadOnly,
     t,
+    writeOutcomeUncertain,
   ]);
 
   const handleExecute = useCallback(() => {
@@ -914,11 +1665,235 @@ export function DataSyncWindow() {
     void runExecute();
   }, [targetReadOnly, hasSelectedDeletes, runExecute]);
 
-  const updateTableRows = useCallback((key: string, rows: DataSyncRowChange[]) => {
-    setMappingResults((prev) => prev.map((r) => (tableKey(r) === key ? { ...r, rows } : r)));
-  }, []);
+  const updateTableRows = useCallback(
+    (key: string, rows: DataSyncRowChange[]) => {
+      const table = mappingResults.find((row) => tableKey(row) === key);
+      if (!table) return;
+      setSelectedRows((previous) => {
+        const pageTokens = new Set(
+          rows
+            .filter((row) => row.operation !== 'UNCHANGED')
+            .map((row) =>
+              selectedRowToken({
+                sourceTable: table.sourceTable,
+                targetTable: table.targetTable,
+                operation: row.operation,
+                key: row.key,
+              }),
+            ),
+        );
+        const retained = previous.filter((row) => {
+          if (!pageTokens.has(selectedRowToken(row))) return true;
+          const scope = scopeForOperation(tableSelectionsRef.current, table, row.operation);
+          return Boolean(scope && scopeSelectsOperation(scope, row.operation, syncOptions));
+        });
+        const next = rows
+          .filter((row) => {
+            if (!row.selected || row.operation === 'UNCHANGED') return false;
+            const scope = scopeForOperation(tableSelectionsRef.current, table, row.operation);
+            return !(scope && scopeSelectsOperation(scope, row.operation, syncOptions));
+          })
+          .map((row) => ({
+            sourceTable: table.sourceTable,
+            targetTable: table.targetTable,
+            operation: row.operation,
+            key: row.key,
+          }));
+        const known = new Set(retained.map(selectedRowToken));
+        return [...retained, ...next.filter((row) => !known.has(selectedRowToken(row)))];
+      });
+      setTableSelections((previous) =>
+        previous.map((candidate) => {
+          if (
+            candidate.sourceTable !== table.sourceTable ||
+            candidate.targetTable !== table.targetTable
+          )
+            return candidate;
+          const candidateRows = rows.filter((row) =>
+            candidate.operations.includes(
+              row.operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+            ),
+          );
+          const exclusions = candidate.excludedRows.filter(
+            (excluded) =>
+              !candidateRows.some(
+                (row) =>
+                  row.operation === excluded.operation &&
+                  rowKeyString(row.key) === rowKeyString(excluded.key),
+              ),
+          );
+          const additions: DataSyncSelectionExclusion[] = candidateRows
+            .filter(
+              (row) =>
+                scopeSelectsOperation(candidate, row.operation, syncOptions) && !row.selected,
+            )
+            .map((row) => ({
+              operation: row.operation as Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+              key: row.key,
+            }))
+            .filter(
+              (row) =>
+                !exclusions.some(
+                  (excluded) =>
+                    excluded.operation === row.operation &&
+                    rowKeyString(excluded.key) === rowKeyString(row.key),
+                ),
+            );
+          return { ...candidate, excludedRows: [...exclusions, ...additions] };
+        }),
+      );
+      setMappingResults((prev) => prev.map((r) => (tableKey(r) === key ? { ...r, rows } : r)));
+    },
+    [mappingResults, syncOptions],
+  );
 
-  const compared = syncState === 'compared' || syncState === 'executing' || syncState === 'done';
+  const setTableOperationScope = useCallback(
+    (
+      table: DataSyncTableResult,
+      operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+    ) => {
+      if (!operationAllowed(operation, syncOptions)) return;
+      setTableSelections((previous) => {
+        const allScope = previous.find(
+          (scope) =>
+            scope.sourceTable === table.sourceTable &&
+            scope.targetTable === table.targetTable &&
+            scope.selectionMode === 'all',
+        );
+        if (allScope?.operations.includes(operation)) return previous;
+        const cleaned = previous
+          .map((scope) =>
+            scope.sourceTable === table.sourceTable && scope.targetTable === table.targetTable
+              ? {
+                  ...scope,
+                  operations: scope.operations.filter((candidate) => candidate !== operation),
+                  excludedRows: scope.excludedRows.filter((row) => row.operation !== operation),
+                }
+              : scope,
+          )
+          .filter((scope) => scope.operations.length > 0);
+        if (allScope) {
+          return cleaned.map((scope) =>
+            scope.sourceTable === table.sourceTable &&
+            scope.targetTable === table.targetTable &&
+            scope.selectionMode === 'all'
+              ? { ...scope, operations: [...scope.operations, operation] }
+              : scope,
+          );
+        }
+        return [
+          ...cleaned,
+          {
+            sourceTable: table.sourceTable,
+            targetTable: table.targetTable,
+            selectionMode: 'all',
+            operations: [operation],
+            excludedRows: [],
+          },
+        ];
+      });
+      setSelectedRows((previous) =>
+        previous.filter(
+          (row) =>
+            row.sourceTable !== table.sourceTable ||
+            row.targetTable !== table.targetTable ||
+            row.operation !== operation,
+        ),
+      );
+      setMappingResults((previous) =>
+        previous.map((candidate) =>
+          tableKey(candidate) === tableKey(table)
+            ? {
+                ...candidate,
+                rows: candidate.rows?.map((row) =>
+                  row.operation === operation ? { ...row, selected: true } : row,
+                ),
+              }
+            : candidate,
+        ),
+      );
+    },
+    [setMappingResults, syncOptions],
+  );
+
+  const clearTableOperationScope = useCallback(
+    (
+      table: DataSyncTableResult,
+      operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+    ) => {
+      setTableSelections((previous) => {
+        const cleaned = previous
+          .map((scope) =>
+            scope.sourceTable === table.sourceTable && scope.targetTable === table.targetTable
+              ? {
+                  ...scope,
+                  operations: scope.operations.filter((candidate) => candidate !== operation),
+                  excludedRows: scope.excludedRows.filter((row) => row.operation !== operation),
+                }
+              : scope,
+          )
+          .filter((scope) => scope.operations.length > 0);
+        const defaultsScope = cleaned.find(
+          (scope) =>
+            scope.sourceTable === table.sourceTable &&
+            scope.targetTable === table.targetTable &&
+            scope.selectionMode === 'defaults',
+        );
+        if (defaultsScope) {
+          return cleaned.map((scope) =>
+            scope === defaultsScope
+              ? { ...scope, operations: [...scope.operations, operation] }
+              : scope,
+          );
+        }
+        return [
+          ...cleaned,
+          {
+            sourceTable: table.sourceTable,
+            targetTable: table.targetTable,
+            selectionMode: 'defaults',
+            operations: [operation],
+            excludedRows: [],
+          },
+        ];
+      });
+      setSelectedRows((previous) =>
+        previous.filter(
+          (row) =>
+            row.sourceTable !== table.sourceTable ||
+            row.targetTable !== table.targetTable ||
+            row.operation !== operation,
+        ),
+      );
+      setMappingResults((previous) =>
+        previous.map((candidate) =>
+          tableKey(candidate) === tableKey(table)
+            ? {
+                ...candidate,
+                rows: candidate.rows?.map((row) =>
+                  row.operation === operation
+                    ? { ...row, selected: defaultRowSelected(row.operation, syncOptions) }
+                    : row,
+                ),
+              }
+            : candidate,
+        ),
+      );
+    },
+    [setMappingResults, syncOptions],
+  );
+
+  const isTableOperationScoped = useCallback(
+    (table: DataSyncTableResult, operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) =>
+      tableSelections.some(
+        (scope) =>
+          scope.sourceTable === table.sourceTable &&
+          scope.targetTable === table.targetTable &&
+          scope.operations.includes(operation),
+      ),
+    [tableSelections],
+  );
+
   const busy = syncState === 'inspecting' || syncState === 'comparing' || syncState === 'executing';
   const compareDisabled = Boolean(sourceSessionError || targetSessionError);
   const stepIndex = WIZARD_STEPS.indexOf(step);
@@ -931,6 +1906,7 @@ export function DataSyncWindow() {
             sourceDatabase &&
             targetDatabase &&
             activePairing?.supported &&
+            !scopeReconfirmationRequired &&
             !compareDisabled,
         );
       case 'setup':
@@ -949,6 +1925,7 @@ export function DataSyncWindow() {
     sourceDatabase,
     targetDatabase,
     activePairing,
+    scopeReconfirmationRequired,
     compareDisabled,
     busy,
     inspectionComplete,
@@ -1036,6 +2013,11 @@ export function DataSyncWindow() {
     void handleCompare();
   }, [handleCompare]);
 
+  const lastExecutionOutcome =
+    lastExecutionResult?.outcome ?? (lastExecutionResult?.rolledBack ? 'rolled_back' : 'committed');
+  const lastExecutionIsUnknown = lastExecutionOutcome === 'unknown';
+  const lastExecutionWasRolledBack = lastExecutionOutcome === 'rolled_back';
+
   // All hooks above. Gate the body on the `sync` locale pack so the UI never
   // renders raw/un-translated `t('sync.*')` keys before it is imported.
   if (!localesReady) {
@@ -1047,9 +2029,15 @@ export function DataSyncWindow() {
       data-testid="data-sync-window"
       data-sync-state={syncState}
       data-sync-step={step}
+      data-write-outcome-uncertain={writeOutcomeUncertain ? 'true' : 'false'}
       className="flex h-screen min-h-0 flex-col bg-surface text-fg"
     >
-      <TitleBar title={t('common.dataSyncTitle')} />
+      <TitleBar
+        title={t('common.dataSyncTitle')}
+        rightContent={
+          <MigrationRunHistoryDialog operation="dataSync" onReconcile={reconcileUnknownRun} />
+        }
+      />
 
       <div className="border-b border-edge px-6 py-3">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-1">
@@ -1094,37 +2082,118 @@ export function DataSyncWindow() {
           )}
         >
           {step === 'endpoints' && (
-            <EndpointsBar
-              layout="grid"
-              showSwap={false}
-              showCompare={false}
-              sourceId={sourceId}
-              targetId={targetId}
-              sourceDatabase={sourceDatabase}
-              targetDatabase={targetDatabase}
-              sourceSchema={sourceSchema}
-              targetSchema={targetSchema}
-              sourceDatabases={sourceDatabases}
-              targetDatabases={targetDatabases}
-              sourceSchemas={sourceSchemas}
-              targetSchemas={targetSchemas}
-              connOptions={connOptions}
-              targetOptions={targetOptions}
-              activePairing={activePairing}
-              busy={busy}
-              compareDisabled={compareDisabled}
-              sourceSessionError={sourceSessionError}
-              targetSessionError={targetSessionError}
-              targetReadOnly={targetReadOnly}
-              onSourceChange={handleSourceChange}
-              onTargetChange={handleTargetChange}
-              onSourceDatabaseChange={handleSourceDatabaseChange}
-              onTargetDatabaseChange={handleTargetDatabaseChange}
-              onSourceSchemaChange={handleSourceSchemaChange}
-              onTargetSchemaChange={handleTargetSchemaChange}
-              onSwap={handleSwap}
-              onCompare={() => void handleCompare()}
-            />
+            <div className="space-y-4">
+              {scopeReconfirmationRequired && (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 p-3"
+                  data-testid="data-sync-recovery-scope-review"
+                  role="status"
+                >
+                  <p className="text-xs text-fg-secondary">
+                    {t('migrationHistory.syncReconcileNeedsScope')}
+                  </p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    data-testid="data-sync-reconfirm-scope"
+                    onClick={() => setScopeReconfirmationRequired(false)}
+                  >
+                    {t('migrationHistory.syncReconcileConfirmScope')}
+                  </Button>
+                </div>
+              )}
+              <div
+                data-testid="data-sync-profile-controls"
+                className="flex flex-wrap items-end gap-2 rounded-lg border border-edge bg-surface-alt p-3"
+              >
+                <label className="min-w-48 flex-1 text-xs text-fg-muted">
+                  <span className="mb-1 block">{t('sync.profile.name')}</span>
+                  <input
+                    data-testid="data-sync-profile-name"
+                    value={profileName}
+                    onChange={(event) => setProfileName(event.target.value)}
+                    placeholder={t('sync.profile.namePlaceholder')}
+                    className="h-8 w-full rounded border border-edge bg-surface px-2 text-sm text-fg"
+                  />
+                </label>
+                <label className="min-w-48 text-xs text-fg-muted">
+                  <span className="mb-1 block">{t('sync.profile.load')}</span>
+                  <Select
+                    className="w-full"
+                    triggerDataAttrs={{ 'data-testid': 'data-sync-profile-select' }}
+                    value={selectedProfileId}
+                    placeholder={t('sync.profile.select')}
+                    options={syncProfiles.map((profile) => ({
+                      value: profile.id,
+                      label: profile.name,
+                    }))}
+                    onChange={setSelectedProfileId}
+                  />
+                </label>
+                <Button
+                  size="sm"
+                  data-testid="data-sync-profile-save"
+                  onClick={() => void saveCurrentProfile()}
+                >
+                  {t('sync.profile.save')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="data-sync-profile-load"
+                  disabled={!selectedProfileId}
+                  onClick={loadSelectedProfile}
+                >
+                  {t('sync.profile.load')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="data-sync-profile-delete"
+                  disabled={!selectedProfileId}
+                  onClick={() => void deleteSelectedProfile()}
+                >
+                  {t('sync.profile.delete')}
+                </Button>
+              </div>
+              <EndpointsBar
+                layout="grid"
+                showSwap={false}
+                showCompare={false}
+                sourceId={sourceId}
+                targetId={targetId}
+                sourceDatabase={sourceDatabase}
+                targetDatabase={targetDatabase}
+                sourceSchema={sourceSchema}
+                targetSchema={targetSchema}
+                sourceDatabases={sourceDatabases}
+                targetDatabases={targetDatabases}
+                sourceSchemas={sourceSchemas}
+                targetSchemas={targetSchemas}
+                connOptions={connOptions}
+                targetOptions={targetOptions}
+                activePairing={activePairing}
+                experimental={Boolean(
+                  sourceConn &&
+                    targetConn &&
+                    activePairing?.supported &&
+                    !isVerifiedMigrationPair(sourceConn.databaseType, targetConn.databaseType),
+                )}
+                busy={busy}
+                compareDisabled={compareDisabled}
+                sourceSessionError={sourceSessionError}
+                targetSessionError={targetSessionError}
+                targetReadOnly={targetReadOnly}
+                onSourceChange={handleSourceChange}
+                onTargetChange={handleTargetChange}
+                onSourceDatabaseChange={handleSourceDatabaseChange}
+                onTargetDatabaseChange={handleTargetDatabaseChange}
+                onSourceSchemaChange={handleSourceSchemaChange}
+                onTargetSchemaChange={handleTargetSchemaChange}
+                onSwap={handleSwap}
+                onCompare={() => void handleCompare()}
+              />
+            </div>
           )}
 
           {step === 'setup' && (
@@ -1156,6 +2225,7 @@ export function DataSyncWindow() {
                   onToggleDisabled={toggleDisabledTable}
                   onOpenSchemaDiff={openSchemaDiffWindow}
                   onOpenDataTransfer={openDataTransferWindow}
+                  onUpdateSourceFilter={updateSourceFilter}
                 />
               ) : (
                 <div className="rounded-lg border border-edge bg-surface-alt px-4 py-8 text-center text-sm text-fg-muted">
@@ -1204,6 +2274,37 @@ export function DataSyncWindow() {
                           table={selectedTable}
                           options={syncOptions}
                           onUpdateRows={(rows) => updateTableRows(tableKey(selectedTable), rows)}
+                          onSelectAllOperation={(operation) =>
+                            setTableOperationScope(selectedTable, operation)
+                          }
+                          onClearAllOperation={(operation) =>
+                            clearTableOperationScope(selectedTable, operation)
+                          }
+                          isOperationSelected={(operation) =>
+                            isTableOperationScoped(selectedTable, operation)
+                          }
+                          hasTableSelection={tableSelections.some(
+                            (scope) =>
+                              scope.sourceTable === selectedTable.sourceTable &&
+                              scope.targetTable === selectedTable.targetTable,
+                          )}
+                          pageLoading={pageLoading}
+                          pageIndex={
+                            pageIndex[
+                              `${selectedTable.sourceTable}\u0000${selectedTable.targetTable}`
+                            ] ?? 0
+                          }
+                          hasPreviousPage={Boolean(
+                            pageCursors[
+                              `${selectedTable.sourceTable}\u0000${selectedTable.targetTable}`
+                            ]?.previous.length,
+                          )}
+                          hasNextPage={Boolean(
+                            pageCursors[
+                              `${selectedTable.sourceTable}\u0000${selectedTable.targetTable}`
+                            ]?.next,
+                          )}
+                          onPageChange={(direction) => void loadTablePage(selectedTable, direction)}
                         />
                       ) : (
                         <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
@@ -1242,6 +2343,8 @@ export function DataSyncWindow() {
                   targetSchema={targetSchema}
                   tables={mappingResults}
                   options={syncOptions}
+                  selectedRows={selectedRows}
+                  tableSelections={tableSelections}
                 />
               ) : (
                 <div
@@ -1261,9 +2364,26 @@ export function DataSyncWindow() {
             >
               <div
                 data-testid="data-sync-execute-done"
-                className="flex flex-wrap items-center gap-3 text-sm text-green-700 dark:text-green-400"
+                className={cn(
+                  'flex flex-wrap items-center gap-3 text-sm',
+                  lastExecutionIsUnknown || lastExecutionWasRolledBack
+                    ? 'text-amber-700 dark:text-amber-400'
+                    : 'text-green-700 dark:text-green-400',
+                )}
+                role="status"
               >
-                <span>{t('sync.executeDone')}</span>
+                <span>
+                  {lastExecutionIsUnknown
+                    ? t('sync.executionUnknown')
+                    : lastExecutionWasRolledBack
+                      ? lastExecutionResult?.rollbackReason || t('sync.rolledBack')
+                      : t('sync.executeDone')}
+                </span>
+                {lastExecutionResult?.skipped ? (
+                  <span className="text-amber-600 dark:text-amber-400">
+                    {t('sync.conflictsSkipped', { count: lastExecutionResult.skipped })}
+                  </span>
+                ) : null}
                 <Button
                   variant="secondary"
                   size="sm"
@@ -1290,7 +2410,10 @@ export function DataSyncWindow() {
           hasDeletes={hasSelectedDeletes}
           targetReadOnly={targetReadOnly}
           executing={syncState === 'executing'}
-          canExecute={mappingResults.some((r) => r.status === 'MATCHED' && tableHasRowDiffs(r))}
+          canExecute={
+            !writeOutcomeUncertain &&
+            mappingResults.some((r) => r.status === 'MATCHED' && tableHasRowDiffs(r))
+          }
           onExecute={() => void handleExecute()}
           onCancel={() => void handleCancel()}
         />

@@ -444,6 +444,15 @@ function SqlPanelContent({
         objectKind={(panel as import('../../stores/panelStore').DatabaseObjectPanel).objectKind}
         objectName={(panel as import('../../stores/panelStore').DatabaseObjectPanel).objectName}
         objectSchema={(panel as import('../../stores/panelStore').DatabaseObjectPanel).objectSchema}
+        objectSignature={
+          (panel as import('../../stores/panelStore').DatabaseObjectPanel).objectSignature
+        }
+        objectTargetSchema={
+          (panel as import('../../stores/panelStore').DatabaseObjectPanel).objectTargetSchema
+        }
+        objectTargetName={
+          (panel as import('../../stores/panelStore').DatabaseObjectPanel).objectTargetName
+        }
       />
     );
   }

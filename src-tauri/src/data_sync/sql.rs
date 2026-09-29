@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::changeset::TableChangeSet;
 use super::error::DataSyncError;
-use super::model::{ChangeOperation, RowChange};
+use super::model::{ChangeOperation, ConflictPolicy, RowChange};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +19,9 @@ pub struct SqlStatement {
 }
 
 pub fn quote_ident_sql(name: &str, quote: char) -> String {
+    if quote == '[' {
+        return format!("[{}]", name.replace(']', "]]"));
+    }
     let doubled = name.replace(quote, &format!("{quote}{quote}"));
     format!("{quote}{doubled}{quote}")
 }
@@ -37,7 +40,8 @@ pub fn qualify_table_sql(schema: Option<&str>, table: &str, quote: char) -> Stri
 
 /// Qualify a table reference for DML/SELECT without switching the session catalog.
 ///
-/// - MySQL/MariaDB: `` `database`.`table` `` when `database` is set.
+/// - MySQL/MariaDB/ClickHouse: `` `database`.`table` `` when `database` is set.
+/// - SQL Server: `[database].[schema].[table]` with either qualifier set.
 /// - PostgreSQL and similar: `"schema"."table"` when `schema` is set.
 /// - Otherwise: bare `table`.
 pub fn qualify_relation_sql(
@@ -48,7 +52,7 @@ pub fn qualify_relation_sql(
     quote: char,
 ) -> String {
     let family = family.to_ascii_lowercase();
-    if matches!(family.as_str(), "mysql" | "mariadb") {
+    if matches!(family.as_str(), "mysql" | "mariadb" | "clickhouse") {
         return match database.map(str::trim).filter(|s| !s.is_empty()) {
             Some(db) => format!(
                 "{}.{}",
@@ -57,6 +61,18 @@ pub fn qualify_relation_sql(
             ),
             None => quote_ident_sql(table, quote),
         };
+    }
+    if family == "sqlserver" {
+        return [
+            database.map(str::trim).filter(|s| !s.is_empty()),
+            schema.map(str::trim).filter(|s| !s.is_empty()),
+            Some(table),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|part| quote_ident_sql(part, quote))
+        .collect::<Vec<_>>()
+        .join(".");
     }
     qualify_table_sql(schema, table, quote)
 }
@@ -94,6 +110,9 @@ pub fn postgres_type_cast(data_type: &str) -> Option<&'static str> {
     if t == "date" {
         return Some("date");
     }
+    if t == "numeric" || t.starts_with("numeric(") || t == "decimal" || t.starts_with("decimal(") {
+        return Some("numeric");
+    }
     if t == "time without time zone" || t == "time" {
         return Some("time");
     }
@@ -124,6 +143,16 @@ fn column_type<'a>(
         .and_then(|i| column_types.get(i).map(|s| s.as_str()))
 }
 
+fn binary_literal_placeholder(bytes: &[u8]) -> String {
+    let hex = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!(
+        "/* binary 0x{hex}; target driver literal required */ __DATAZEN_BINARY_LITERAL_REQUIRED__"
+    )
+}
+
 pub fn format_literal(value: &Option<Value>) -> String {
     match value {
         None | Some(Value::Null) => "NULL".into(),
@@ -132,7 +161,7 @@ pub fn format_literal(value: &Option<Value>) -> String {
         Some(Value::Integer(n)) => n.to_string(),
         Some(Value::Float(n)) => n.to_string(),
         Some(Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
-        Some(Value::Bytes(b)) => format!("'{}'", String::from_utf8_lossy(b).replace('\'', "''")),
+        Some(Value::Bytes(bytes)) => binary_literal_placeholder(bytes),
         Some(Value::Timestamp(s)) => format!("'{}'", s.replace('\'', "''")),
         Some(Value::Json(j)) => format!("'{}'", j.to_string().replace('\'', "''")),
     }
@@ -162,6 +191,64 @@ where
     Q: Fn(&str) -> String + Copy,
     P: Fn(usize, Option<&str>) -> String,
 {
+    generate_table_sql_with_preview_formatter_and_policy(
+        table,
+        target_schema,
+        pk_columns,
+        column_names,
+        column_types,
+        quote_ident,
+        placeholder,
+        ConflictPolicy::Abort,
+        |_, value, data_type| Ok(format_typed_literal(value, data_type)),
+    )
+}
+
+pub fn generate_table_sql_with_preview_formatter<Q, P, L>(
+    table: &TableChangeSet,
+    target_schema: Option<&str>,
+    pk_columns: &[String],
+    column_names: &[String],
+    column_types: &[String],
+    quote_ident: Q,
+    placeholder: P,
+    preview_literal: L,
+) -> Result<Vec<SqlStatement>, DataSyncError>
+where
+    Q: Fn(&str) -> String + Copy,
+    P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
+{
+    generate_table_sql_with_preview_formatter_and_policy(
+        table,
+        target_schema,
+        pk_columns,
+        column_names,
+        column_types,
+        quote_ident,
+        placeholder,
+        ConflictPolicy::Abort,
+        preview_literal,
+    )
+}
+
+/// Generate DML with an explicit optimistic-concurrency policy.
+pub fn generate_table_sql_with_preview_formatter_and_policy<Q, P, L>(
+    table: &TableChangeSet,
+    target_schema: Option<&str>,
+    pk_columns: &[String],
+    column_names: &[String],
+    column_types: &[String],
+    quote_ident: Q,
+    placeholder: P,
+    conflict_policy: ConflictPolicy,
+    preview_literal: L,
+) -> Result<Vec<SqlStatement>, DataSyncError>
+where
+    Q: Fn(&str) -> String + Copy,
+    P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
+{
     if pk_columns.is_empty() {
         return Err(DataSyncError::validation(
             "cannot generate SQL without primary key columns",
@@ -178,12 +265,14 @@ where
             column_types,
             &quote_ident,
             &placeholder,
+            conflict_policy,
+            &preview_literal,
         )?);
     }
     Ok(out)
 }
 
-fn statement_for_change<Q, P>(
+fn statement_for_change<Q, P, L>(
     table: &str,
     schema: Option<&str>,
     change: &RowChange,
@@ -192,10 +281,13 @@ fn statement_for_change<Q, P>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    conflict_policy: ConflictPolicy,
+    preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
     Q: Fn(&str) -> String,
     P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
     match change.operation {
         ChangeOperation::Insert => insert_sql(
@@ -206,6 +298,7 @@ where
             column_types,
             quote_ident,
             placeholder,
+            preview_literal,
         ),
         ChangeOperation::Update => update_sql(
             table,
@@ -216,6 +309,8 @@ where
             column_types,
             quote_ident,
             placeholder,
+            conflict_policy,
+            preview_literal,
         ),
         ChangeOperation::Delete => delete_sql(
             table,
@@ -226,6 +321,8 @@ where
             column_types,
             quote_ident,
             placeholder,
+            conflict_policy,
+            preview_literal,
         ),
         ChangeOperation::Unchanged => Err(DataSyncError::validation(
             "unchanged rows must not generate SQL",
@@ -241,7 +338,7 @@ fn sql_table_ref<Q: Fn(&str) -> String>(
     qualify_table_ident(schema, table, quote_ident)
 }
 
-fn insert_sql<Q, P>(
+fn insert_sql<Q, P, L>(
     table: &str,
     schema: Option<&str>,
     change: &RowChange,
@@ -249,10 +346,12 @@ fn insert_sql<Q, P>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
     Q: Fn(&str) -> String,
     P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
     let row = change
         .source_row
@@ -275,7 +374,7 @@ where
         let col_type = column_types.get(i).map(|s| s.as_str());
         placeholders.push(placeholder(i + 1, col_type));
         params.push(cell.clone().unwrap_or(Value::Null));
-        preview_vals.push(format_typed_literal(cell, col_type));
+        preview_vals.push(preview_literal(&column_names[i], cell, col_type)?);
     }
     let qtable = sql_table_ref(table, schema, quote_ident);
     Ok(SqlStatement {
@@ -294,7 +393,7 @@ where
     })
 }
 
-fn update_sql<Q, P>(
+fn update_sql<Q, P, L>(
     table: &str,
     schema: Option<&str>,
     change: &RowChange,
@@ -303,10 +402,13 @@ fn update_sql<Q, P>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    conflict_policy: ConflictPolicy,
+    preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
     Q: Fn(&str) -> String,
     P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
     let row = change
         .source_row
@@ -335,7 +437,7 @@ where
         set_lit.push(format!(
             "{} = {}",
             quote_ident(col),
-            format_typed_literal(&cell, col_type)
+            preview_literal(col, &cell, col_type)?
         ));
         params.push(cell.unwrap_or(Value::Null));
         idx += 1;
@@ -348,8 +450,27 @@ where
         column_types,
         quote_ident,
         placeholder,
+        preview_literal,
     )?;
+    let (expected_ph, expected_lit, expected_params) = if conflict_policy != ConflictPolicy::Force {
+        let expected_start = idx + where_params.len();
+        where_expected_target(
+            pk_columns,
+            change.target_row.as_ref(),
+            expected_start,
+            column_names,
+            column_types,
+            quote_ident,
+            placeholder,
+            preview_literal,
+        )?
+    } else {
+        (String::new(), String::new(), Vec::new())
+    };
     params.extend(where_params);
+    params.extend(expected_params);
+    let where_ph = join_where_clauses(&where_ph, &expected_ph);
+    let where_lit = join_where_clauses(&where_lit, &expected_lit);
     let qtable = sql_table_ref(table, schema, quote_ident);
     Ok(SqlStatement {
         table: table.into(),
@@ -369,7 +490,7 @@ where
     })
 }
 
-fn delete_sql<Q, P>(
+fn delete_sql<Q, P, L>(
     table: &str,
     schema: Option<&str>,
     change: &RowChange,
@@ -378,11 +499,24 @@ fn delete_sql<Q, P>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    conflict_policy: ConflictPolicy,
+    preview_literal: &L,
 ) -> Result<SqlStatement, DataSyncError>
 where
     Q: Fn(&str) -> String,
     P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
+    let target_row = change.target_row.as_ref();
+    if conflict_policy != ConflictPolicy::Force {
+        let target_row = target_row
+            .ok_or_else(|| DataSyncError::validation("DELETE requires an expected target row"))?;
+        if target_row.len() != column_names.len() {
+            return Err(DataSyncError::validation(
+                "DELETE target row width does not match column list",
+            ));
+        }
+    }
     let (where_ph, where_lit, params) = where_pk(
         pk_columns,
         &change.key,
@@ -391,7 +525,27 @@ where
         column_types,
         quote_ident,
         placeholder,
+        preview_literal,
     )?;
+    let (expected_ph, expected_lit, expected_params) = if conflict_policy != ConflictPolicy::Force {
+        let expected_start = 1 + params.len();
+        where_expected_target(
+            pk_columns,
+            target_row,
+            expected_start,
+            column_names,
+            column_types,
+            quote_ident,
+            placeholder,
+            preview_literal,
+        )?
+    } else {
+        (String::new(), String::new(), Vec::new())
+    };
+    let where_ph = join_where_clauses(&where_ph, &expected_ph);
+    let where_lit = join_where_clauses(&where_lit, &expected_lit);
+    let mut params = params;
+    params.extend(expected_params);
     let qtable = sql_table_ref(table, schema, quote_ident);
     Ok(SqlStatement {
         table: table.into(),
@@ -403,7 +557,74 @@ where
     })
 }
 
-fn where_pk<Q, P>(
+fn join_where_clauses(primary: &str, expected: &str) -> String {
+    if expected.is_empty() {
+        primary.to_string()
+    } else if primary.is_empty() {
+        expected.to_string()
+    } else {
+        format!("{primary} AND {expected}")
+    }
+}
+
+/// Add optimistic-concurrency predicates for the target row captured during
+/// comparison. Every non-PK column is checked with SQL NULL-safe equality.
+/// The duplicated bound value is intentional: it keeps the expression
+/// portable across PostgreSQL, MySQL and SQLite while never interpolating
+/// target data into executable SQL.
+fn where_expected_target<Q, P, L>(
+    pk_columns: &[String],
+    target_row: Option<&Vec<Option<Value>>>,
+    start_index: usize,
+    column_names: &[String],
+    column_types: &[String],
+    quote_ident: &Q,
+    placeholder: &P,
+    preview_literal: &L,
+) -> Result<(String, String, Vec<Value>), DataSyncError>
+where
+    Q: Fn(&str) -> String,
+    P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
+{
+    let target_row = target_row.ok_or_else(|| {
+        DataSyncError::validation("UPDATE/DELETE requires an expected target row")
+    })?;
+    if target_row.len() != column_names.len() {
+        return Err(DataSyncError::validation(
+            "expected target row width does not match column list",
+        ));
+    }
+    let mut ph = Vec::new();
+    let mut lit = Vec::new();
+    let mut params = Vec::new();
+    let mut index = start_index;
+    for (position, col) in column_names.iter().enumerate() {
+        if pk_columns.iter().any(|pk| pk == col) {
+            continue;
+        }
+        let ident = quote_ident(col);
+        let expected = target_row[position].clone().unwrap_or(Value::Null);
+        let expected_option = Some(expected.clone());
+        let col_type = column_types.get(position).map(|s| s.as_str());
+        let first = placeholder(index, col_type);
+        let second = placeholder(index + 1, col_type);
+        let first_lit = preview_literal(col, &expected_option, col_type)?;
+        let second_lit = preview_literal(col, &expected_option, col_type)?;
+        ph.push(format!(
+            "({ident} = {first} OR ({ident} IS NULL AND {second} IS NULL))"
+        ));
+        lit.push(format!(
+            "({ident} = {first_lit} OR ({ident} IS NULL AND {second_lit} IS NULL))"
+        ));
+        params.push(expected.clone());
+        params.push(expected);
+        index += 2;
+    }
+    Ok((ph.join(" AND "), lit.join(" AND "), params))
+}
+
+fn where_pk<Q, P, L>(
     pk_columns: &[String],
     key: &[Value],
     start_index: usize,
@@ -411,10 +632,12 @@ fn where_pk<Q, P>(
     column_types: &[String],
     quote_ident: &Q,
     placeholder: &P,
+    preview_literal: &L,
 ) -> Result<(String, String, Vec<Value>), DataSyncError>
 where
     Q: Fn(&str) -> String,
     P: Fn(usize, Option<&str>) -> String,
+    L: Fn(&str, &Option<Value>, Option<&str>) -> Result<String, DataSyncError>,
 {
     if pk_columns.len() != key.len() {
         return Err(DataSyncError::validation(
@@ -438,7 +661,7 @@ where
                 lit.push(format!(
                     "{} = {}",
                     ident,
-                    format_typed_literal(&Some(v.clone()), col_type)
+                    preview_literal(col, &Some(v.clone()), col_type)?
                 ));
                 params.push(v.clone());
                 index += 1;
@@ -452,7 +675,7 @@ where
 mod tests {
     use super::*;
     use crate::data_sync::changeset::TableChangeSet;
-    use crate::data_sync::model::{RowChange, SyncOptions};
+    use crate::data_sync::model::{ConflictPolicy, RowChange, SyncOptions};
 
     fn q(name: &str) -> String {
         quote_ident_sql(name, '"')
@@ -516,13 +739,17 @@ mod tests {
         assert!(stmts[0].preview_sql.contains("'a'"));
         assert_eq!(
             stmts[1].sql,
-            r#"UPDATE "clients" SET "name" = $1 WHERE "id" = $2"#
+            r#"UPDATE "clients" SET "name" = $1 WHERE "id" = $2 AND ("name" = $3 OR ("name" IS NULL AND $4 IS NULL))"#
         );
-        assert_eq!(stmts[1].parameters.len(), 2);
-        assert_eq!(stmts[2].sql, r#"DELETE FROM "clients" WHERE "id" = $1"#);
+        assert_eq!(stmts[1].parameters.len(), 4);
+        assert_eq!(
+            stmts[2].sql,
+            r#"DELETE FROM "clients" WHERE "id" = $1 AND ("name" = $2 OR ("name" IS NULL AND $3 IS NULL))"#
+        );
+        assert_eq!(stmts[2].parameters.len(), 3);
         assert_eq!(
             stmts[2].preview_sql,
-            r#"DELETE FROM "clients" WHERE "id" = 3"#
+            r#"DELETE FROM "clients" WHERE "id" = 3 AND ("name" = 'c' OR ("name" IS NULL AND 'c' IS NULL))"#
         );
     }
 
@@ -663,6 +890,119 @@ mod tests {
     }
 
     #[test]
+    fn update_expected_target_is_null_safe_and_bound() {
+        let options = SyncOptions::default();
+        let update = RowChange::update(
+            vec![Value::Integer(1)],
+            vec![Some(Value::Integer(1)), Some(Value::String("new".into()))],
+            vec![Some(Value::Integer(1)), None],
+            vec!["name".into()],
+            &options,
+        );
+        let table = TableChangeSet {
+            source_table: "t".into(),
+            target_table: "t".into(),
+            changes: vec![update],
+        };
+        let stmts = generate_table_sql(
+            &table,
+            None,
+            &["id".into()],
+            &["id".into(), "name".into()],
+            &[],
+            q,
+            pg_ph,
+        )
+        .unwrap();
+        assert_eq!(
+            stmts[0].sql,
+            r#"UPDATE "t" SET "name" = $1 WHERE "id" = $2 AND ("name" = $3 OR ("name" IS NULL AND $4 IS NULL))"#
+        );
+        assert!(matches!(stmts[0].parameters[2], Value::Null));
+        assert!(matches!(stmts[0].parameters[3], Value::Null));
+        assert!(stmts[0].preview_sql.contains("'NULL'") == false);
+        assert!(stmts[0].preview_sql.contains("NULL IS NULL"));
+    }
+
+    #[test]
+    fn skip_keeps_expected_predicates_but_force_removes_them() {
+        let options = SyncOptions::default();
+        let update = RowChange::update(
+            vec![Value::Integer(1)],
+            vec![Some(Value::Integer(1)), Some(Value::String("new".into()))],
+            vec![Some(Value::Integer(1)), Some(Value::String("old".into()))],
+            vec!["name".into()],
+            &options,
+        );
+        let table = TableChangeSet {
+            source_table: "t".into(),
+            target_table: "t".into(),
+            changes: vec![update],
+        };
+        let skip = generate_table_sql_with_preview_formatter_and_policy(
+            &table,
+            None,
+            &["id".into()],
+            &["id".into(), "name".into()],
+            &[],
+            q,
+            pg_ph,
+            ConflictPolicy::Skip,
+            |_, value, _| Ok(format_literal(value)),
+        )
+        .unwrap();
+        assert!(skip[0].sql.contains("\"name\" = $3"));
+        assert_eq!(skip[0].parameters.len(), 4);
+
+        let force = generate_table_sql_with_preview_formatter_and_policy(
+            &table,
+            None,
+            &["id".into()],
+            &["id".into(), "name".into()],
+            &[],
+            q,
+            pg_ph,
+            ConflictPolicy::Force,
+            |_, value, _| Ok(format_literal(value)),
+        )
+        .unwrap();
+        assert_eq!(
+            force[0].sql,
+            r#"UPDATE "t" SET "name" = $1 WHERE "id" = $2"#
+        );
+        assert_eq!(force[0].parameters.len(), 2);
+        assert!(!force[0].preview_sql.contains("\"name\" = 'old'"));
+    }
+
+    #[test]
+    fn update_and_delete_reject_missing_or_mismatched_expected_target() {
+        let options = SyncOptions::default();
+        let mut update = RowChange::update(
+            vec![Value::Integer(1)],
+            vec![Some(Value::Integer(1)), Some(Value::String("new".into()))],
+            vec![Some(Value::Integer(1))],
+            vec!["name".into()],
+            &options,
+        );
+        update.target_row = None;
+        let table = TableChangeSet {
+            source_table: "t".into(),
+            target_table: "t".into(),
+            changes: vec![update],
+        };
+        assert!(generate_table_sql(
+            &table,
+            None,
+            &["id".into()],
+            &["id".into(), "name".into()],
+            &[],
+            q,
+            pg_ph,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn postgres_typed_placeholders_for_uuid_and_timestamptz() {
         let options = SyncOptions::default();
         let insert = RowChange::insert(
@@ -703,6 +1043,18 @@ mod tests {
     }
 
     #[test]
+    fn postgres_typed_placeholder_casts_numeric_text_values() {
+        assert_eq!(
+            postgres_typed_placeholder(1, Some("numeric(10,2)")),
+            "$1::numeric"
+        );
+        assert_eq!(
+            postgres_typed_placeholder(2, Some("decimal")),
+            "$2::numeric"
+        );
+    }
+
+    #[test]
     fn format_literal_covers_value_kinds() {
         assert_eq!(format_literal(&None), "NULL");
         assert_eq!(format_literal(&Some(Value::Bool(true))), "TRUE");
@@ -712,9 +1064,40 @@ mod tests {
             format_literal(&Some(Value::String("o'reilly".into()))),
             "'o''reilly'"
         );
-        assert!(format_literal(&Some(Value::Bytes(vec![65]))).contains('A'));
+        assert!(format_literal(&Some(Value::Bytes(vec![0, 255, 254])))
+            .contains("__DATAZEN_BINARY_LITERAL_REQUIRED__"));
         assert!(format_literal(&Some(Value::Timestamp("t".into()))).contains("'t'"));
         assert!(format_literal(&Some(Value::Json(serde_json::json!({"a":1})))).contains('{'));
         assert_eq!(quote_ident_sql("na\"me", '"'), r#""na""me""#);
+        assert_eq!(quote_ident_sql("na]me", '['), "[na]]me]");
+    }
+    #[test]
+    fn test_tester_binary_preview_never_replaces_bytes_with_unicode() {
+        let bytes = vec![0, 255, 254];
+        let table = TableChangeSet {
+            source_table: "source".into(),
+            target_table: "target".into(),
+            changes: vec![RowChange::insert(
+                vec![Value::Integer(1)],
+                vec![Some(Value::Integer(1)), Some(Value::Bytes(bytes.clone()))],
+                &opts(),
+            )],
+        };
+        let statements = generate_table_sql(
+            &table,
+            None,
+            &["id".into()],
+            &["id".into(), "payload".into()],
+            &["INT".into(), "BINARY".into()],
+            |name| format!("\"{name}\""),
+            |_, _| "?".into(),
+        )
+        .unwrap();
+        assert!(matches!(&statements[0].parameters[1], Value::Bytes(actual) if actual == &bytes));
+        assert!(
+            !statements[0].preview_sql.contains('�'),
+            "binary SQL preview is lossy: {:?}",
+            statements[0].preview_sql
+        );
     }
 }

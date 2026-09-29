@@ -165,7 +165,6 @@ describe('GlobalQueryHistoryDialog', () => {
 
     const notice = await screen.findByTestId('history-truncation-notice');
     expect(notice).toHaveTextContent('Showing 1 of 57');
-    
   });
 
   it('shows no truncation notice when the page is the whole match set', async () => {
@@ -224,9 +223,7 @@ describe('GlobalQueryHistoryDialog', () => {
     const target = await row('entry-1');
 
     fireEvent.click(within(target).getByTestId('global-history-select'));
-    await waitFor(() =>
-      expect(screen.getByTestId('global-history-export')).not.toBeDisabled(),
-    );
+    await waitFor(() => expect(screen.getByTestId('global-history-export')).not.toBeDisabled());
     fireEvent.click(screen.getByTestId('global-history-export'));
 
     await waitFor(() => expect(queryCommands.saveSqlFile).toHaveBeenCalled());
@@ -248,9 +245,7 @@ describe('GlobalQueryHistoryDialog', () => {
     const target = await row('entry-1');
 
     fireEvent.click(within(target).getByTestId('global-history-select'));
-    await waitFor(() =>
-      expect(screen.getByTestId('global-history-export')).not.toBeDisabled(),
-    );
+    await waitFor(() => expect(screen.getByTestId('global-history-export')).not.toBeDisabled());
     fireEvent.click(screen.getByTestId('global-history-export'));
 
     await waitFor(() => expect(queryCommands.saveSqlFile).toHaveBeenCalled());
@@ -312,9 +307,7 @@ describe('GlobalQueryHistoryDialog', () => {
 
     expect(screen.getByText('SELECT * FROM bad_table')).toBeInTheDocument();
     expect(screen.queryByText('SELECT * FROM users')).not.toBeInTheDocument();
-    expect(vi.mocked(queryCommands.getQueryHistoryPage).mock.calls).toHaveLength(
-      callsBefore,
-    );
+    expect(vi.mocked(queryCommands.getQueryHistoryPage).mock.calls).toHaveLength(callsBefore);
   });
 
   it('sends the chosen time range to the backend as a lower bound', async () => {

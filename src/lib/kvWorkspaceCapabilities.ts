@@ -32,10 +32,7 @@ function capabilityKeyForSlot(slot: KvSlotName): keyof KvWorkspaceCapabilities {
  * `kvWorkspace` both answer `false`, which is what keeps every non-KV driver
  * (mysql, postgresql, mongodb, …) on the pre-track rendering path.
  */
-export function hasKvSlotCapability(
-  meta: DatabaseTypeMeta | undefined,
-  slot: KvSlotName,
-): boolean {
+export function hasKvSlotCapability(meta: DatabaseTypeMeta | undefined, slot: KvSlotName): boolean {
   const capabilities = meta?.kvWorkspace;
   if (!capabilities) return false;
   return capabilities[capabilityKeyForSlot(slot)] === true;

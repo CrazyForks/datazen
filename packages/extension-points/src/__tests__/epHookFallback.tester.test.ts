@@ -48,9 +48,7 @@ describe('[tester] sqlEditorEnhancedEP fallback contract', () => {
 
   it('hands the same frozen object back to every caller (no per-call allocation)', () => {
     expect(extensionRegistry.get(sqlEditorEnhancedEP)).toBe(sqlEditorEnhancedEP.getDefault());
-    expect(extensionRegistry.get(sqlEditorEnhancedEP)).toBe(
-      sqlEditorEnhancedEP.getDefault(),
-    );
+    expect(extensionRegistry.get(sqlEditorEnhancedEP)).toBe(sqlEditorEnhancedEP.getDefault());
   });
 
   it('returns to the untouched fallback after a partial implementation is unregistered', () => {

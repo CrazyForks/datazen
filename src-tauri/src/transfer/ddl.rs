@@ -9,14 +9,23 @@ fn ddl_ir_type_for_column(
     ir_type: &IRType,
     has_default: bool,
     tgt: &dyn SyncTargetAdapter,
+    transfer_policy: bool,
 ) -> IRType {
     if matches!(ir_type, IRType::Other(_)) {
         return ir_type.clone();
     }
-    if has_default && !tgt.allows_column_default(ir_type) {
-        return tgt
-            .default_capable_type_for(ir_type)
-            .unwrap_or_else(|| ir_type.clone());
+    let allows_default = if transfer_policy {
+        tgt.transfer_allows_column_default(ir_type)
+    } else {
+        tgt.allows_column_default(ir_type)
+    };
+    if has_default && !allows_default {
+        let default_capable = if transfer_policy {
+            tgt.transfer_default_capable_type_for(ir_type)
+        } else {
+            tgt.default_capable_type_for(ir_type)
+        };
+        return default_capable.unwrap_or_else(|| ir_type.clone());
     }
     ir_type.clone()
 }
@@ -31,24 +40,79 @@ fn native_type_allows_default(native: &str) -> bool {
         || upper.starts_with("TINYBLOB"))
 }
 
-fn column_allows_default(ddl_ir_type: &IRType, tgt: &dyn SyncTargetAdapter) -> bool {
+fn column_allows_default(
+    ddl_ir_type: &IRType,
+    tgt: &dyn SyncTargetAdapter,
+    transfer_policy: bool,
+) -> bool {
     match ddl_ir_type {
+        IRType::Other(native) if transfer_policy => {
+            tgt.transfer_native_type_allows_column_default(native) == Some(true)
+        }
         IRType::Other(native) => native_type_allows_default(native),
+        _ if transfer_policy => tgt.transfer_allows_column_default(ddl_ir_type),
         _ => tgt.allows_column_default(ddl_ir_type),
+    }
+}
+
+/// Whether a Data Transfer CREATE can preserve a column default without
+/// changing an explicit native type or relying on the shared renderer's
+/// permissive legacy fallback.
+pub fn transfer_column_default_is_supported(ir_type: &IRType, tgt: &dyn SyncTargetAdapter) -> bool {
+    match ir_type {
+        IRType::Other(native) => {
+            tgt.transfer_native_type_allows_column_default(native) == Some(true)
+        }
+        _ if tgt.transfer_allows_column_default(ir_type) => true,
+        _ => tgt.transfer_default_capable_type_for(ir_type).is_some(),
     }
 }
 
 /// Build a `CREATE TABLE` statement from an `IRTable` using the target adapter
 /// for type rendering, quoting and capability flags.
 pub fn build_create_table_ddl(ir_table: &IRTable, tgt: &dyn SyncTargetAdapter) -> String {
+    build_create_table_ddl_ref(ir_table, tgt, &tgt.quote_ident(&ir_table.name))
+}
+
+/// Render a structured, already-quoted relation reference without string replacement.
+pub fn build_create_table_ddl_ref(
+    ir_table: &IRTable,
+    tgt: &dyn SyncTargetAdapter,
+    table_ref: &str,
+) -> String {
+    build_create_table_ddl_ref_with_policy(ir_table, tgt, table_ref, false)
+}
+
+/// Data Transfer DDL renderer with transfer-only type/default policy hooks.
+/// Shared Data Sync/Schema Diff callers continue using the generic renderer.
+pub fn build_transfer_create_table_ddl_ref(
+    ir_table: &IRTable,
+    tgt: &dyn SyncTargetAdapter,
+    table_ref: &str,
+) -> String {
+    build_create_table_ddl_ref_with_policy(ir_table, tgt, table_ref, true)
+}
+
+fn build_create_table_ddl_ref_with_policy(
+    ir_table: &IRTable,
+    tgt: &dyn SyncTargetAdapter,
+    table_ref: &str,
+    transfer_policy: bool,
+) -> String {
     let q = |name: &str| tgt.quote_ident(name);
 
     let cols: Vec<String> = ir_table
         .columns
         .iter()
         .map(|c| {
-            let ddl_ir_type = ddl_ir_type_for_column(&c.ir_type, c.default_expr.is_some(), tgt);
-            let mut def = format!("  {} {}", q(&c.name), tgt.ir_type_to_native(&ddl_ir_type));
+            let ddl_ir_type =
+                ddl_ir_type_for_column(&c.ir_type, c.default_expr.is_some(), tgt, transfer_policy);
+            let native_type = if transfer_policy {
+                tgt.transfer_ir_type_to_native(&ddl_ir_type)
+            } else {
+                tgt.ir_type_to_native(&ddl_ir_type)
+            };
+            let mut def = format!("  {} {}", q(&c.name), native_type);
 
             if !c.nullable {
                 def.push_str(" NOT NULL");
@@ -61,7 +125,7 @@ pub fn build_create_table_ddl(ir_table: &IRTable, tgt: &dyn SyncTargetAdapter) -
             }
 
             if let Some(ref d) = c.default_expr {
-                if column_allows_default(&ddl_ir_type, tgt) {
+                if column_allows_default(&ddl_ir_type, tgt, transfer_policy) {
                     if let Some(s) = tgt.format_default(d) {
                         def.push_str(&format!(" DEFAULT {s}"));
                     }
@@ -81,7 +145,7 @@ pub fn build_create_table_ddl(ir_table: &IRTable, tgt: &dyn SyncTargetAdapter) -
         })
         .collect();
 
-    let mut ddl = format!("CREATE TABLE {} (\n{}", q(&ir_table.name), cols.join(",\n"));
+    let mut ddl = format!("CREATE TABLE {} (\n{}", table_ref, cols.join(",\n"));
 
     if tgt.supports_primary_key() && !ir_table.primary_keys.is_empty() {
         let pk_cols: Vec<String> = ir_table.primary_keys.iter().map(|k| q(k)).collect();

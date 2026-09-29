@@ -245,7 +245,10 @@ function leaks(frames: Frame[]): string[] {
     // Every map entry must name a live tab...
     if (f.map) {
       for (const panelId of Object.keys(f.map)) {
-        if (f.execKeys.length > 0 && !f.execKeys.some((k) => k === panelId || k.startsWith(`${panelId}::`))) {
+        if (
+          f.execKeys.length > 0 &&
+          !f.execKeys.some((k) => k === panelId || k.startsWith(`${panelId}::`))
+        ) {
           // tab A was closed at frame 11; its exec keys are gone, so the live-tab
           // check below is done on the frames that still own exec entries.
         }

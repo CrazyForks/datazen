@@ -60,9 +60,9 @@ describe('buildHistoryArgs', () => {
 
   it('trims the search term and sends null for whitespace only', () => {
     expect(buildHistoryArgs({ ...DEFAULT_HISTORY_QUERY, search: '  ' }, 10, NOW).search).toBeNull();
-    expect(buildHistoryArgs({ ...DEFAULT_HISTORY_QUERY, search: '  users  ' }, 10, NOW).search).toBe(
-      'users',
-    );
+    expect(
+      buildHistoryArgs({ ...DEFAULT_HISTORY_QUERY, search: '  users  ' }, 10, NOW).search,
+    ).toBe('users');
   });
 
   it('forwards the sort order', () => {

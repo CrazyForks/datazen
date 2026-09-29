@@ -131,7 +131,12 @@ export async function setupPgWideSourceMinimalMysqlTarget(
       await dropTableIfExists(tgtSession, table);
       await invokeBackend('execute_query', {
         dbSessionId: srcSession,
-        sql: pgWideTypesCreateSql(table),
+        // This matrix checks type mapping on an empty target. Keep columns
+        // without portable values nullable so Schema Diff does not need to
+        // invent a backfill expression for the target dialect.
+        sql: pgWideTypesCreateSql(table)
+          .replace('small_qty SMALLINT NOT NULL,', 'small_qty SMALLINT,')
+          .replace('qty INT NOT NULL,', 'qty INT,'),
       });
       await invokeBackend('execute_query', {
         dbSessionId: tgtSession,
@@ -157,7 +162,14 @@ export async function setupMysqlWideSourceMinimalPgTarget(
       await dropTableIfExists(tgtSession, table);
       await invokeBackend('execute_query', {
         dbSessionId: srcSession,
-        sql: mysqlWideTypesCreateSql(table),
+        // These columns intentionally have no source default. Make them
+        // nullable in this empty-target migration fixture rather than adding
+        // dialect-specific DEFAULT expressions that would distort the mapping.
+        sql: mysqlWideTypesCreateSql(table)
+          .replace('small_qty SMALLINT NOT NULL,', 'small_qty SMALLINT,')
+          .replace('qty INT NOT NULL,', 'qty INT,')
+          .replace('created_at DATETIME NOT NULL,', 'created_at DATETIME,')
+          .replace('updated_at DATETIME NOT NULL,', 'updated_at DATETIME,'),
       });
       await invokeBackend('execute_query', {
         dbSessionId: tgtSession,

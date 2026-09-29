@@ -522,6 +522,20 @@ pub(crate) async fn get_object_ddl_impl(
     name: String,
     schema: Option<String>,
 ) -> Result<String, CommandError> {
+    get_object_ddl_with_metadata_impl(state, db_session_id, kind, name, schema, None, None, None)
+        .await
+}
+
+pub(crate) async fn get_object_ddl_with_metadata_impl(
+    state: &AppState,
+    db_session_id: String,
+    kind: String,
+    name: String,
+    schema: Option<String>,
+    signature: Option<String>,
+    target_schema: Option<String>,
+    target_name: Option<String>,
+) -> Result<String, CommandError> {
     if crate::schema_objects::ObjectKind::parse(&kind).is_none() {
         return Err(CommandError::Validation(format!(
             "Unknown object kind: {kind}"
@@ -535,6 +549,9 @@ pub(crate) async fn get_object_ddl_impl(
             "kind": kind,
             "name": name,
             "schema": schema,
+            "signature": signature,
+            "targetSchema": target_schema,
+            "targetName": target_name,
         }),
     )
     .await?;
@@ -575,8 +592,21 @@ pub async fn get_object_ddl(
     kind: String,
     name: String,
     schema: Option<String>,
+    signature: Option<String>,
+    target_schema: Option<String>,
+    target_name: Option<String>,
 ) -> Result<String, CommandError> {
-    get_object_ddl_impl(&state, db_session_id, kind, name, schema).await
+    get_object_ddl_with_metadata_impl(
+        &state,
+        db_session_id,
+        kind,
+        name,
+        schema,
+        signature,
+        target_schema,
+        target_name,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -927,6 +957,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lists_database_objects_preserves_signature_and_trigger_target() {
+        let opts = MockDriverOptions {
+            columns: vec![
+                col("schema"),
+                col("name"),
+                col("signature"),
+                col("target_schema"),
+                col("target_name"),
+            ],
+            query_rows: vec![vec![
+                Some(Value::String("public".into())),
+                Some(Value::String("audit".into())),
+                Some(Value::String("integer".into())),
+                Some(Value::String("public".into())),
+                Some(Value::String("orders".into())),
+            ]],
+            ..Default::default()
+        };
+        let test = TestAppState::with_options(opts).await;
+        let (_, conn_id) = test.save_and_connect("obj-identity").await;
+        let rows = get_database_objects_impl(&test.state, conn_id, "trigger".into())
+            .await
+            .unwrap();
+        assert_eq!(rows[0].signature.as_deref(), Some("integer"));
+        assert_eq!(rows[0].target_schema.as_deref(), Some("public"));
+        assert_eq!(rows[0].target_name.as_deref(), Some("orders"));
+    }
+
+    #[tokio::test]
     async fn object_ddl_reads_named_or_second_column() {
         let opts = MockDriverOptions {
             columns: vec![col("Function"), col("Create Function")],
@@ -948,6 +1007,44 @@ mod tests {
         .await
         .unwrap();
         assert!(ddl.contains("CREATE FUNCTION"));
+    }
+
+    #[tokio::test]
+    async fn object_ddl_missing_object_fails_closed() {
+        let opts = MockDriverOptions {
+            columns: vec![col("ddl")],
+            query_rows: vec![],
+            ..Default::default()
+        };
+        let test = TestAppState::with_options(opts).await;
+        let (_, conn_id) = test.save_and_connect("obj-missing-ddl").await;
+        let error = get_object_ddl_with_metadata_impl(
+            &test.state,
+            conn_id,
+            "function".into(),
+            "missing".into(),
+            Some("public".into()),
+            Some("integer".into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn object_catalog_preserves_permission_query_errors() {
+        let opts = MockDriverOptions {
+            query_error: Some("permission denied for relation pg_proc".into()),
+            ..Default::default()
+        };
+        let test = TestAppState::with_options(opts).await;
+        let (_, conn_id) = test.save_and_connect("obj-permission").await;
+        let error = get_database_objects_impl(&test.state, conn_id, "function".into())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("permission denied"));
     }
 
     #[tokio::test]

@@ -3,10 +3,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseTypeMeta, KvWorkspaceCapabilities } from '../databaseMeta';
-import {
-  KV_SLOT_NAMES,
-  hasKvSlotCapability,
-} from '../kvWorkspaceCapabilities';
+import { KV_SLOT_NAMES, hasKvSlotCapability } from '../kvWorkspaceCapabilities';
 
 /**
  * Minimal meta fixture — the capability reader must not care about any of the

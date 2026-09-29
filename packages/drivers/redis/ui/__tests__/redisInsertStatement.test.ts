@@ -10,9 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { buildRedisInsertStatement } from '../value-editors/redisInsertStatement';
 
 function detail(keyType: string, value: unknown) {
-  return { key: 'user:1', keyType, value } as Parameters<
-    typeof buildRedisInsertStatement
-  >[0];
+  return { key: 'user:1', keyType, value } as Parameters<typeof buildRedisInsertStatement>[0];
 }
 
 describe('buildRedisInsertStatement', () => {
@@ -35,9 +33,7 @@ describe('buildRedisInsertStatement', () => {
     expect(buildRedisInsertStatement(detail('string', { value: 'back\\slash' }))).toBe(
       'SET user:1 "back\\\\slash"',
     );
-    expect(buildRedisInsertStatement(detail('string', { value: 'a b' }))).toBe(
-      'SET user:1 "a b"',
-    );
+    expect(buildRedisInsertStatement(detail('string', { value: 'a b' }))).toBe('SET user:1 "a b"');
   });
 
   it('builds HSET with every field/value pair', () => {
@@ -52,9 +48,7 @@ describe('buildRedisInsertStatement', () => {
   });
 
   it('builds RPUSH from a list of strings', () => {
-    expect(buildRedisInsertStatement(detail('list', ['a', 'b c']))).toBe(
-      'RPUSH user:1 a "b c"',
-    );
+    expect(buildRedisInsertStatement(detail('list', ['a', 'b c']))).toBe('RPUSH user:1 a "b c"');
   });
 
   it('returns null for an empty or non-string list', () => {
@@ -63,9 +57,7 @@ describe('buildRedisInsertStatement', () => {
   });
 
   it('builds SADD from a set of strings', () => {
-    expect(buildRedisInsertStatement(detail('set', ['m1', 'm2']))).toBe(
-      'SADD user:1 m1 m2',
-    );
+    expect(buildRedisInsertStatement(detail('set', ['m1', 'm2']))).toBe('SADD user:1 m1 m2');
   });
 
   it('builds ZADD with score/member pairs', () => {
@@ -88,8 +80,6 @@ describe('buildRedisInsertStatement', () => {
     expect(buildRedisInsertStatement(detail('stream', [{ id: '1-0' }]))).toBeNull();
     expect(buildRedisInsertStatement(detail('json', { doc: true }))).toBeNull();
     expect(buildRedisInsertStatement(detail('ReJSON-RL', { doc: true }))).toBeNull();
-    expect(buildRedisInsertStatement(detail('string', null))).toBe(
-      'SET user:1 ""',
-    );
+    expect(buildRedisInsertStatement(detail('string', null))).toBe('SET user:1 ""');
   });
 });

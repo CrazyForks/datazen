@@ -135,10 +135,7 @@ const NO_READ: OwnedKeyRead = { owner: null, info: null, loading: false, failed:
  */
 const openReads = new WeakMap<KvSlotState, Map<string, Promise<KeyObjectInfo>>>();
 
-function sharedKeyObjectInfo(
-  scope: KvSlotState,
-  owner: KeyReadOwner,
-): Promise<KeyObjectInfo> {
+function sharedKeyObjectInfo(scope: KvSlotState, owner: KeyReadOwner): Promise<KeyObjectInfo> {
   const id = readToken(owner);
   let byOwner = openReads.get(scope);
   if (!byOwner) {

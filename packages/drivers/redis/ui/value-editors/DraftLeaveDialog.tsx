@@ -18,11 +18,7 @@
  */
 import { useEffect, useSyncExternalStore } from 'react';
 import { Button, Dialog, useI18n } from '@datazen/ui';
-import {
-  isLeavePending,
-  settleDraftLeave,
-  subscribeDraftLeave,
-} from '../shared/draftGuard';
+import { isLeavePending, settleDraftLeave, subscribeDraftLeave } from '../shared/draftGuard';
 
 export interface DraftLeaveDialogProps {
   /** 放弃更改时回滚编辑面（值复位 + 脏信号落 false）；必须在 settle 之前调用。 */

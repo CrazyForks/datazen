@@ -55,6 +55,9 @@ vi.mock('../../../commands/schemaDiff', () => ({
   exportPlanSql: vi.fn().mockReturnValue(''),
   planHasDestructive: vi.fn().mockReturnValue(false),
   schemaDiffCommands: {
+    getProfiles: vi.fn().mockResolvedValue([]),
+    saveProfile: vi.fn().mockResolvedValue(undefined),
+    deleteProfile: vi.fn().mockResolvedValue(undefined),
     compareTableSchemas: vi.fn(),
     preparePlan: vi.fn(),
     executeDeploy: vi.fn(),

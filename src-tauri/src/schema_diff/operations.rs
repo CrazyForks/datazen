@@ -1,7 +1,12 @@
 //! Dialect-neutral schema migration operations.
 
+use super::object_identity::SequenceOwnershipIdentity;
 use super::types::{ColumnSnapshot, StatementRisk};
-use crate::db::IndexInfo;
+use crate::db::{CheckConstraint, ForeignKeyInfo, IndexInfo};
+use datazen_driver_api::TableOptions;
+use datazen_driver_api::{
+    MigrationRoutine, MigrationSequence, MigrationTrigger, MigrationType, MigrationView,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOperation {
@@ -9,6 +14,14 @@ pub enum MigrationOperation {
         table: String,
         columns: Vec<ColumnSnapshot>,
         primary_keys: Vec<String>,
+        table_options: TableOptions,
+    },
+    /// Drop a target table as an explicit destructive operation. The deploy
+    /// gate requires destructive approval and can never claim complete
+    /// rollback because table data and dependent metadata are not recoverable
+    /// from DDL alone.
+    DropTable {
+        table: String,
     },
     AddColumn {
         table: String,
@@ -41,6 +54,11 @@ pub enum MigrationOperation {
         from: Option<String>,
         to: Option<String>,
     },
+    SetTableOptions {
+        table: String,
+        from: TableOptions,
+        to: TableOptions,
+    },
     SetAutoIncrement {
         table: String,
         column: String,
@@ -63,19 +81,124 @@ pub enum MigrationOperation {
         table: String,
         index: IndexInfo,
     },
+    AddForeignKey {
+        table: String,
+        foreign_key: ForeignKeyInfo,
+    },
+    DropForeignKey {
+        table: String,
+        foreign_key: ForeignKeyInfo,
+    },
+    AddCheckConstraint {
+        table: String,
+        constraint: CheckConstraint,
+    },
+    DropCheckConstraint {
+        table: String,
+        constraint: CheckConstraint,
+    },
+    CreateView {
+        view: MigrationView,
+    },
+    ReplaceView {
+        current: MigrationView,
+        desired: MigrationView,
+    },
+    DropView {
+        view: MigrationView,
+    },
+    CreateRoutine {
+        routine: MigrationRoutine,
+    },
+    ReplaceRoutine {
+        current: MigrationRoutine,
+        desired: MigrationRoutine,
+    },
+    DropRoutine {
+        routine: MigrationRoutine,
+    },
+    CreateTrigger {
+        trigger: MigrationTrigger,
+    },
+    ReplaceTrigger {
+        current: MigrationTrigger,
+        desired: MigrationTrigger,
+    },
+    DropTrigger {
+        trigger: MigrationTrigger,
+    },
+    CreateSequence {
+        sequence: MigrationSequence,
+    },
+    /// Internal unified-plan node: create a sequence before its owner table,
+    /// then attach ownership through `SetSequenceOwnership`.
+    CreateSequenceUnowned {
+        sequence: MigrationSequence,
+        ownership: SequenceOwnershipIdentity,
+    },
+    /// Internal unified-plan node rendered from the driver's validated
+    /// sequence DDL after the owner table exists.
+    SetSequenceOwnership {
+        sequence: MigrationSequence,
+        ownership: SequenceOwnershipIdentity,
+    },
+    ReplaceSequence {
+        current: MigrationSequence,
+        desired: MigrationSequence,
+    },
+    DropSequence {
+        sequence: MigrationSequence,
+    },
+    CreateType {
+        type_definition: MigrationType,
+    },
+    ReplaceType {
+        current: MigrationType,
+        desired: MigrationType,
+    },
+    DropType {
+        type_definition: MigrationType,
+    },
 }
 
 impl MigrationOperation {
+    pub fn render_with(
+        &self,
+        renderer: &dyn datazen_driver_api::MigrationRenderer,
+    ) -> Result<datazen_driver_api::MigrationStatement, String> {
+        let driver_operation = self.to_driver_api();
+        match self {
+            Self::CreateTable { table_options, .. } => {
+                renderer.render_create_table_with_options(&driver_operation, table_options)
+            }
+            _ => renderer.render(&driver_operation),
+        }
+    }
+
     pub fn risk(&self) -> StatementRisk {
         match self {
-            Self::DropColumn { .. } | Self::DropPrimaryKey { .. } | Self::DropIndex { .. } => {
-                StatementRisk::Destructive
-            }
+            Self::DropTable { .. }
+            | Self::DropColumn { .. }
+            | Self::DropPrimaryKey { .. }
+            | Self::DropIndex { .. }
+            | Self::DropForeignKey { .. }
+            | Self::DropCheckConstraint { .. }
+            | Self::DropView { .. }
+            | Self::DropRoutine { .. }
+            | Self::DropTrigger { .. }
+            | Self::ReplaceSequence { .. }
+            | Self::DropSequence { .. }
+            | Self::ReplaceType { .. }
+            | Self::DropType { .. } => StatementRisk::Destructive,
             Self::AlterColumnType { .. }
             | Self::SetNullable {
                 nullable: false, ..
             }
-            | Self::SetAutoIncrement { .. } => StatementRisk::Rewrite,
+            | Self::SetAutoIncrement { .. }
+            | Self::SetTableOptions { .. }
+            | Self::ReplaceView { .. }
+            | Self::ReplaceRoutine { .. }
+            | Self::ReplaceTrigger { .. } => StatementRisk::Rewrite,
             _ => StatementRisk::Additive,
         }
     }
@@ -83,6 +206,7 @@ impl MigrationOperation {
     pub fn key(&self) -> String {
         match self {
             Self::CreateTable { table, .. }
+            | Self::DropTable { table }
             | Self::AddPrimaryKey { table, .. }
             | Self::DropPrimaryKey { table, .. } => format!("table:{table}"),
             Self::AddColumn { table, column } | Self::DropColumn { table, column } => {
@@ -93,9 +217,71 @@ impl MigrationOperation {
             | Self::SetDefault { table, column, .. }
             | Self::SetComment { table, column, .. }
             | Self::SetAutoIncrement { table, column, .. } => format!("column:{table}.{column}"),
+            Self::SetTableOptions { table, .. } => format!("table-options:{table}"),
             Self::CreateIndex { table, index } | Self::DropIndex { table, index } => {
                 format!("index:{table}.{}", index.name)
             }
+            Self::AddForeignKey { table, foreign_key }
+            | Self::DropForeignKey { table, foreign_key } => {
+                format!("foreign-key:{table}.{}", foreign_key.name)
+            }
+            Self::AddCheckConstraint { table, constraint }
+            | Self::DropCheckConstraint { table, constraint } => {
+                format!("check:{table}.{}", constraint.name)
+            }
+            Self::CreateView { view }
+            | Self::ReplaceView { desired: view, .. }
+            | Self::DropView { view } => view
+                .schema
+                .as_deref()
+                .filter(|schema| !schema.is_empty())
+                .map(|schema| format!("view:{schema}.{}", view.name))
+                .unwrap_or_else(|| format!("view:{}", view.name)),
+            Self::CreateRoutine { routine }
+            | Self::ReplaceRoutine {
+                desired: routine, ..
+            }
+            | Self::DropRoutine { routine } => format!(
+                "routine:{}:{}:{}:{}",
+                routine.kind.as_str(),
+                routine.schema.as_deref().unwrap_or_default(),
+                routine.name,
+                routine.signature.as_deref().unwrap_or_default()
+            ),
+            Self::CreateTrigger { trigger }
+            | Self::ReplaceTrigger {
+                desired: trigger, ..
+            }
+            | Self::DropTrigger { trigger } => format!(
+                "trigger:{}:{}:{}:{}",
+                trigger.schema.as_deref().unwrap_or_default(),
+                trigger.name,
+                trigger.target_schema.as_deref().unwrap_or_default(),
+                trigger.target_name
+            ),
+            Self::CreateSequence { sequence }
+            | Self::CreateSequenceUnowned { sequence, .. }
+            | Self::SetSequenceOwnership { sequence, .. }
+            | Self::ReplaceSequence {
+                desired: sequence, ..
+            }
+            | Self::DropSequence { sequence } => sequence
+                .schema
+                .as_deref()
+                .filter(|schema| !schema.is_empty())
+                .map(|schema| format!("sequence:{schema}.{}", sequence.name))
+                .unwrap_or_else(|| format!("sequence:{}", sequence.name)),
+            Self::CreateType { type_definition }
+            | Self::ReplaceType {
+                desired: type_definition,
+                ..
+            }
+            | Self::DropType { type_definition } => type_definition
+                .schema
+                .as_deref()
+                .filter(|schema| !schema.is_empty())
+                .map(|schema| format!("type:{schema}.{}", type_definition.name))
+                .unwrap_or_else(|| format!("type:{}", type_definition.name)),
         }
     }
 }
@@ -117,6 +303,13 @@ mod tests {
 
     #[test]
     fn destructive_operations_are_marked_destructive() {
+        assert_eq!(
+            MigrationOperation::DropTable {
+                table: "archive".into(),
+            }
+            .risk(),
+            StatementRisk::Destructive
+        );
         assert_eq!(
             MigrationOperation::DropColumn {
                 table: "t".into(),
@@ -152,6 +345,13 @@ mod tests {
             to: Some("0".into()),
         };
         assert_eq!(op.key(), "column:t.status");
+        assert_eq!(
+            MigrationOperation::DropTable {
+                table: "audit.events".into(),
+            }
+            .key(),
+            "table:audit.events"
+        );
     }
 }
 
@@ -167,6 +367,9 @@ impl MigrationOperation {
             is_auto_increment: c.is_auto_increment,
         };
         match self {
+            Self::DropTable { table } => O::DropTable {
+                table: table.clone(),
+            },
             Self::AddColumn { table, column } => O::AddColumn {
                 table: table.clone(),
                 column: col(column),
@@ -228,6 +431,11 @@ impl MigrationOperation {
                 from: *from,
                 to: *to,
             },
+            Self::SetTableOptions { table, from, to } => O::SetTableOptions {
+                table: table.clone(),
+                from: from.clone(),
+                to: to.clone(),
+            },
             Self::AddPrimaryKey { table, columns } => O::AddPrimaryKey {
                 table: table.clone(),
                 columns: columns.clone(),
@@ -244,10 +452,77 @@ impl MigrationOperation {
                 table: table.clone(),
                 index: index.clone(),
             },
+            Self::AddForeignKey { table, foreign_key } => O::AddForeignKey {
+                table: table.clone(),
+                foreign_key: foreign_key.clone(),
+            },
+            Self::DropForeignKey { table, foreign_key } => O::DropForeignKey {
+                table: table.clone(),
+                foreign_key: foreign_key.clone(),
+            },
+            Self::AddCheckConstraint { table, constraint } => O::AddCheckConstraint {
+                table: table.clone(),
+                constraint: constraint.clone(),
+            },
+            Self::DropCheckConstraint { table, constraint } => O::DropCheckConstraint {
+                table: table.clone(),
+                constraint: constraint.clone(),
+            },
+            Self::CreateView { view } => O::CreateView { view: view.clone() },
+            Self::ReplaceView { current, desired } => O::ReplaceView {
+                current: current.clone(),
+                desired: desired.clone(),
+            },
+            Self::DropView { view } => O::DropView { view: view.clone() },
+            Self::CreateRoutine { routine } => O::CreateRoutine {
+                routine: routine.clone(),
+            },
+            Self::ReplaceRoutine { current, desired } => O::ReplaceRoutine {
+                current: current.clone(),
+                desired: desired.clone(),
+            },
+            Self::DropRoutine { routine } => O::DropRoutine {
+                routine: routine.clone(),
+            },
+            Self::CreateTrigger { trigger } => O::CreateTrigger {
+                trigger: trigger.clone(),
+            },
+            Self::ReplaceTrigger { current, desired } => O::ReplaceTrigger {
+                current: current.clone(),
+                desired: desired.clone(),
+            },
+            Self::DropTrigger { trigger } => O::DropTrigger {
+                trigger: trigger.clone(),
+            },
+            Self::CreateSequence { sequence } => O::CreateSequence {
+                sequence: sequence.clone(),
+            },
+            Self::CreateSequenceUnowned { sequence, .. }
+            | Self::SetSequenceOwnership { sequence, .. } => O::CreateSequence {
+                sequence: sequence.clone(),
+            },
+            Self::ReplaceSequence { current, desired } => O::ReplaceSequence {
+                current: current.clone(),
+                desired: desired.clone(),
+            },
+            Self::DropSequence { sequence } => O::DropSequence {
+                sequence: sequence.clone(),
+            },
+            Self::CreateType { type_definition } => O::CreateType {
+                type_definition: type_definition.clone(),
+            },
+            Self::ReplaceType { current, desired } => O::ReplaceType {
+                current: current.clone(),
+                desired: desired.clone(),
+            },
+            Self::DropType { type_definition } => O::DropType {
+                type_definition: type_definition.clone(),
+            },
             Self::CreateTable {
                 table,
                 columns,
                 primary_keys,
+                ..
             } => O::CreateTable {
                 table: table.clone(),
                 columns: columns.iter().map(col).collect(),

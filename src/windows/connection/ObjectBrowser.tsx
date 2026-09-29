@@ -14,10 +14,15 @@ import {
 } from '../../lib/objectBrowserContextMenu';
 import { formatSql } from '../../lib/sqlFormat';
 import { copyToClipboard } from '../../lib/fetchRelationDdl';
+import { databaseObjectIdentityKey } from '../../lib/databaseObjectIdentity';
 import type { DatabaseObject, DatabaseObjectKind } from '../../types';
 import { Spinner } from '../../components/ui/Spinner';
 
-const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger'];
+const KINDS: DatabaseObjectKind[] = ['function', 'procedure', 'trigger', 'sequence', 'type'];
+
+function sameObjectIdentity(left: DatabaseObject | null, right: DatabaseObject): boolean {
+  return left !== null && databaseObjectIdentityKey(left) === databaseObjectIdentityKey(right);
+}
 
 interface ObjectBrowserProps {
   dbSessionId: string;
@@ -36,6 +41,26 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
   const [running, setRunning] = useState(false);
   const [runMessage, setRunMessage] = useState<string | null>(null);
   const editorRef = useRef<SqlEditorHandle>(null);
+
+  const fetchObjectDdl = useCallback(
+    (obj: DatabaseObject) => {
+      const hasMetadata =
+        obj.signature != null || obj.targetSchema != null || obj.targetName != null;
+      if (!hasMetadata) {
+        return databaseCommands.getObjectDdl(dbSessionId, obj.kind, obj.name, obj.schema);
+      }
+      return databaseCommands.getObjectDdl(
+        dbSessionId,
+        obj.kind,
+        obj.name,
+        obj.schema,
+        obj.signature,
+        obj.targetSchema,
+        obj.targetName,
+      );
+    },
+    [dbSessionId],
+  );
 
   const load = useCallback(
     async (nextKind: DatabaseObjectKind) => {
@@ -63,33 +88,25 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
       setSelected(obj);
       setRunMessage(null);
       try {
-        const text = await databaseCommands.getObjectDdl(
-          dbSessionId,
-          obj.kind,
-          obj.name,
-          obj.schema,
-        );
+        const text = await fetchObjectDdl(obj);
         setDdl(text);
       } catch (e) {
         setDdl(`-- ${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [dbSessionId],
+    [fetchObjectDdl],
   );
 
   const copyObjectDdl = useCallback(
     async (obj: DatabaseObject) => {
       try {
-        const text =
-          selected?.name === obj.name && selected?.schema === obj.schema && ddl
-            ? ddl
-            : await databaseCommands.getObjectDdl(dbSessionId, obj.kind, obj.name, obj.schema);
+        const text = sameObjectIdentity(selected, obj) && ddl ? ddl : await fetchObjectDdl(obj);
         await copyToClipboard(text);
       } catch (e) {
         setRunMessage(e instanceof Error ? e.message : String(e));
       }
     },
-    [dbSessionId, ddl, selected],
+    [ddl, fetchObjectDdl, selected],
   );
 
   const handleExecute = useCallback(async () => {
@@ -193,7 +210,11 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
                 ? t('objects.function')
                 : k === 'procedure'
                   ? t('objects.procedure')
-                  : t('objects.trigger')}
+                  : k === 'trigger'
+                    ? t('objects.trigger')
+                    : k === 'sequence'
+                      ? t('schemaTree.sequences')
+                      : t('schemaTree.types')}
             </button>
           ))}
         </div>
@@ -220,12 +241,12 @@ export function ObjectBrowser({ dbSessionId, databaseType, database }: ObjectBro
           )}
           {objects.map((obj) => (
             <button
-              key={`${obj.schema ?? ''}.${obj.name}`}
+              key={databaseObjectIdentityKey(obj)}
               type="button"
               data-testid="object-browser-item"
               className={cn(
                 'flex w-full flex-col items-start px-3 py-1.5 text-left text-[13px] hover:bg-surface-raised',
-                selected?.name === obj.name && selected?.schema === obj.schema
+                sameObjectIdentity(selected, obj)
                   ? 'bg-surface-raised text-fg'
                   : 'text-fg-secondary',
               )}

@@ -220,6 +220,9 @@ const pack = {
   'common.queriesPerSec': '쿼리/초',
   'common.dataSyncTitle': '데이터 동기화 - DataZen',
   'common.unsupportedPair': '지원하지 않는 조합',
+  'common.experimentalPair': '실험적',
+  'common.experimentalPairHint':
+    '이 데이터베이스 조합은 실제 마이그레이션 테스트를 거치지 않았습니다',
   'common.schemaDiff': '스키마 Diff',
   'common.sqlPreviewLower': 'SQL 미리보기',
   'common.selectDatabase': '데이터베이스 선택…',

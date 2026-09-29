@@ -111,11 +111,7 @@ export function HistoryEntryCard({
             'copy',
             copied ? t('query.historyCopied') : t('query.historyCopy'),
             t('query.historyCopyTitle'),
-            copied ? (
-              <Check className="h-3 w-3 text-success" />
-            ) : (
-              <Copy className="h-3 w-3" />
-            ),
+            copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />,
           )}
 
           {button(
@@ -133,12 +129,7 @@ export function HistoryEntryCard({
               <ExternalLink className="h-3 w-3" />,
             )}
 
-          {button(
-            'delete',
-            '',
-            t('query.historyDeleteTitle'),
-            <Trash2 className="h-3 w-3" />,
-          )}
+          {button('delete', '', t('query.historyDeleteTitle'), <Trash2 className="h-3 w-3" />)}
         </div>
       </div>
 

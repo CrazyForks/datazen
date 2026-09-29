@@ -28,9 +28,16 @@ pub struct MockDriverOptions {
     pub primary_keys: Vec<String>,
     pub table_schema: Option<TableSchema>,
     pub query_rows: Vec<Vec<Option<Value>>>,
+    /// Keyset pages after the first are empty for resume-executor tests.
+    pub empty_keyset_after_cursor: bool,
     pub count_total: i64,
     pub databases: Vec<String>,
     pub tables: Vec<TableInfo>,
+    /// Per-database table schemas for Schema Diff command tests. When a
+    /// database is present, a missing table resolves to an empty schema.
+    pub table_schemas_by_database: HashMap<String, HashMap<String, TableSchema>>,
+    /// Simulate a MySQL identity with proven server-wide catalog visibility.
+    pub complete_foreign_key_catalog_visibility: bool,
     pub explain_plan: ExplainResult,
     pub server_version: String,
     pub extra_commands: Vec<DriverCommandDefinition>,
@@ -42,6 +49,22 @@ pub struct MockDriverOptions {
     /// Rows affected by the generic execute path (zero by default so callers
     /// that do not model mutations retain the old mock behavior).
     pub execute_rows_affected: u64,
+    /// Enable the parameterized DML contract for command integration tests.
+    /// The default remains unsupported so tests that exercise capability
+    /// gating keep their original behavior.
+    pub parameterized_writes: bool,
+    /// Fail the selected commit call to model a lost acknowledgement. When
+    /// `commit_error_after_effect` is true, the transaction is removed before
+    /// returning the error; otherwise it remains open and unapplied.
+    pub commit_error_on_call: Option<u32>,
+    pub commit_error_after_effect: bool,
+    /// Fail the selected rollback call to model an unknown rollback outcome.
+    pub rollback_error_on_call: Option<u32>,
+    pub rollback_error: Option<String>,
+    /// Fail parameterized migration DML before it reaches the target.
+    pub execute_with_params_error: Option<String>,
+    /// Fail target DDL or another unparameterized mutation.
+    pub execute_error: Option<String>,
     /// F7: when true, `qualify_sql_target` rewrites SQL by appending a
     /// marker comment recording the requested target (capability simulation).
     pub rewrite_sql_target: bool,
@@ -79,9 +102,12 @@ impl Default for MockDriverOptions {
             primary_keys: Vec::new(),
             table_schema: None,
             query_rows: Vec::new(),
+            empty_keyset_after_cursor: false,
             count_total: 0,
             databases: Vec::new(),
             tables: Vec::new(),
+            table_schemas_by_database: HashMap::new(),
+            complete_foreign_key_catalog_visibility: false,
             explain_plan: ExplainResult {
                 plan_text: String::new(),
                 plan_json: None,
@@ -94,6 +120,13 @@ impl Default for MockDriverOptions {
             query_error: None,
             cancel_error: None,
             execute_rows_affected: 0,
+            parameterized_writes: false,
+            commit_error_on_call: None,
+            commit_error_after_effect: false,
+            rollback_error_on_call: None,
+            rollback_error: None,
+            execute_with_params_error: None,
+            execute_error: None,
             rewrite_sql_target: false,
             ddl_atomicity: None,
             tables_by_database: HashMap::new(),
@@ -113,6 +146,9 @@ pub struct MockDriver {
     get_columns_calls: AtomicU32,
     get_schema_calls: AtomicU32,
     query_calls: AtomicU32,
+    commit_calls: AtomicU32,
+    rollback_calls: AtomicU32,
+    execute_calls: AtomicU32,
     cancel_query_calls: AtomicU32,
     precise_cancel_query_calls: AtomicU32,
     last_query_limit: Mutex<Option<Option<u32>>>,
@@ -123,10 +159,14 @@ pub struct MockDriver {
     use_database_calls: Mutex<Vec<String>>,
     qualify_calls: Mutex<Vec<(Option<String>, Option<String>)>>,
     close_database_calls: Mutex<Vec<String>>,
+    table_schemas_by_database: Mutex<HashMap<String, HashMap<String, TableSchema>>>,
+    table_lists_by_database: Mutex<HashMap<String, Vec<TableInfo>>>,
 }
 
 impl MockDriver {
     pub fn new(db_type: impl Into<DatabaseType>, opts: MockDriverOptions) -> Arc<Self> {
+        let table_schemas_by_database = opts.table_schemas_by_database.clone();
+        let table_lists_by_database = opts.tables_by_database.clone();
         Arc::new(Self {
             db_type: db_type.into(),
             opts,
@@ -134,6 +174,9 @@ impl MockDriver {
             get_columns_calls: AtomicU32::new(0),
             get_schema_calls: AtomicU32::new(0),
             query_calls: AtomicU32::new(0),
+            commit_calls: AtomicU32::new(0),
+            rollback_calls: AtomicU32::new(0),
+            execute_calls: AtomicU32::new(0),
             cancel_query_calls: AtomicU32::new(0),
             precise_cancel_query_calls: AtomicU32::new(0),
             last_query_limit: Mutex::new(None),
@@ -141,6 +184,8 @@ impl MockDriver {
             use_database_calls: Mutex::new(Vec::new()),
             qualify_calls: Mutex::new(Vec::new()),
             close_database_calls: Mutex::new(Vec::new()),
+            table_schemas_by_database: Mutex::new(table_schemas_by_database),
+            table_lists_by_database: Mutex::new(table_lists_by_database),
         })
     }
 
@@ -204,8 +249,31 @@ impl MockDriver {
         self.get_schema_calls.load(Ordering::Relaxed)
     }
 
+    pub fn set_table_schema_for_test(&self, database: &str, table: &str, schema: TableSchema) {
+        if let Ok(mut schemas) = self.table_schemas_by_database.lock() {
+            schemas
+                .entry(database.to_string())
+                .or_default()
+                .insert(table.to_string(), schema);
+        }
+    }
+
+    pub fn add_table_for_test(&self, database: &str, table: TableInfo) {
+        if let Ok(mut tables) = self.table_lists_by_database.lock() {
+            tables.entry(database.to_string()).or_default().push(table);
+        }
+    }
+
     pub fn query_calls(&self) -> u32 {
         self.query_calls.load(Ordering::Relaxed)
+    }
+
+    pub fn commit_calls(&self) -> u32 {
+        self.commit_calls.load(Ordering::Relaxed)
+    }
+
+    pub fn execute_calls(&self) -> u32 {
+        self.execute_calls.load(Ordering::Relaxed)
     }
 
     pub fn cancel_query_calls(&self) -> u32 {
@@ -218,6 +286,13 @@ impl MockDriver {
 
     pub fn reset_columns_calls(&self) {
         self.get_columns_calls.store(0, Ordering::Relaxed);
+    }
+
+    pub fn open_transaction_count(&self) -> usize {
+        self.open_txs
+            .lock()
+            .map(|txs| txs.len())
+            .unwrap_or_default()
     }
 
     fn sample_columns() -> Vec<ColumnSchema> {
@@ -250,6 +325,8 @@ impl MockDriver {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         }
     }
 }
@@ -316,6 +393,13 @@ impl DatabaseDriver for MockDriver {
         Ok(self.opts.databases.clone())
     }
 
+    async fn has_complete_foreign_key_catalog_visibility(
+        &self,
+        _handle: &ConnectionHandle,
+    ) -> Result<bool, DriverError> {
+        Ok(self.opts.complete_foreign_key_catalog_visibility)
+    }
+
     async fn get_tables(
         &self,
         _handle: &ConnectionHandle,
@@ -325,10 +409,10 @@ impl DatabaseDriver for MockDriver {
         validate_schema_target(self, database, schema, SchemaScope::AnySchema)?;
         if !self.opts.tables_by_database.is_empty() {
             return Ok(self
-                .opts
-                .tables_by_database
-                .get(database)
-                .cloned()
+                .table_lists_by_database
+                .lock()
+                .ok()
+                .and_then(|tables| tables.get(database).cloned())
                 .unwrap_or_default());
         }
         Ok(self.opts.tables.clone())
@@ -343,6 +427,26 @@ impl DatabaseDriver for MockDriver {
     ) -> Result<TableSchema, DriverError> {
         validate_schema_target(self, database, schema, SchemaScope::ExactSchema)?;
         self.get_schema_calls.fetch_add(1, Ordering::Relaxed);
+        let per_database_schema = self
+            .table_schemas_by_database
+            .lock()
+            .ok()
+            .and_then(|schemas| {
+                schemas
+                    .get(database)
+                    .map(|tables| tables.get(table).cloned())
+            });
+        if let Some(schema) = per_database_schema {
+            return Ok(schema.unwrap_or_else(|| TableSchema {
+                table_name: table.to_string(),
+                columns: Vec::new(),
+                primary_keys: Vec::new(),
+                indexes: Vec::new(),
+                foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
+                table_options: Default::default(),
+            }));
+        }
         if let Some(columns) = self.columns_for_database(database, table) {
             let primary_keys = columns
                 .iter()
@@ -355,6 +459,8 @@ impl DatabaseDriver for MockDriver {
                 primary_keys,
                 indexes: Vec::new(),
                 foreign_keys: Vec::new(),
+                check_constraints: Vec::new(),
+                table_options: Default::default(),
             });
         }
         Ok(self
@@ -411,6 +517,21 @@ impl DatabaseDriver for MockDriver {
                 execution_time_ms: 0,
             });
         }
+        // Data Transfer source-structure preflight queries are catalog probes,
+        // not the configured full-column-type fixture rows below. In the
+        // ordinary mock case no unsupported source objects are present.
+        if sql.contains("AS unsupported_object") {
+            return Ok(QueryResult {
+                columns: vec![ColumnInfo {
+                    name: "unsupported_object".into(),
+                    data_type: "text".into(),
+                    nullable: false,
+                }],
+                rows: Vec::new(),
+                rows_affected: None,
+                execution_time_ms: 0,
+            });
+        }
         let columns: Vec<ColumnInfo> = self
             .opts
             .columns
@@ -456,12 +577,52 @@ impl DatabaseDriver for MockDriver {
         &self,
         handle: &ConnectionHandle,
         sql: &str,
-        _params: &[Value],
+        params: &[Value],
     ) -> Result<QueryResult, DriverError> {
-        self.query(handle, sql).await
+        let mut result = self.query(handle, sql).await?;
+        if self.opts.empty_keyset_after_cursor && sql.contains(" > ") && !params.is_empty() {
+            result.rows.clear();
+        }
+        Ok(result)
+    }
+
+    fn parameter_placeholder(
+        &self,
+        index: usize,
+        _data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        if self.opts.parameterized_writes {
+            Ok(format!("?{index}"))
+        } else {
+            Err(DriverError::Unsupported(
+                "parameterized migration writes are not supported".into(),
+            ))
+        }
+    }
+
+    async fn execute_with_params(
+        &self,
+        _handle: &ConnectionHandle,
+        _sql: &str,
+        _params: &[Value],
+    ) -> Result<u64, DriverError> {
+        if let Some(error) = self.opts.execute_with_params_error.as_ref() {
+            return Err(DriverError::QueryFailed(error.clone()));
+        }
+        if self.opts.parameterized_writes {
+            Ok(self.opts.execute_rows_affected)
+        } else {
+            Err(DriverError::Unsupported(
+                "parameterized migration writes are not supported".into(),
+            ))
+        }
     }
 
     async fn execute(&self, _handle: &ConnectionHandle, _sql: &str) -> Result<u64, DriverError> {
+        self.execute_calls.fetch_add(1, Ordering::Relaxed);
+        if let Some(error) = self.opts.execute_error.as_ref() {
+            return Err(DriverError::QueryFailed(error.clone()));
+        }
         Ok(self.opts.execute_rows_affected)
     }
 
@@ -556,17 +717,45 @@ impl DatabaseDriver for MockDriver {
         })
     }
 
+    async fn begin_read_snapshot(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        self.begin_transaction(handle).await
+    }
+
     async fn commit(&self, tx: TransactionHandle) -> Result<(), DriverError> {
+        let call = self.commit_calls.fetch_add(1, Ordering::Relaxed) + 1;
+        let injected_error = self.opts.commit_error_on_call == Some(call);
+        if injected_error && !self.opts.commit_error_after_effect {
+            return Err(DriverError::TransactionError(
+                "injected commit acknowledgement loss before effect".into(),
+            ));
+        }
         let mut txs = self.open_txs.lock().expect("mock open_txs");
         if !txs.remove(&tx.connection_id) {
             return Err(DriverError::TransactionError(
                 "Transaction not found or already ended".into(),
             ));
         }
+        if injected_error {
+            return Err(DriverError::TransactionError(
+                "injected commit acknowledgement loss after effect".into(),
+            ));
+        }
         Ok(())
     }
 
     async fn rollback(&self, tx: TransactionHandle) -> Result<(), DriverError> {
+        let call = self.rollback_calls.fetch_add(1, Ordering::Relaxed) + 1;
+        if self.opts.rollback_error_on_call == Some(call) {
+            return Err(DriverError::TransactionError(
+                self.opts
+                    .rollback_error
+                    .clone()
+                    .unwrap_or_else(|| "injected rollback failure".into()),
+            ));
+        }
         let mut txs = self.open_txs.lock().expect("mock open_txs");
         if !txs.remove(&tx.connection_id) {
             return Err(DriverError::TransactionError(

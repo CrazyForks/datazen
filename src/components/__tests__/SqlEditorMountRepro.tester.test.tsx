@@ -158,10 +158,7 @@ describe('[tester] BUG-002 mount transaction probe', () => {
         JSON.stringify(singleSlot.map((r) => r.origin)),
       );
       // eslint-disable-next-line no-console
-      console.log(
-        '[tester] ALL-MOUNT len histogram:',
-        JSON.stringify(records.map((r) => r.len)),
-      );
+      console.log('[tester] ALL-MOUNT len histogram:', JSON.stringify(records.map((r) => r.len)));
 
       // Exactly two, both issued from the component under test.
       expect(singleSlot).toHaveLength(2);

@@ -1936,6 +1936,7 @@ dependencies = [
  "chrono",
  "datazen-driver-api",
  "futures-util",
+ "same-file",
  "serde_json",
  "sqlparser",
  "sqlx",

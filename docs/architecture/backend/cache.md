@@ -72,7 +72,7 @@ impl SchemaCache {
             registry,
         }
     }
-    
+
     /// 获取表结构（优先从缓存读取）
     pub async fn get_table_schema(
         &self,
@@ -97,17 +97,17 @@ impl SchemaCache {
                 }
             }
         }
-        
+
         // 2. 缓存未命中，从数据库获取
         tracing::debug!("Schema cache miss: {}.{}", database, table);
         let schema = driver.get_table_schema(handle, table).await?;
-        
+
         // 3. 更新缓存
         self.put_schema(connection_id, database, table, schema.clone()).await;
-        
+
         Ok(schema)
     }
-    
+
     /// 存入缓存
     async fn put_schema(
         &self,
@@ -117,15 +117,15 @@ impl SchemaCache {
         schema: TableSchema,
     ) {
         let mut caches = self.caches.write().await;
-        
+
         let db_caches = caches
             .entry(connection_id.to_string())
             .or_insert_with(HashMap::new);
-        
+
         let db_cache = db_caches
             .entry(database.to_string())
             .or_insert_with(DatabaseCache::default);
-        
+
         // LRU 淘汰策略
         if db_cache.tables.len() >= self.max_tables {
             // 移除最旧的条目
@@ -133,19 +133,19 @@ impl SchemaCache {
                 .iter()
                 .min_by_key(|(_, v)| v.cached_at)
                 .map(|(k, _)| k.clone());
-            
+
             if let Some(key) = oldest {
                 db_cache.tables.remove(&key);
             }
         }
-        
+
         db_cache.tables.insert(table.to_string(), CachedSchema {
             schema,
             cached_at: Instant::now(),
             version: 0,
         });
     }
-    
+
     /// 使缓存失效（表结构变更后调用）
     pub async fn invalidate(
         &self,
@@ -154,7 +154,7 @@ impl SchemaCache {
         table: Option<&str>,
     ) {
         let mut caches = self.caches.write().await;
-        
+
         if let Some(db_caches) = caches.get_mut(connection_id) {
             if let Some(db_cache) = db_caches.get_mut(database) {
                 match table {
@@ -168,13 +168,13 @@ impl SchemaCache {
             }
         }
     }
-    
+
     /// 清除连接的所有缓存（断开连接时调用）
     pub async fn clear_connection(&self, connection_id: &str) {
         let mut caches = self.caches.write().await;
         caches.remove(connection_id);
     }
-    
+
     /// 预热缓存（连接建立后预加载常用表）
     pub async fn warmup(
         &self,
@@ -209,20 +209,20 @@ impl CacheWarmupStrategy {
             recent_tables: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     /// 记录表访问
     pub async fn record_access(&self, connection_id: &str, table: &str) {
         let mut recent = self.recent_tables.write().await;
         let tables = recent.entry(connection_id.to_string()).or_default();
-        
+
         // 移到最前面（如果已存在）
         tables.retain(|t| t != table);
         tables.insert(0, table.to_string());
-        
+
         // 保留最近 20 个
         tables.truncate(20);
     }
-    
+
     /// 获取预加载表列表
     pub async fn get_warmup_tables(&self, connection_id: &str) -> Vec<String> {
         let recent = self.recent_tables.read().await;
@@ -247,7 +247,7 @@ pub struct QueryExecutor {
 
 impl QueryExecutor {
     /// 执行查询（优化版本）
-    /// 
+    ///
     /// 优化点：
     /// 1. 不再每次查询都获取列信息
     /// 2. 结果集列信息直接从驱动返回的元数据获取
@@ -261,20 +261,20 @@ impl QueryExecutor {
         database: &str,
     ) -> Result<QueryResult, DriverError> {
         let start = std::time::Instant::now();
-        
+
         // 直接执行 SQL，不查询表结构
         // 列信息从结果集元数据获取，无需额外查询
         let result = driver.query(handle, sql).await?;
-        
+
         tracing::debug!(
             "Query executed in {}ms, {} rows returned",
             result.execution_time_ms,
             result.rows.len()
         );
-        
+
         Ok(result)
     }
-    
+
     /// 获取表数据（带缓存）
     pub async fn get_table_data(
         &self,
@@ -292,13 +292,13 @@ impl QueryExecutor {
         let schema = self.schema_cache
             .get_table_schema(connection_id, database, table, driver, handle)
             .await?;
-        
+
         // 2. 构建优化的查询 SQL
         let sql = self.build_select_sql(&schema, page, page_size, filters, order_by);
-        
+
         // 3. 执行查询
         let result = driver.query(handle, &sql).await?;
-        
+
         Ok(TableDataResult {
             columns: schema.columns,
             rows: result.rows,
@@ -307,7 +307,7 @@ impl QueryExecutor {
             page_size,
         })
     }
-    
+
     /// 构建分页查询 SQL
     fn build_select_sql(
         &self,
@@ -318,17 +318,17 @@ impl QueryExecutor {
         order_by: Option<OrderBy>,
     ) -> String {
         let mut sql = String::new();
-        
+
         // SELECT 字段列表（直接使用缓存的列名）
         sql.push_str("SELECT ");
         sql.push_str(&schema.columns.iter()
             .map(|c| format!("\"{}\"", c.name))
             .collect::<Vec<_>>()
             .join(", "));
-        
+
         // FROM 子句
         sql.push_str(&format!(" FROM \"{}\"", schema.table_name));
-        
+
         // WHERE 子句
         if let Some(conditions) = filters {
             if !conditions.is_empty() {
@@ -339,7 +339,7 @@ impl QueryExecutor {
                     .join(" AND "));
             }
         }
-        
+
         // ORDER BY 子句
         if let Some(order) = order_by {
             sql.push_str(&format!(
@@ -348,14 +348,14 @@ impl QueryExecutor {
                 if order.descending { "DESC" } else { "ASC" }
             ));
         }
-        
+
         // 分页
         let offset = page * page_size;
         sql.push_str(&format!(" LIMIT {} OFFSET {}", page_size, offset));
-        
+
         sql
     }
-    
+
     fn format_condition(&self, condition: &FilterCondition) -> String {
         match condition.operator {
             FilterOperator::Eq => format!("\"{}\" = {}", condition.column, self.format_value(&condition.value)),
@@ -369,7 +369,7 @@ impl QueryExecutor {
             _ => String::new(),
         }
     }
-    
+
     fn format_value(&self, value: &Value) -> String {
         match value {
             Value::Null => "NULL".to_string(),
@@ -429,7 +429,7 @@ use sqlx::postgres::PgRow;
 
 impl PostgresDriver {
     /// 优化的查询执行 - 直接从结果集获取列信息
-    /// 
+    ///
     /// 不再执行额外的系统表查询
     pub async fn query_optimized(
         &self,
@@ -439,17 +439,17 @@ impl PostgresDriver {
         let pools = self.pools.read().await;
         let pool = pools.get(&handle.pool_id)
             .ok_or_else(|| DriverError::ConnectionFailed("Connection not found".to_string()))?;
-        
+
         let start = std::time::Instant::now();
-        
+
         // 执行查询
         let result = sqlx::query(sql)
             .fetch_all(pool)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        
+
         let execution_time_ms = start.elapsed().as_millis() as u64;
-        
+
         if result.is_empty() {
             // 空结果集：使用 EXPLAIN 获取列信息（仅对 SELECT）
             if sql.trim().to_uppercase().starts_with("SELECT") {
@@ -460,7 +460,7 @@ impl PostgresDriver {
                     execution_time_ms,
                 });
             }
-            
+
             return Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
@@ -468,7 +468,7 @@ impl PostgresDriver {
                 execution_time_ms,
             });
         }
-        
+
         // 从第一行直接获取列信息（零额外查询）
         let first_row = &result[0];
         let columns: Vec<ColumnInfo> = first_row
@@ -480,13 +480,13 @@ impl PostgresDriver {
                 nullable: true,
             })
             .collect();
-        
+
         // 转换行数据
         let rows: Vec<Vec<Option<Value>>> = result
             .iter()
             .map(|row| Self::row_to_values_fast(row, &columns))
             .collect();
-        
+
         Ok(QueryResult {
             columns,
             rows,
@@ -494,7 +494,7 @@ impl PostgresDriver {
             execution_time_ms,
         })
     }
-    
+
     /// 快速行值转换（避免重复类型检查）
     fn row_to_values_fast(row: &PgRow, columns: &[ColumnInfo]) -> Vec<Option<Value>> {
         columns
@@ -535,7 +535,7 @@ impl PostgresDriver {
             })
             .collect()
     }
-    
+
     /// PostgreSQL 类型 OID 到友好名称的映射
     fn map_pg_type(&self, type_info: &sqlx::postgres::PgTypeInfo) -> String {
         match type_info.oid().unwrap_or(0) {
@@ -569,10 +569,10 @@ impl PostgresDriver {
         let pools = self.pools.read().await;
         let pool = pools.get(&handle.pool_id)
             .ok_or_else(|| DriverError::ConnectionFailed("Connection not found".to_string()))?;
-        
+
         // 单次查询获取所有表的列信息
         let column_rows = sqlx::query(r#"
-            SELECT 
+            SELECT
                 table_name,
                 column_name,
                 data_type,
@@ -589,10 +589,10 @@ impl PostgresDriver {
         .fetch_all(pool)
         .await
         .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        
+
         // 单次查询获取所有表的主键
         let pk_rows = sqlx::query(r#"
-            SELECT 
+            SELECT
                 t.relname as table_name,
                 a.attname as column_name
             FROM pg_index ix
@@ -604,12 +604,12 @@ impl PostgresDriver {
         .fetch_all(pool)
         .await
         .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        
+
         // 组装结果...
         let mut schemas: HashMap<String, TableSchema> = HashMap::new();
-        
+
         // ... 处理逻辑
-        
+
         Ok(schemas)
     }
 }
@@ -639,7 +639,7 @@ impl DdlDetector {
     /// 检测 SQL 是否为 DDL 语句
     pub fn is_ddl(sql: &str) -> bool {
         let sql_upper = sql.trim().to_uppercase();
-        
+
         sql_upper.starts_with("CREATE TABLE")
             || sql_upper.starts_with("ALTER TABLE")
             || sql_upper.starts_with("DROP TABLE")
@@ -648,11 +648,11 @@ impl DdlDetector {
             || sql_upper.starts_with("CREATE VIEW")
             || sql_upper.starts_with("DROP VIEW")
     }
-    
+
     /// 从 DDL 语句中提取表名
     pub fn extract_table_name(sql: &str) -> Option<String> {
         let sql_upper = sql.trim().to_uppercase();
-        
+
         // 简单实现，实际应使用 SQL 解析器
         if sql_upper.starts_with("ALTER TABLE") || sql_upper.starts_with("DROP TABLE") {
             let parts: Vec<&str> = sql.split_whitespace().collect();
@@ -661,7 +661,7 @@ impl DdlDetector {
                 return Some(table_name.to_string());
             }
         }
-        
+
         None
     }
 }
@@ -678,7 +678,7 @@ impl QueryExecutor {
     ) -> Result<QueryResult, DriverError> {
         // 执行 SQL
         let result = driver.query(handle, sql).await?;
-        
+
         // 检测是否为 DDL，如果是则使相关缓存失效
         if DdlDetector::is_ddl(sql) {
             if let Some(table_name) = DdlDetector::extract_table_name(sql) {
@@ -689,7 +689,7 @@ impl QueryExecutor {
                 self.schema_cache.invalidate(connection_id, database, None).await;
             }
         }
-        
+
         Ok(result)
     }
 }
@@ -789,4 +789,3 @@ impl QueryExecutor {
 1. **pin**：所有 schema 读取入口先 pin（Host 命令 + AI schema context）；
 2. **驱动不静默**：PG 在 `information_schema.columns` 无行时用 `pg_class` 校验关系是否真的存在，不存在则返回 `DriverError`，而不是空 schema（`CREATE TABLE t ()` 这类真·零列表仍返回空 schema）；
 3. **缓存不落空**：`SchemaCache` 不写入、也不命中 `columns.is_empty()` 的条目（一律视为 miss，并 `tracing::warn!` 留痕），把任何未来的"静默空"限制为单次请求。
-

@@ -26,6 +26,7 @@ const {
   openSchemaDiffWindowMock,
   openNewConnectionDialogMock,
   menuOpenSettingsHandler,
+  openErDiagramMock,
 } = vi.hoisted(() => ({
   connectMock: vi.fn(),
   releaseConnectionMock: vi.fn(),
@@ -59,6 +60,7 @@ const {
   openDataSyncWindowMock: vi.fn(),
   openSchemaDiffWindowMock: vi.fn(),
   openNewConnectionDialogMock: vi.fn(),
+  openErDiagramMock: vi.fn(),
   menuOpenSettingsHandler: { current: null as ((payload?: unknown) => void) | null },
 }));
 
@@ -180,9 +182,25 @@ vi.mock('../../../lib/crossWindowBus', () => ({
   listenCrossWindow: (...args: unknown[]) => listenCrossWindowMock(...args),
 }));
 
-vi.mock('../ContentView', () => ({
-  ContentView: () => <div data-testid="mock-content-view">content-view</div>,
-}));
+vi.mock('../ContentView', async () => {
+  const { useLayoutEffect } = await import('react');
+  return {
+    ContentView: ({ actionsRef }: { actionsRef?: { current: unknown } }) => {
+      useLayoutEffect(() => {
+        if (actionsRef) {
+          actionsRef.current = {
+            openErDiagram: (focusTable?: string, database?: string) =>
+              openErDiagramMock(focusTable, database),
+          };
+        }
+        return () => {
+          if (actionsRef) actionsRef.current = undefined;
+        };
+      }, [actionsRef]);
+      return <div data-testid="mock-content-view">content-view</div>;
+    },
+  };
+});
 
 vi.mock('../../../components/TitleBar', () => ({
   TitleBar: ({ title, leftContent }: { title: string; leftContent?: React.ReactNode }) => (
@@ -208,8 +226,24 @@ vi.mock('../../../components/ui/Dialog', () => ({
 vi.mock('../ConnectionNavigatorTree', async () => {
   const { forwardRef } = await import('react');
   return {
-    ConnectionNavigatorTree: forwardRef((_props: unknown, _ref: unknown) => (
-      <div data-testid="navigator-tree">tree</div>
+    ConnectionNavigatorTree: forwardRef<
+      HTMLDivElement,
+      {
+        viewActions?: {
+          openErDiagram?: (focusTable?: string, database?: string) => void;
+        };
+      }
+    >(({ viewActions }, _ref) => (
+      <div data-testid="navigator-tree">
+        tree
+        <button
+          type="button"
+          data-testid="open-target-er-diagram"
+          onClick={() => viewActions?.openErDiagram?.(undefined, 'analytics')}
+        >
+          open target ER diagram
+        </button>
+      </div>
     )),
   };
 });
@@ -323,6 +357,14 @@ describe('ConnectionPage', () => {
   it('TC-window: always renders navigator tree sidebar', () => {
     render(<ConnectionPage />);
     expect(screen.getByTestId('navigator-tree')).toBeInTheDocument();
+  });
+
+  it('forwards the navigator ER database target to the connection-view handler', () => {
+    render(<ConnectionPage />);
+
+    fireEvent.click(screen.getByTestId('open-target-er-diagram'));
+
+    expect(openErDiagramMock).toHaveBeenCalledWith(undefined, 'analytics');
   });
 
   it('TC-window: renders content view even with no active tab', () => {

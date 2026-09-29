@@ -276,6 +276,8 @@ mod tests {
                 index_type: "btree".into(),
             }],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         };
 
         let desc = format_table_description("users", &schema);

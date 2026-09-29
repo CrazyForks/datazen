@@ -331,5 +331,9 @@ const pack = {
     'Una comprobación de WebSocket verifica el relé: en el modo raw_binary solo demuestra que el relé es accesible, mientras que datazen_v1 abre un canal hasta el destino.',
   'settings.tunnels.test.scope.general':
     'Una comprobación correcta nunca garantiza que su base de datos sea accesible a través de este túnel.',
+  'settings.updater.manualDescription':
+    'Esta compilación no tiene un canal de actualización firmado. Para actualizarla, instala una versión compatible desde GitHub Releases.',
+  'settings.updater.manualVariant': 'Compilación actual: {variant}',
+  'settings.updater.openReleases': 'Abrir la página de Releases',
 } as const;
 export default pack;

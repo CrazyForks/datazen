@@ -221,6 +221,8 @@ const pack = {
   'common.queriesPerSec': 'Запросов / с',
   'common.dataSyncTitle': 'Синхронизация данных - DataZen',
   'common.unsupportedPair': 'Неподдерживаемая пара',
+  'common.experimentalPair': 'Экспериментальная поддержка',
+  'common.experimentalPairHint': 'Эта пара баз данных не проверялась реальными тестами миграции',
   'common.schemaDiff': 'Сравнение схемы',
   'common.sqlPreviewLower': 'Предпросмотр SQL',
   'common.selectDatabase': 'Выберите базу…',

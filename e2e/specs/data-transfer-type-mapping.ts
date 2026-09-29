@@ -45,7 +45,11 @@ function mysqlConfig(id: string, name: string, database: string) {
 
 async function clickNext(label: string) {
   const next = await $('[data-testid="data-transfer-next"]');
-  await next.waitForClickable({ timeout: 8000 });
+  const pageText = (await $('body').getText()).slice(-1800);
+  await next.waitForClickable({
+    timeout: 8000,
+    timeoutMsg: `Transfer next was disabled at ${label}. Page state: ${pageText}`,
+  });
   await next.click();
   await browser.pause(1200);
   await captureJourneyStep(label, 0, true);
@@ -99,8 +103,8 @@ describe('数据传输类型映射 Preview DDL (DT-TYPE-MAP)', () => {
         dbSessionId: srcSession,
         sql: `CREATE TABLE ${TABLE} (
           id bigint PRIMARY KEY,
-          name text NOT NULL DEFAULT 'unnamed',
-          created_at timestamptz NOT NULL DEFAULT now()
+          name varchar(64) NOT NULL DEFAULT 'unnamed',
+          created_at timestamp NOT NULL DEFAULT now()
         )`,
       });
     });
@@ -152,6 +156,7 @@ describe('数据传输类型映射 Preview DDL (DT-TYPE-MAP)', () => {
     const structureMode = await $('[data-testid="data-transfer-mode-structure"]');
     await structureMode.click();
     await browser.pause(300);
+    await $('[data-testid="data-transfer-use-target-default-collation"]').click();
     await clickNext('dt-type-mode');
 
     await browser.pause(2000);
@@ -192,7 +197,11 @@ describe('数据传输类型映射 Preview DDL (DT-TYPE-MAP)', () => {
 
     await clickNext('dt-type-mapping-after');
 
-    await $('[data-testid="data-transfer-preview"]').waitForDisplayed({ timeout: 15000 });
+    const pageText = (await $('body').getText()).slice(-1800);
+    await $('[data-testid="data-transfer-preview"]').waitForDisplayed({
+      timeout: 15000,
+      timeoutMsg: `Type-mapping preview did not appear. Page state: ${pageText}`,
+    });
     await browser.pause(800);
 
     const ddl = await getPreviewDdl(TABLE);

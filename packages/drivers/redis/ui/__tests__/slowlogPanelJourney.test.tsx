@@ -9,7 +9,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { create } from 'zustand';
-import { bindConfirmDialog, bindSettingsStore, type SettingsBridgeState } from '@datazen/driver-sdk';
+import {
+  bindConfirmDialog,
+  bindSettingsStore,
+  type SettingsBridgeState,
+} from '@datazen/driver-sdk';
 
 import {
   SlowlogPanel,
@@ -166,8 +170,8 @@ describe('Journey: SLOWLOG RESET 确认弹层', () => {
     });
     // 重置成功后回到列表态（重新 GET 一次）。
     await waitFor(() => expect(panelState()).toBe('ready'));
-    expect(invoke.mock.calls.filter((call) => call[1] === 'slowlog_get').length).toBeGreaterThanOrEqual(
-      2,
-    );
+    expect(
+      invoke.mock.calls.filter((call) => call[1] === 'slowlog_get').length,
+    ).toBeGreaterThanOrEqual(2);
   });
 });

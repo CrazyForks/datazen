@@ -28,6 +28,15 @@ export interface UseSchemaDiffEndpointsOptions {
   onError?: (message: string) => void;
 }
 
+function sessionDatabaseOverride(
+  connection: ConnectionConfig | undefined,
+  catalog: string,
+): string | null {
+  // SQLite's `main` is a catalog alias, while the configured database is a file path.
+  // Passing `main` as a connection override would open a different file named `main`.
+  return connection?.databaseType === 'sqlite' ? null : catalog;
+}
+
 export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = {}) {
   const { onError } = options;
   const { t } = useI18n();
@@ -204,7 +213,12 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
     }
     let cancelled = false;
     (async () => {
-      const next = await ensureDedicatedSession(sourceSession, sourceId, sourceDatabase);
+      const next = await ensureDedicatedSession(
+        sourceSession,
+        sourceId,
+        sourceDatabase,
+        sessionDatabaseOverride(sourceConn, sourceDatabase),
+      );
       if (!cancelled) setSourceSession(next);
     })();
     return () => {
@@ -220,7 +234,12 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
     }
     let cancelled = false;
     (async () => {
-      const next = await ensureDedicatedSession(targetSession, targetId, targetDatabase);
+      const next = await ensureDedicatedSession(
+        targetSession,
+        targetId,
+        targetDatabase,
+        sessionDatabaseOverride(targetConn, targetDatabase),
+      );
       if (!cancelled) setTargetSession(next);
     })();
     return () => {
@@ -261,7 +280,12 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
             migrationPrefillRef,
             'source',
             schemas,
-            (current) => pickDefaultSchema(schemas, current),
+            (current) => {
+              const configured = sourceConn?.schema?.trim();
+              return configured && schemas.includes(configured)
+                ? configured
+                : pickDefaultSchema(schemas, current);
+            },
             prev,
           ),
         );
@@ -275,7 +299,7 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
     return () => {
       cancelled = true;
     };
-  }, [sourceId, sourceDatabase, sourceConn?.databaseType, sourceSession]);
+  }, [sourceId, sourceDatabase, sourceConn?.databaseType, sourceConn?.schema, sourceSession]);
 
   useEffect(() => {
     const targetMeta = targetConn ? DB_REGISTRY[targetConn.databaseType] : undefined;
@@ -309,7 +333,12 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
             migrationPrefillRef,
             'target',
             schemas,
-            (current) => pickDefaultSchema(schemas, current),
+            (current) => {
+              const configured = targetConn?.schema?.trim();
+              return configured && schemas.includes(configured)
+                ? configured
+                : pickDefaultSchema(schemas, current);
+            },
             prev,
           ),
         );
@@ -323,7 +352,7 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
     return () => {
       cancelled = true;
     };
-  }, [targetId, targetDatabase, targetConn?.databaseType, targetSession]);
+  }, [targetId, targetDatabase, targetConn?.databaseType, targetConn?.schema, targetSession]);
 
   const isSameEndpoint = useCallback(() => {
     const norm = (s: string) => s.trim();
@@ -370,8 +399,18 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
     }
     try {
       const [source, target] = await Promise.all([
-        ensureDedicatedSession(sourceSession, sourceId, sourceDatabase),
-        ensureDedicatedSession(targetSession, targetId, targetDatabase),
+        ensureDedicatedSession(
+          sourceSession,
+          sourceId,
+          sourceDatabase,
+          sessionDatabaseOverride(sourceConn, sourceDatabase),
+        ),
+        ensureDedicatedSession(
+          targetSession,
+          targetId,
+          targetDatabase,
+          sessionDatabaseOverride(targetConn, targetDatabase),
+        ),
       ]);
       setSourceSession(source);
       setTargetSession(target);
@@ -387,6 +426,8 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
     targetId,
     sourceDatabase,
     targetDatabase,
+    sourceConn,
+    targetConn,
     reportError,
     t,
   ]);
@@ -412,7 +453,13 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
         }
       }
       try {
-        const next = await ensureDedicatedSession(current, connectionId, database);
+        const connection = side === 'source' ? sourceConn : targetConn;
+        const next = await ensureDedicatedSession(
+          current,
+          connectionId,
+          database,
+          sessionDatabaseOverride(connection, database),
+        );
         if (side === 'source') setSourceSession(next);
         else setTargetSession(next);
         return next?.dbSessionId ?? null;
@@ -430,6 +477,8 @@ export function useSchemaDiffEndpoints(options: UseSchemaDiffEndpointsOptions = 
       targetDatabase,
       sourceSession,
       targetSession,
+      sourceConn,
+      targetConn,
       reportError,
       t,
     ],

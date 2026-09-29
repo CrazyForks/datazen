@@ -216,6 +216,8 @@ const pack = {
   'common.queriesPerSec': '每秒查詢數',
   'common.dataSyncTitle': '資料同步 - DataZen',
   'common.unsupportedPair': '不支援的組合',
+  'common.experimentalPair': '實驗性',
+  'common.experimentalPairHint': '此資料庫組合尚未通過實際遷移測試驗證',
   'common.schemaDiff': '結構比對',
   'common.sqlPreviewLower': 'SQL 預覽',
   'common.selectDatabase': '選擇資料庫…',

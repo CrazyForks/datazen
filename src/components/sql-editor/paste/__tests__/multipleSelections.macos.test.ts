@@ -189,7 +189,13 @@ describe('multipleSelections · macOS branch (navigator.platform = MacIntel)', (
   it('Alt-Cmd-Shift-ArrowDown (the free mac chord) copies the line down', () => {
     const { view, parent } = mount(DOC, 4);
     try {
-      press(view, { key: 'ArrowDown', code: 'ArrowDown', altKey: true, metaKey: true, shiftKey: true });
+      press(view, {
+        key: 'ArrowDown',
+        code: 'ArrowDown',
+        altKey: true,
+        metaKey: true,
+        shiftKey: true,
+      });
       expect(view.state.doc.toString()).toBe('SELECT a\nSELECT a\nSELECT b\nSELECT c');
       expect(view.state.selection.ranges).toHaveLength(1);
       expect(view.state.selection.main.head).toBe(13);

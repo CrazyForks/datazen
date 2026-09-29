@@ -300,5 +300,9 @@ const pack = {
   'settings.tunnels.test.scope.websocket':
     'WebSocket 探測會檢查中繼：raw_binary 模式只能證明中繼可以連線，datazen_v1 則會開啟通往目標的通道。',
   'settings.tunnels.test.scope.general': '探測通過並不保證你的資料庫能透過此隧道連線。',
+  'settings.updater.manualDescription':
+    '此版本沒有已簽署的更新管道，因此請從 GitHub Releases 安裝相符版本以進行更新。',
+  'settings.updater.manualVariant': '目前版本：{variant}',
+  'settings.updater.openReleases': '開啟 Releases 頁面',
 } as const;
 export default pack;

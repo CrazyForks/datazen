@@ -328,5 +328,9 @@ const pack = {
     'Проверка WebSocket тестирует ретранслятор: в режиме raw_binary она подтверждает только его достижимость, а datazen_v1 открывает канал к целевому узлу.',
   'settings.tunnels.test.scope.general':
     'Успешная проверка не гарантирует, что ваша база данных достижима через этот туннель.',
+  'settings.updater.manualDescription':
+    'В этой сборке нет канала подписанных обновлений. Для обновления установите подходящий выпуск со страницы GitHub Releases.',
+  'settings.updater.manualVariant': 'Текущая сборка: {variant}',
+  'settings.updater.openReleases': 'Открыть страницу Releases',
 } as const;
 export default pack;

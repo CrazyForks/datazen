@@ -5,6 +5,20 @@ use std::sync::Arc;
 use std::time::Instant;
 
 impl ConnectionManager {
+    #[cfg(test)]
+    pub async fn set_active_database(
+        &self,
+        db_session_id: &str,
+        database: &str,
+    ) -> Result<(), ConnectionError> {
+        let mut connections = self.connections.write().await;
+        let active = connections
+            .get_mut(db_session_id)
+            .ok_or_else(|| ConnectionError::DbSessionNotFound(db_session_id.to_string()))?;
+        active.config.database = Some(database.to_string());
+        Ok(())
+    }
+
     pub async fn connect(&self, connection_id: &str) -> Result<String, ConnectionError> {
         self.connect_with_config(connection_id, None).await
     }

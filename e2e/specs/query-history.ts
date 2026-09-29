@@ -77,7 +77,9 @@ describe('查询历史 database 分组 (QH)', () => {
     // races the history/database context update.
     await browser.waitUntil(
       async () =>
-        !(await $('[data-testid="history-scope-fallback-hint"]').isExisting().catch(() => false)),
+        !(await $('[data-testid="history-scope-fallback-hint"]')
+          .isExisting()
+          .catch(() => false)),
       {
         timeout: 10000,
         timeoutMsg:

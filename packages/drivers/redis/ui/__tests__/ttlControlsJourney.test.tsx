@@ -95,9 +95,7 @@ function selectMode(mode: 'relative' | 'absolute' | 'no-expiry') {
 }
 
 function expectSelectedMode(mode: 'relative' | 'absolute' | 'no-expiry') {
-  expect(screen.getByTestId(`redis-ttl-mode-${mode}`).getAttribute('data-selected')).toBe(
-    'true',
-  );
+  expect(screen.getByTestId(`redis-ttl-mode-${mode}`).getAttribute('data-selected')).toBe('true');
 }
 
 function datetimeInput(): HTMLInputElement {
@@ -566,7 +564,9 @@ describe('[redis-detail-ui-BUG-004] TTL 内联编辑的 Esc / 失焦退出跃迁
 
   it('ignores Escape while an apply is in flight (mirrors the disabled close button)', async () => {
     // 永不落定的写命令 ⇒ busy 悬起，退出跃迁必须像关按钮一样被禁用。
-    const pendingInvoke = vi.fn<PluginInvokeFn>().mockImplementation(() => new Promise<void>(() => {}));
+    const pendingInvoke = vi
+      .fn<PluginInvokeFn>()
+      .mockImplementation(() => new Promise<void>(() => {}));
     render(
       <TtlControls
         dbSessionId="test-sess"

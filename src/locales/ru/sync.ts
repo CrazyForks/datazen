@@ -89,6 +89,8 @@ const pack = {
   'sync.pagePrev': 'Назад',
   'sync.pageNext': 'Далее',
   'sync.refreshPreview': 'Обновить',
+  'sync.sqlPreviewLimitReached':
+    'Предпросмотр SQL ограничен 16 МиБ. Выберите меньше строк или операций, чтобы просмотреть SQL. Сравнение строк и выполнение проверенных изменений по-прежнему доступны.',
   'sync.execute': 'Выполнить',
   'sync.executing': 'Выполнение синхронизации…',
   'sync.executingSql': 'Выполняется операторов SQL: {count}…',
@@ -169,6 +171,10 @@ const pack = {
   'transfer.mapping.noTables': 'Нет включённых таблиц для сопоставления.',
   'transfer.mapping.targetTable': 'Целевая таблица',
   'transfer.mapping.createNew': 'Создать новую таблицу',
+  'transfer.mapping.targetDefaultCollation':
+    'Использовать сортировку по умолчанию целевой базы данных',
+  'transfer.mapping.targetDefaultCollationHint':
+    'Могут измениться сортировка текста, сравнение с учётом регистра и диакритики, а также поведение уникальных индексов.',
   'transfer.mapping.sourceColumn': 'Столбец источника',
   'transfer.mapping.targetColumn': 'Столбец цели',
   'transfer.mapping.skip': 'Пропустить',
@@ -192,6 +198,9 @@ const pack = {
   'transfer.limitations.dontShowAgain': 'Больше не показывать',
   'transfer.ddlOverrideHint':
     'Измените инструкцию CREATE выше; при выполнении будет запущен ваш изменённый SQL.',
+  'transfer.ddlKind.index': 'Индекс',
+  'transfer.ddlKind.foreignKey': 'Внешний ключ',
+  'transfer.ddlKind.dropTable': 'Удалить таблицу',
 
   // --- Schema Diff ---
   'schemaDiff.description':
@@ -242,6 +251,7 @@ const pack = {
   'schemaDiff.reviewTarget': 'Цель',
   'schemaDiff.reviewTables': 'Таблицы',
   'schemaDiff.useTransaction': 'Выполнять в транзакции (если диалект поддерживает)',
+  'schemaDiff.transactionRequired': 'требуется для безопасного перестроения таблицы SQLite',
   'schemaDiff.txUnsupported': 'этот диалект обычно автокоммитит DDL',
   'schemaDiff.requireRollback': 'Требовать полный rollback SQL',
   'schemaDiff.rollbackIncomplete': 'Нет rollback SQL для',
@@ -322,5 +332,213 @@ const pack = {
   'schemaDiff.selectDbRequired': 'Сначала выберите исходную и целевую базы данных',
   'schemaDiff.colChanged': 'Измененный столбец',
   'schemaDiff.identical': 'Идентично',
+  'migrationHistory.open': 'История запусков',
+  'migrationHistory.title': 'История запусков миграции',
+  'migrationHistory.empty': 'Записей о запусках пока нет.',
+  'migrationHistory.outcome': 'Результат',
+  'migrationHistory.counts': 'Зафиксировано / ошибки / конфликты',
+  'migrationHistory.rollback': 'Откат',
+  'migrationHistory.profile': 'Версия профиля',
+  'migrationHistory.syncUnknownHint':
+    'Предыдущий план повторно использоваться не будет. Подключитесь снова, проверьте текущие схемы и сравните текущие строки перед проверкой нового плана.',
+  'migrationHistory.syncReconcile': 'Сравнить текущие данные',
+  'migrationHistory.syncReconcileBusy':
+    'Дождитесь завершения текущего выполнения, прежде чем начинать новое сравнение.',
+  'migrationHistory.syncReconcileMissingConnection':
+    'Сохранённое подключение конечной точки больше не существует. Перед сравнением снова выберите обе конечные точки.',
+  'migrationHistory.syncReconcileProfileReady':
+    'Версия сохранённого профиля совпадает. Проверьте и сравните текущие данные перед проверкой нового плана.',
+  'migrationHistory.syncReconcileProfileChanged':
+    'Сохранённый профиль изменён или удалён. Снова выберите область и фильтры, затем проверьте и сравните текущие данные.',
+  'migrationHistory.syncReconcileScopeUnavailable':
+    'Не удалось проверить область сохранённого профиля в текущих базах данных. Снова выберите область и фильтры, затем проверьте и сравните текущие данные.',
+  'migrationHistory.syncReconcileConfirmScope': 'Я проверил выбранную область',
+  'migrationHistory.syncReconcileNeedsScope':
+    'Снова выберите базы данных, схемы, таблицы и все фильтры, затем проверьте и сравните текущие данные.',
+  'sync.executionUnknown':
+    'Не удалось подтвердить результат записи. Сравните данные ещё раз, прежде чем повторять попытку.',
+  'sync.executionNotStarted':
+    'Выполнение не началось. Проверьте контекст конечных точек и сравните данные ещё раз, прежде чем повторять попытку.',
+  'sync.cancellingExecution': 'Запрошена отмена. Ожидание результата транзакции…',
+  'sync.conflictPolicyLabel': 'Обработка конфликтов',
+  'sync.conflictPolicyAbort': 'Прервать и откатить',
+  'sync.conflictPolicySkip': 'Пропускать конфликты',
+  'sync.conflictPolicyForce': 'Принудительно обновлять/удалять',
+  'sync.conflictPolicySkipWarning':
+    'Конфликты будут пропущены; остальные строки можно будет зафиксировать.',
+  'sync.conflictPolicyForceWarning':
+    'Параллельные изменения в целевой базе могут быть перезаписаны.',
+  'sync.sourceFilter': 'Фильтр',
+  'sync.recordset': 'Диапазон строк',
+  'sync.recordsetHint':
+    'Ограничьте сравнение диапазоном первичного ключа. Одна и та же граница будет применена к источнику и цели.',
+  'sync.recordsetEnable': 'Задать диапазон',
+  'sync.recordsetDisable': 'Очистить диапазон',
+  'sync.recordsetOrder': 'Сортировать по',
+  'sync.recordsetStart': 'Начало',
+  'sync.recordsetEnd': 'Конец',
+  'sync.recordsetUnbounded': 'Без ограничений',
+  'sync.recordsetInclusive': 'Включительно',
+  'sync.recordsetLimit': 'Максимум строк',
+  'sync.recordsetLimitInvalid': 'Укажите положительное безопасное целое число.',
+  'sync.conflictsSkipped': 'Пропущено конфликтов: {count}',
+  'sync.clearAllInsert': 'Очистить все вставки',
+  'sync.clearAllUpdate': 'Очистить все обновления',
+  'sync.clearAllDelete': 'Очистить все удаления',
+  'sync.pageScope': 'только загруженная страница',
+  'sync.pageScopeAll': 'все строки операций выбранной таблицы',
+  'sync.loadingPage': 'Загрузка…',
+  'sync.profile.name': 'Название профиля',
+  'sync.profile.namePlaceholder': 'Укажите название конфигурации синхронизации',
+  'sync.profile.select': 'Выбрать сохранённый профиль',
+  'sync.profile.save': 'Сохранить профиль',
+  'sync.profile.load': 'Загрузить профиль',
+  'sync.profile.delete': 'Удалить профиль',
+  'sync.profile.saved': 'Профиль синхронизации сохранён',
+  'sync.profile.loaded': 'Профиль синхронизации загружен; проверка обновит сопоставление',
+  'sync.profile.deleted': 'Профиль синхронизации удалён',
+  'sync.profile.missingFields': 'Выберите обе конечные точки и укажите название профиля.',
+  'sync.profile.missingConnection':
+    'Этот профиль ссылается на подключение, которого больше нет. Выберите новые конечные точки или удалите профиль.',
+  'transfer.destination.database': 'База данных',
+  'transfer.destination.sqlFile': 'Файл SQL',
+  'transfer.destination.sqlFileSelected': 'Файл SQL выбран',
+  'transfer.destination.sqlDialect': 'Диалект SQL',
+  'transfer.destination.sourceDialect': 'Диалект источника ({dialect})',
+  'transfer.destination.sqlDialectHint':
+    'Выберите зарегистрированный диалект целевой базы. В предварительном просмотре и созданном файле будут использоваться его идентификаторы, типы и литералы.',
+  'transfer.destination.sqlEncoding': 'Кодировка файла SQL',
+  'transfer.destination.sqlEncodingUtf8': 'UTF-8 без BOM',
+  'transfer.destination.sqlEncodingUtf8Bom': 'UTF-8 с BOM',
+  'transfer.destination.sqlEncodingUtf16Le': 'UTF-16LE с BOM',
+  'transfer.destination.sqlEncodingUtf16Be': 'UTF-16BE с BOM',
+  'transfer.destination.sqlCompression': 'Сжатие файла SQL',
+  'transfer.destination.sqlCompressionNone': 'Без сжатия (.sql)',
+  'transfer.destination.sqlCompressionGzip': 'Сжатие gzip (.sql.gz)',
+  'transfer.destination.sourceDatabase': 'База данных источника',
+  'transfer.destination.targetDatabase': 'Целевая база данных/каталог (необязательно)',
+  'transfer.destination.targetDatabasePlaceholder':
+    'Оставьте пустым, чтобы использовать значение по умолчанию для диалекта',
+  'transfer.destination.targetSchema': 'Целевая схема (необязательно)',
+  'transfer.destination.targetSchemaPlaceholder':
+    'Оставьте пустым, чтобы использовать значение по умолчанию для диалекта',
+  'transfer.destination.targetScopeHint':
+    'Укажите один сегмент идентификатора. MySQL и ClickHouse используют базу данных/каталог; PostgreSQL — схему; SQL Server поддерживает оба варианта.',
+  'transfer.destination.sqlFileHint':
+    'Путь к файлу SQL хранится в хосте; после предварительного просмотра файл будет записан атомарно.',
+  'transfer.destination.chooseHint': 'Выберите файл SQL, чтобы продолжить.',
+  'transfer.profile.name': 'Название профиля',
+  'transfer.profile.namePlaceholder': 'Укажите название конфигурации переноса',
+  'transfer.profile.save': 'Сохранить профиль',
+  'transfer.profile.load': 'Загрузить профиль',
+  'transfer.profile.select': 'Выбрать сохранённый профиль',
+  'transfer.profile.missingFields':
+    'Выберите необходимые конечные точки и укажите название профиля.',
+  'transfer.profile.chooseFile': 'Перед продолжением выберите новое расположение файла SQL.',
+  'transfer.preview.backToSetup': 'Вернуться к настройке',
+  'transfer.batchSizeLimit': 'Укажите целое число от 1 до 500 строк.',
+  'transfer.resumeCapabilityHint':
+    'Возобновление внутри таблицы проверено только для переносов PostgreSQL/MySQL между отдельными сеансами источника и цели в существующие транзакционные таблицы (обычную таблицу PostgreSQL или MySQL InnoDB) с полным поддерживаемым первичным ключом. Для остальных таблиц сохраняется транзакция всей таблицы. Чтобы возобновить перенос, не закрывайте сеанс приложения, используйте токен в течение 24 часов и не изменяйте выбранные строки источника и уже зафиксированные строки цели. Изменения источника делают токен недействительным; изменения цели нужно вручную согласовать перед продолжением.',
+  'transfer.resumeAvailableHint':
+    'Возобновление доступно в текущем открытом сеансе приложения в течение 24 часов после последней контрольной точки. Во время паузы не изменяйте выбранные строки источника и все уже зафиксированные строки цели. Изменения источника делают токен недействительным; изменения цели автоматически не проверяются, поэтому перед продолжением их нужно согласовать вручную.',
+  'transfer.sourceFilterPreview': 'Фильтр источника',
+  'transfer.recordsetPreview': 'Набор записей источника',
+  'transfer.runCancelled': 'Отменено',
+  'transfer.runPartial': 'Перенос завершён не полностью',
+  'transfer.runUnknownOutcome': 'Результат переноса неизвестен',
+  'transfer.partialExplanation':
+    'Завершённые таблицы и DDL могут остаться применёнными. Текущие записи данных будут отменены, если это возможно. Перед повторной попыткой проверьте ошибки; неизвестный результат необходимо проверить.',
+  'transfer.confirmedRowsInserted': 'Подтверждённые вставленные строки',
+  'transfer.rowsUnknown': 'Строки с неизвестным результатом',
+  'transfer.unknownOutcomeExplanation':
+    'База данных не подтвердила, была ли текущая запись зафиксирована или отменена. Перед повторной попыткой проверьте данные в целевой базе.',
+  'transfer.tableOutcome.committed': 'Зафиксировано',
+  'transfer.tableOutcome.rolledBack': 'Откачено',
+  'transfer.tableOutcome.partiallyApplied': 'Применено частично',
+  'transfer.tableOutcome.notStarted': 'Не запущено',
+  'transfer.tableOutcome.unknown': 'Неизвестно',
+  'transfer.historyOutcome.notRequired': 'Не требуется',
+  'transfer.historyOutcome.notStarted': 'Не запущено',
+  'transfer.historyOutcome.rolledBack': 'Откачено',
+  'transfer.historyOutcome.unknown': 'Неизвестно',
+  'transfer.historyOutcome.partiallyApplied': 'Применено частично',
+  'transfer.mapping.sourceFilter': 'Фильтр строк источника',
+  'transfer.mapping.sourceFilterHint':
+    'Копируются только строки источника, соответствующие фильтру. Значения передаются как связанные параметры.',
+  'transfer.mapping.recordset': 'Диапазон набора записей источника',
+  'transfer.mapping.recordsetHint':
+    'Выберите диапазон ключей источника с необязательными границами или ограничением количества. Для составных ключей используются все столбцы первичного ключа в объявленном порядке. Это выбирает строки для текущего запуска, а не контрольную точку для возобновления.',
+  'transfer.mapping.noRecordset':
+    'Диапазон набора записей не задан; будут скопированы все строки источника, соответствующие фильтру.',
+  'transfer.mapping.recordsetOrder': 'Сортировать по',
+  'transfer.mapping.recordsetOrderRequired':
+    'Выберите один столбец источника. Для составных первичных ключей автоматически используется полный объявленный порядок.',
+  'transfer.mapping.recordsetTextCollationHint':
+    'Если заданы обе границы, текстовые компоненты ключа должны совпадать; разные текстовые границы отклоняются, если сортировка источника неизвестна.',
+  'transfer.mapping.recordsetStart': 'Нижняя граница',
+  'transfer.mapping.recordsetEnd': 'Верхняя граница',
+  'transfer.mapping.recordsetUnbounded': 'Без ограничений',
+  'transfer.mapping.recordsetInclusive': 'Включительно',
+  'transfer.mapping.recordsetLimit': 'Максимум строк',
+  'transfer.mapping.addFilter': 'Добавить фильтр',
+  'transfer.mapping.noSourceFilter': 'Фильтр источника не задан; будут скопированы все строки.',
+  'transfer.mapping.filterLogic': 'Совпадение',
+  'transfer.mapping.filterAll': 'Все условия',
+  'transfer.mapping.filterAny': 'Любое условие',
+  'schemaDiff.selectionRequired': 'Выберите хотя бы одну таблицу или объект схемы для миграции',
+  'schemaDiff.crossDialectObjectNote':
+    'Объекты схемы используют DDL конкретного диалекта и не переносятся между типами баз данных. Сохранённые выборы остаются; очистите их, чтобы продолжить миграцию таблиц.',
+  'schemaDiff.crossDialectObjectBlocked':
+    'Очистите выбранные объекты схемы, прежде чем продолжить перенос таблиц между диалектами.',
+  'schemaDiff.clearObjectSelections': 'Очистить выбранные объекты схемы',
+  'schemaDiff.profileSelect': 'Сохранённый профиль',
+  'schemaDiff.profileLoad': 'Загрузить профиль',
+  'schemaDiff.profileSave': 'Сохранить профиль',
+  'schemaDiff.profileDelete': 'Удалить профиль',
+  'schemaDiff.profileSaveTitle': 'Сохранить профиль сравнения схем',
+  'schemaDiff.profileSaveHint':
+    'Сохраните текущие конечные точки, область, выбор таблиц и параметры сравнения.',
+  'schemaDiff.profileNamePlaceholder': 'Название профиля',
+  'schemaDiff.profileNameRequired': 'Введите название профиля',
+  'schemaDiff.profileSetupRequired':
+    'Перед сохранением выберите обе конечные точки и хотя бы одну таблицу или объект схемы',
+  'schemaDiff.objectIdentityIncomplete':
+    'Для выбора процедур требуется сигнатура, а для триггеров — целевая таблица.',
+  'schemaDiff.savedObjectsMissing':
+    'Не удалось восстановить выбранные объекты схемы: {count}. Точная идентификация недоступна.',
+  'schemaDiff.schemaObjects': 'Представления и объекты базы данных',
+  'schemaDiff.schemaObjectsHint':
+    'Выберите объекты с обеих сторон, чтобы сравнить или заменить их. Объекты только в источнике будут созданы; для удаления объектов только в целевой базе требуется подтверждение разрушительного действия.',
+  'schemaDiff.schemaObjectsLoading':
+    'Загрузка представлений, типов, последовательностей, процедур и триггеров…',
+  'schemaDiff.objectSource': 'Объекты источника',
+  'schemaDiff.objectTarget': 'Объекты целевой базы',
+  'schemaDiff.objectSideSelectionCount': 'Выбрано объектов: {count} из {total}',
+  'schemaDiff.objectSelectAllSource': 'Выбрать все объекты источника',
+  'schemaDiff.objectSelectNoneSource': 'Очистить выбор объектов источника',
+  'schemaDiff.objectSelectAllTarget': 'Выбрать все объекты целевой базы',
+  'schemaDiff.objectSelectNoneTarget': 'Очистить выбор объектов целевой базы',
+  'schemaDiff.objectKind.view': 'Представления',
+  'schemaDiff.objectKind.type': 'Типы',
+  'schemaDiff.objectKind.sequence': 'Последовательности',
+  'schemaDiff.objectKind.function': 'Функции',
+  'schemaDiff.objectKind.procedure': 'Процедуры',
+  'schemaDiff.objectKind.trigger': 'Триггеры',
+  'schemaDiff.objectKindEmpty': 'Объекты не найдены',
+  'schemaDiff.objectLoadFailed': 'Не удалось загрузить список объектов: {error}',
+  'schemaDiff.objectPartialLoad':
+    'Не удалось прочитать некоторые списки объектов. Разверните соответствующий тип для получения подробностей или повторите поиск.',
+  'schemaDiff.objectRetry': 'Повторить поиск объектов',
+  'schemaDiff.sourceOnly': 'Только в источнике (ADD)',
+  'schemaDiff.targetOnly': 'Только в целевой базе (DROP)',
+  'schemaDiff.sourceAndTarget': 'Обе стороны',
+  'schemaDiff.targetOnlyDetail':
+    'Эта таблица есть только в целевой базе. Её выбор добавит явную операцию DROP TABLE, требующую подтверждения разрушительного действия.',
+  'schemaDiff.checkMissing': 'Ограничения CHECK отсутствуют в целевой базе (ADD)',
+  'schemaDiff.checkExtra': 'Лишние ограничения CHECK в целевой базе (DROP)',
+  'schemaDiff.tableOptions': 'Параметры таблицы',
+  'schemaDiff.tableOptionComment': 'Комментарий',
+  'schemaDiff.tableOptionEngine': 'Движок',
+  'schemaDiff.tableOptionCharset': 'Набор символов',
 } as const;
 export default pack;

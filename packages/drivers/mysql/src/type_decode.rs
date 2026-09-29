@@ -1,7 +1,6 @@
 //! MySQL text column decoding and Row → DriverValue conversion.
 
 use datazen_driver_api::*;
-use rust_decimal::prelude::ToPrimitive;
 use sqlx::mysql::MySqlRow;
 use sqlx::{Column, MySql, Row};
 
@@ -88,6 +87,10 @@ impl super::MysqlDriver {
                         let debug_name = format!("{:?}", col.type_info());
                         let display_name = col.type_info().to_string();
                         let upper = format!("{} {}", debug_name, display_name).to_uppercase();
+                        let native = display_name.to_ascii_uppercase();
+                        if native.contains("BLOB") || native.contains("BINARY") {
+                            return row.try_get::<Vec<u8>, _>(i).ok().map(Value::Bytes);
+                        }
                         match upper.as_str() {
                             s if s.contains("BIGINT") || s.contains("INT8") => row
                                 .try_get::<i64, _>(i)
@@ -172,20 +175,11 @@ impl super::MysqlDriver {
                                             .map(Value::Float)
                                     })
                             }
+                            // MySQL transmits DECIMAL as exact ASCII in both wire modes.
                             s if s.contains("DECIMAL") || s.contains("NUMERIC") => row
-                                .try_get::<rust_decimal::Decimal, _>(i)
+                                .try_get_unchecked::<String, _>(i)
                                 .ok()
-                                .map(|d| {
-                                    if d.scale() == 0 {
-                                        if let Some(n) = d.to_i64() {
-                                            return Self::safe_integer(n);
-                                        }
-                                    }
-                                    d.to_f64()
-                                        .map(Value::Float)
-                                        .unwrap_or_else(|| Value::String(d.to_string()))
-                                })
-                                .or_else(|| row.try_get::<String, _>(i).ok().map(Value::String)),
+                                .map(Value::String),
                             s if s.contains("BIT") => row
                                 .try_get::<bool, _>(i)
                                 .ok()
@@ -211,12 +205,14 @@ impl super::MysqlDriver {
                             s if s.contains("DATETIME") || s.contains("TIMESTAMP") => row
                                 .try_get::<chrono::NaiveDateTime, _>(i)
                                 .ok()
-                                .map(|dt| Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string()))
+                                .map(|dt| {
+                                    Value::String(dt.format("%Y-%m-%d %H:%M:%S%.f").to_string())
+                                })
                                 .or_else(|| row.try_get::<String, _>(i).ok().map(Value::String)),
                             s if s.contains("TIME") => row
                                 .try_get::<chrono::NaiveTime, _>(i)
                                 .ok()
-                                .map(|t| Value::String(t.format("%H:%M:%S").to_string()))
+                                .map(|t| Value::String(t.format("%H:%M:%S%.f").to_string()))
                                 .or_else(|| row.try_get::<String, _>(i).ok().map(Value::String)),
                             s if s.contains("YEAR") => row
                                 .try_get::<u16, _>(i)

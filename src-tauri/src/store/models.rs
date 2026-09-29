@@ -60,14 +60,33 @@ pub struct FavoriteQuery {
 #[serde(rename_all = "camelCase")]
 pub struct SyncTask {
     pub id: String,
-    /// Runtime db session id captured when the task was created/resumed.
+    /// Runtime db session id from legacy task files only.
+    ///
+    /// A `dbSessionId` is process-local and must never be persisted or used
+    /// to resume a task after restart. The field remains in the Rust model so
+    /// old JSON can be read, but it is cleared during store normalization and
+    /// omitted from every serialized task.
+    #[serde(default, skip_serializing)]
     pub source_db_session_id: String,
-    /// Runtime db session id captured when the task was created/resumed.
+    /// Runtime db session id from legacy task files only; see the source field.
+    #[serde(default, skip_serializing)]
     pub target_db_session_id: String,
     /// Persisted owning connection id (config) for display / resume lookup.
     pub source_connection_id: String,
     /// Persisted owning connection id (config) for display / resume lookup.
     pub target_connection_id: String,
+    /// Logical source catalog/database selected for the task, when known.
+    #[serde(default)]
+    pub source_database: Option<String>,
+    /// Logical target catalog/database selected for the task, when known.
+    #[serde(default)]
+    pub target_database: Option<String>,
+    /// Source schema selected for the task, when known.
+    #[serde(default)]
+    pub source_schema: Option<String>,
+    /// Target schema selected for the task, when known.
+    #[serde(default)]
+    pub target_schema: Option<String>,
     /// All tables selected for sync.
     pub tables: Vec<String>,
     /// Tables that have been fully synced.
@@ -75,16 +94,88 @@ pub struct SyncTask {
     /// Table that was being synced when interrupted (if any).
     pub current_table: Option<String>,
     /// Row offset within the current table (rows already inserted).
+    #[serde(default)]
     pub current_table_offset: u64,
     /// Source row count snapshot at task creation, keyed by table name.
+    #[serde(default)]
     pub source_row_counts: std::collections::HashMap<String, u64>,
     /// "full" | "continue"
+    #[serde(default = "default_sync_task_strategy")]
     pub strategy: String,
     /// "running" | "paused" | "completed" | "failed"
+    #[serde(default = "default_sync_task_status")]
     pub status: String,
+    #[serde(default)]
     pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Legacy checkpoints are never safe to resume from an offset. The value
+    /// is deliberately explicit so clients cannot mistake a task for a safe
+    /// resumable job.
+    #[serde(default = "default_sync_task_resume_state")]
+    pub resume_state: String,
+}
+
+fn default_sync_task_strategy() -> String {
+    "unknown".into()
+}
+
+fn default_sync_task_status() -> String {
+    "interrupted".into()
+}
+
+fn default_sync_task_resume_state() -> String {
+    "unknown".into()
+}
+
+impl SyncTask {
+    /// Normalize a task loaded from disk or received through the legacy save
+    /// IPC. Runtime sessions and OFFSET checkpoints are process-local state;
+    /// retaining them would let a later process silently continue at the
+    /// wrong row. Returns whether the value changed.
+    pub fn normalize_legacy_state(&mut self) -> bool {
+        let mut changed = false;
+
+        if !self.source_db_session_id.is_empty() {
+            self.source_db_session_id.clear();
+            changed = true;
+        }
+        if !self.target_db_session_id.is_empty() {
+            self.target_db_session_id.clear();
+            changed = true;
+        }
+
+        let had_unsafe_checkpoint = self.current_table_offset > 0
+            || self.strategy.eq_ignore_ascii_case("continue")
+            || matches!(self.status.as_str(), "running" | "paused");
+
+        if had_unsafe_checkpoint {
+            if self.current_table_offset != 0 {
+                self.current_table_offset = 0;
+                changed = true;
+            }
+            if self.strategy != "unknown" {
+                self.strategy = "unknown".into();
+                changed = true;
+            }
+            if self.status != "interrupted" {
+                self.status = "interrupted".into();
+                changed = true;
+            }
+            let message = "This sync task contains a legacy checkpoint that cannot be resumed safely; run the sync again from the beginning.";
+            if self.error_message.as_deref() != Some(message) {
+                self.error_message = Some(message.into());
+                changed = true;
+            }
+        }
+
+        if self.resume_state != "unknown" {
+            self.resume_state = "unknown".into();
+            changed = true;
+        }
+
+        changed
+    }
 }
 
 #[derive(Default)]
@@ -97,6 +188,15 @@ pub(crate) struct StoreCache {
     /// Lazy: loaded on first sync / AI access.
     pub(super) sync_tasks: Vec<SyncTask>,
     pub(super) sync_tasks_loaded: bool,
+    /// Lazy: loaded on first Data Sync profile access.
+    pub(super) sync_profiles: Vec<crate::data_sync::SyncProfile>,
+    pub(super) sync_profiles_loaded: bool,
+    /// Lazy: loaded on first Data Transfer profile access.
+    pub(super) transfer_profiles: Vec<crate::data_transfer::TransferProfile>,
+    pub(super) transfer_profiles_loaded: bool,
+    /// Lazy: loaded on first Schema Diff profile access.
+    pub(super) schema_diff_profiles: Vec<crate::schema_diff::SchemaDiffProfile>,
+    pub(super) schema_diff_profiles_loaded: bool,
     pub(super) ai_config: Option<AiProviderConfig>,
     pub(super) ai_settings_config: Option<crate::ai::AiSettingsConfig>,
     pub(super) ai_config_loaded: bool,

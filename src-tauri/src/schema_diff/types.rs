@@ -1,5 +1,6 @@
 //! Shared types for schema diff plans and deploy results.
 
+use crate::db::TableOptions;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -12,6 +13,29 @@ pub struct ColumnSnapshot {
     pub comment: Option<String>,
     pub is_primary_key: bool,
     pub is_auto_increment: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckConstraintSnapshot {
+    pub name: String,
+    pub expression: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TableOptionChange {
+    Comment,
+    Engine,
+    Charset,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TableOptionsDiff {
+    pub source: TableOptions,
+    pub target: TableOptions,
+    pub changes: Vec<TableOptionChange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -106,6 +130,12 @@ pub struct TableColumnDiff {
     pub changed: Vec<ChangedColumnDiff>,
     pub added: Vec<ColumnSnapshot>,
     pub removed: Vec<ColumnSnapshot>,
+    #[serde(default)]
+    pub missing_check_constraints: Vec<CheckConstraintSnapshot>,
+    #[serde(default)]
+    pub extra_check_constraints: Vec<CheckConstraintSnapshot>,
+    #[serde(default)]
+    pub table_options: Option<TableOptionsDiff>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -123,6 +153,11 @@ pub struct PlanStatement {
     pub risk: StatementRisk,
     pub rollback_sql: Option<String>,
     pub summary: String,
+    /// This statement is one step in a multi-statement change whose rollback
+    /// guarantee comes from the host transaction. Deploy must refuse to run
+    /// it when transactions are unavailable or disabled.
+    #[serde(default)]
+    pub requires_transaction: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -138,7 +173,7 @@ pub struct TypeSuggestion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ColumnTypeOverride {
     pub table: String,
     pub column: String,
@@ -148,6 +183,8 @@ pub struct ColumnTypeOverride {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SchemaDiffPlan {
+    #[serde(default)]
+    pub plan_id: Option<String>,
     pub table: String,
     pub tables: Vec<String>,
     pub source_dialect: String,
@@ -159,6 +196,9 @@ pub struct SchemaDiffPlan {
     pub rollback_completeness: RollbackCompleteness,
     #[serde(default)]
     pub type_suggestions: Vec<TypeSuggestion>,
+    /// Target snapshots used by transactional table rebuilds; deploy checks for stale review state before writing.
+    #[serde(default)]
+    pub expected_target_schemas: Vec<crate::db::TableSchema>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -172,6 +212,7 @@ pub struct RollbackCompleteness {
 #[serde(rename_all = "snake_case")]
 pub enum DeployStatus {
     Committed,
+    Unknown,
     RolledBack,
     Mixed,
     Failed,

@@ -99,10 +99,10 @@ async function rightClick(selector: string, textMatch?: string) {
   );
   // 菜单是异步构建的（先 await 后端命令再 show）；固定 pause(500) 会与本
   // spec 首次打开（reload 后模块重新加载，较慢）竞争 → 等待真实菜单出现。
-  await browser.waitUntil(
-    async () => (await $('[data-testid="web-context-menu"]')).isExisting(),
-    { timeout: 8000, timeoutMsg: '右键菜单未渲染' },
-  );
+  await browser.waitUntil(async () => (await $('[data-testid="web-context-menu"]')).isExisting(), {
+    timeout: 8000,
+    timeoutMsg: '右键菜单未渲染',
+  });
 }
 
 async function menuText(): Promise<string> {

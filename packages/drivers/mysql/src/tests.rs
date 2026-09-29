@@ -2,12 +2,304 @@
 
 use super::*;
 use datazen_driver_api::DatabaseDriver;
+use std::collections::HashMap;
+
+#[test]
+fn only_innodb_tables_claim_consistent_snapshot_support() {
+    assert!(supports_consistent_snapshot_engine(Some("InnoDB")));
+    assert!(supports_consistent_snapshot_engine(Some("innodb")));
+    assert!(!supports_consistent_snapshot_engine(Some("MyISAM")));
+    assert!(!supports_consistent_snapshot_engine(None));
+}
+
+#[test]
+fn mysql_table_options_query_captures_the_exact_default_collation() {
+    assert!(MYSQL_TABLE_OPTIONS_QUERY.contains("t.TABLE_COLLATION AS TABLE_COLLATION"));
+    assert!(MYSQL_TABLE_OPTIONS_QUERY.contains("COLLATION_CHARACTER_SET_APPLICABILITY"));
+}
+
+#[test]
+fn mysql_group_replication_members_share_canonical_database_identity() {
+    let member_a = mysql_group_replication_scope(Some("group-uuid"), Ok(Some("ONLINE")));
+    let member_b = mysql_group_replication_scope(Some("group-uuid"), Ok(Some("online")));
+    let ClusterScopeDecision::Cluster {
+        scope: scope_a,
+        id: id_a,
+    } = member_a
+    else {
+        panic!("healthy group member should have cluster identity");
+    };
+    let ClusterScopeDecision::Cluster {
+        scope: scope_b,
+        id: id_b,
+    } = member_b
+    else {
+        panic!("healthy group member should have cluster identity");
+    };
+
+    assert_eq!(
+        canonical_database_identity("mysql", scope_a, &id_a, "app"),
+        canonical_database_identity("mysql", scope_b, &id_b, "app")
+    );
+}
+
+#[test]
+fn mysql_group_and_database_are_part_of_canonical_identity() {
+    let group_a = mysql_group_replication_scope(Some("group-a"), Ok(Some("ONLINE")));
+    let group_b = mysql_group_replication_scope(Some("group-b"), Ok(Some("ONLINE")));
+    let ClusterScopeDecision::Cluster { scope, id: group_a } = group_a else {
+        panic!("healthy group member should have cluster identity");
+    };
+    let ClusterScopeDecision::Cluster { id: group_b, .. } = group_b else {
+        panic!("healthy group member should have cluster identity");
+    };
+
+    let app_a = canonical_database_identity("mysql", scope, &group_a, "app");
+    let app_b = canonical_database_identity("mysql", scope, &group_b, "app");
+    let other_database = canonical_database_identity("mysql", scope, &group_a, "other");
+    assert_ne!(app_a, app_b);
+    assert_ne!(app_a, other_database);
+}
+
+#[test]
+fn mysql_group_replication_unknown_or_unhealthy_members_fail_closed() {
+    assert_eq!(
+        mysql_group_replication_scope(None, Ok(None)),
+        ClusterScopeDecision::Unknown
+    );
+    assert_eq!(
+        mysql_group_replication_scope(Some("group"), Err(())),
+        ClusterScopeDecision::Unknown
+    );
+    assert_eq!(
+        mysql_group_replication_scope(Some("group"), Ok(Some("RECOVERING"))),
+        ClusterScopeDecision::Unknown
+    );
+    assert_eq!(
+        mysql_group_replication_scope(Some(""), Ok(None)),
+        ClusterScopeDecision::NodeFallback
+    );
+    assert_eq!(
+        mysql_group_replication_scope(Some("group"), Ok(None)),
+        ClusterScopeDecision::NodeFallback
+    );
+}
+
+#[test]
+fn mysql_group_replication_fallback_requires_known_plugin_absence_or_inactive_state() {
+    assert_eq!(mysql_group_replication_plugin_active(None), None);
+    assert_eq!(
+        mysql_group_replication_plugin_active(Some(&HashMap::new())),
+        Some(false)
+    );
+    assert_eq!(
+        mysql_group_replication_plugin_active(Some(&HashMap::from([(
+            "group_replication".to_string(),
+            "INACTIVE".to_string(),
+        )]))),
+        Some(false)
+    );
+    assert_eq!(
+        mysql_group_replication_plugin_active(Some(&HashMap::from([(
+            "group_replication".to_string(),
+            "ACTIVE".to_string(),
+        )]))),
+        Some(true)
+    );
+    assert_eq!(
+        mysql_group_replication_plugin_active(Some(&HashMap::from([(
+            "group_replication".to_string(),
+            "UNKNOWN".to_string(),
+        )]))),
+        None
+    );
+}
+
+#[test]
+fn mariadb_wsrep_members_share_identity_and_distinguish_cluster_and_database() {
+    let statuses = HashMap::from([
+        (
+            "wsrep_cluster_state_uuid".to_string(),
+            "cluster-uuid".to_string(),
+        ),
+        ("wsrep_cluster_status".to_string(), "Primary".to_string()),
+        ("wsrep_connected".to_string(), "ON".to_string()),
+        ("wsrep_ready".to_string(), "ON".to_string()),
+    ]);
+    let ClusterScopeDecision::Cluster { scope, id } = mariadb_wsrep_scope(Some(&statuses)) else {
+        panic!("healthy wsrep member should have cluster identity");
+    };
+    let primary = canonical_database_identity("mariadb", scope, &id, "app");
+    let peer = canonical_database_identity("mariadb", scope, &id, "app");
+    let other_cluster = canonical_database_identity("mariadb", scope, "other-uuid", "app");
+    let other_database = canonical_database_identity("mariadb", scope, &id, "other");
+    assert_eq!(primary, peer);
+    assert_ne!(primary, other_cluster);
+    assert_ne!(primary, other_database);
+}
+
+#[test]
+fn mariadb_wsrep_unknown_unhealthy_or_incomplete_status_fails_closed() {
+    assert_eq!(mariadb_wsrep_scope(None), ClusterScopeDecision::Unknown);
+    assert_eq!(
+        mariadb_wsrep_scope(Some(&HashMap::new())),
+        ClusterScopeDecision::NodeFallback
+    );
+
+    let incomplete = HashMap::from([(
+        "wsrep_cluster_state_uuid".to_string(),
+        "cluster-uuid".to_string(),
+    )]);
+    assert_eq!(
+        mariadb_wsrep_scope(Some(&incomplete)),
+        ClusterScopeDecision::Unknown
+    );
+
+    let unhealthy = HashMap::from([
+        (
+            "wsrep_cluster_state_uuid".to_string(),
+            "cluster-uuid".to_string(),
+        ),
+        (
+            "wsrep_cluster_status".to_string(),
+            "Non-Primary".to_string(),
+        ),
+        ("wsrep_connected".to_string(), "ON".to_string()),
+        ("wsrep_ready".to_string(), "ON".to_string()),
+    ]);
+    assert_eq!(
+        mariadb_wsrep_scope(Some(&unhealthy)),
+        ClusterScopeDecision::Unknown
+    );
+}
+
+#[test]
+fn format_sql_literal_keeps_binary_bytes_lossless() {
+    let driver = MysqlDriver::new(false);
+    assert_eq!(
+        driver.format_sql_literal(&Some(Value::Bytes(vec![0x00, 0xff, 0xfe]))),
+        "X'00fffe'"
+    );
+    assert_eq!(
+        driver.format_sql_literal(&Some(Value::String("O'Brien".into()))),
+        "'O''Brien'"
+    );
+}
 
 #[test]
 fn quote_identifier_escapes_backticks() {
     assert_eq!(MysqlDriver::quote_identifier("foo"), "`foo`");
     assert_eq!(MysqlDriver::quote_identifier("foo`bar"), "`foo``bar`");
     assert_eq!(MysqlDriver::quote_identifier(""), "``");
+}
+
+#[test]
+fn parses_named_and_unnamed_checks_from_show_create() {
+    let checks = MysqlDriver::parse_check_from_create_table(
+        "CREATE TABLE `users` (\n  `age` int,\n  CONSTRAINT `users_age_check` CHECK ((`age` >= 0)),\n  CHECK (`age` < 150)\n)",
+    );
+    assert_eq!(checks.len(), 2);
+    assert_eq!(checks[0].name, "check_1");
+    assert_eq!(checks[1].name, "users_age_check");
+    assert_eq!(checks[1].expression, "(`age` >= 0)");
+}
+
+#[test]
+fn test_tester_check_parser_ignores_default_literal_before_real_check() {
+    let checks = MysqlDriver::parse_check_from_create_table(
+        "CREATE TABLE `users` (\n  `note` varchar(64) DEFAULT 'CHECK (literal)',\n  CONSTRAINT `users_age_check` CHECK (`age` >= 0)\n)",
+    );
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].name, "users_age_check");
+    assert_eq!(checks[0].expression, "`age` >= 0");
+}
+
+#[test]
+fn test_tester_check_parser_ignores_comments_and_quoted_identifiers() {
+    let checks = MysqlDriver::parse_check_from_create_table(
+        "CREATE TABLE `users` (\n  `check_col` varchar(64),\n  /* CHECK (block_only) */\n  -- CHECK (line_only)\n  CONSTRAINT `users_check` CHECK (`check_col` <> 'CHECK (literal)')\n)",
+    );
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].name, "users_check");
+    assert_eq!(checks[0].expression, "`check_col` <> 'CHECK (literal)'");
+}
+
+#[test]
+fn mysql_foreign_keys_are_explicitly_not_deferrable() {
+    let foreign_keys = MysqlDriver::parse_fk_from_create_table(
+        "CREATE TABLE `orders` (\n  CONSTRAINT `orders_user_fk` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)\n)",
+    );
+
+    assert_eq!(foreign_keys.len(), 1);
+    assert_eq!(
+        foreign_keys[0].deferrability,
+        ForeignKeyDeferrability::NotDeferrable
+    );
+}
+
+#[test]
+fn mysql_foreign_key_parser_preserves_referenced_database_identity() {
+    let foreign_keys = MysqlDriver::parse_fk_from_create_table(
+        "CREATE TABLE `child` (\n  CONSTRAINT `fk_child_parent` FOREIGN KEY (`parent_id`) REFERENCES `archive``db`.`parent` (`id`)\n)",
+    );
+
+    assert_eq!(foreign_keys.len(), 1);
+    assert_eq!(foreign_keys[0].referenced_table, "archive`db.parent");
+    assert_eq!(foreign_keys[0].referenced_columns, ["id"]);
+}
+
+#[test]
+fn mysql_foreign_key_reference_parser_handles_unquoted_and_malformed_identities() {
+    assert_eq!(
+        MysqlDriver::extract_qualified_table_after(
+            "FOREIGN KEY (parent_id) REFERENCES archive.parent (id)",
+            "REFERENCES",
+        ),
+        "archive.parent"
+    );
+    assert_eq!(
+        MysqlDriver::extract_qualified_table_after(
+            "FOREIGN KEY (parent_id) REFERENCES `archive` . `parent` (id)",
+            "REFERENCES",
+        ),
+        "archive.parent"
+    );
+    assert_eq!(
+        MysqlDriver::extract_qualified_table_after(
+            "FOREIGN KEY (parent_id) REFERENCES `archive.parent` (id)",
+            "REFERENCES",
+        ),
+        ""
+    );
+    assert_eq!(
+        MysqlDriver::extract_qualified_table_after(
+            "FOREIGN KEY (parent_id) REFERENCES `archive.parent (id)",
+            "REFERENCES",
+        ),
+        ""
+    );
+}
+
+#[test]
+fn mysql_server_wide_catalog_visibility_requires_direct_global_select_without_revokes() {
+    assert!(MysqlDriver::grants_prove_server_wide_catalog_visibility(&[
+        "GRANT SELECT ON *.* TO 'datazen'@'localhost'".into(),
+    ]));
+    assert!(MysqlDriver::grants_prove_server_wide_catalog_visibility(&[
+        "GRANT ALL PRIVILEGES ON *.* TO 'datazen'@'localhost' WITH GRANT OPTION".into(),
+    ]));
+    assert!(!MysqlDriver::grants_prove_server_wide_catalog_visibility(
+        &["GRANT SELECT ON `app`.* TO 'datazen'@'localhost'".into(),]
+    ));
+    assert!(!MysqlDriver::grants_prove_server_wide_catalog_visibility(
+        &["GRANT 'catalog_reader'@'%' TO 'datazen'@'localhost'".into(),]
+    ));
+    assert!(!MysqlDriver::grants_prove_server_wide_catalog_visibility(
+        &[
+            "GRANT SELECT ON *.* TO 'datazen'@'localhost'".into(),
+            "REVOKE SELECT ON `private`.* FROM 'datazen'@'localhost'".into(),
+        ]
+    ));
 }
 
 #[test]
@@ -182,6 +474,20 @@ async fn begin_transaction_requires_pool() {
         pool_id: "missing-pool".into(),
     };
     let err = driver.begin_transaction(&handle).await.unwrap_err();
+    assert!(
+        matches!(err, DriverError::ConnectionFailed(_)),
+        "expected ConnectionFailed, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn begin_read_snapshot_requires_pool() {
+    let driver = MysqlDriver::new(false);
+    let handle = ConnectionHandle {
+        id: "conn".into(),
+        pool_id: "missing-pool".into(),
+    };
+    let err = driver.begin_read_snapshot(&handle).await.unwrap_err();
     assert!(
         matches!(err, DriverError::ConnectionFailed(_)),
         "expected ConnectionFailed, got {err:?}"
@@ -450,4 +756,33 @@ fn is_table_not_found_error_detects_mysql_1146_and_does_not_exist() {
     assert!(!MysqlDriver::is_table_not_found_error(
         "1064 (42000): You have an error in your SQL syntax"
     ));
+}
+
+#[test]
+fn migration_parameters_keep_values_out_of_sql() {
+    let driver = MysqlDriver::new(false);
+    assert_eq!(
+        driver
+            .parameter_placeholder(1, Some("DECIMAL(65,30)"))
+            .unwrap(),
+        "?"
+    );
+    assert_eq!(
+        driver.parameter_placeholder(99, Some("LONGBLOB")).unwrap(),
+        "?"
+    );
+}
+
+#[tokio::test]
+async fn execute_with_params_requires_pool() {
+    let driver = MysqlDriver::new(false);
+    let handle = ConnectionHandle {
+        id: "conn".into(),
+        pool_id: "missing-pool".into(),
+    };
+    let error = driver
+        .execute_with_params(&handle, "INSERT INTO t VALUES (?)", &[Value::Integer(1)])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, DriverError::ConnectionFailed(_)));
 }

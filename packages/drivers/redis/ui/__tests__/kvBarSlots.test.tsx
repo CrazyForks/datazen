@@ -284,19 +284,23 @@ describe('RedisKvStatusBar (statusBar slot)', () => {
     commandInvoke.mockResolvedValue(info({ ttlMs: -1 }));
     const second = render(<RedisKvStatusBar {...slotProps(other)} />);
     act(() => other.selectKey('forever'));
-    await waitFor(() => expect(second.container.querySelector('[data-part="size"]')).not.toBeNull());
+    await waitFor(() =>
+      expect(second.container.querySelector('[data-part="size"]')).not.toBeNull(),
+    );
     expect(second.container.querySelector('[data-part="ttl"]')).toBeNull();
   });
 
   it('renders an expired key as a state, not as an error', async () => {
     const relay = makeRelay();
-    commandInvoke.mockResolvedValue(info({ missing: true, type: null, memoryBytes: null, ttlMs: -2 }));
+    commandInvoke.mockResolvedValue(
+      info({ missing: true, type: null, memoryBytes: null, ttlMs: -2 }),
+    );
     const bar = render(<RedisKvStatusBar {...slotProps(relay)} />);
     act(() => relay.selectKey('gone'));
     await waitFor(() =>
-      expect(bar.container.querySelector('[data-status-state]')?.getAttribute('data-status-state')).toBe(
-        'missing',
-      ),
+      expect(
+        bar.container.querySelector('[data-status-state]')?.getAttribute('data-status-state'),
+      ).toBe('missing'),
     );
     expect(bar.container.querySelector('[data-part="type"]')).toBeNull();
     expect(bar.container.querySelector('[data-part="size"]')).toBeNull();
@@ -347,15 +351,17 @@ describe('RedisKeyPropsSidebar (keyPropsSidebar slot)', () => {
     act(() => relay.selectKey('user:1'));
 
     await waitFor(() =>
-      expect(screen.getByTestId('redis-kv-key-props-sidebar').getAttribute('data-props-state')).toBe(
-        'ready',
-      ),
+      expect(
+        screen.getByTestId('redis-kv-key-props-sidebar').getAttribute('data-props-state'),
+      ).toBe('ready'),
     );
     const aside = screen.getByTestId('redis-kv-key-props-sidebar');
     expect(aside.getAttribute('data-selected-key')).toBe('user:1');
     expect(aside.querySelector('[data-attr="type"] dd')?.getAttribute('data-value')).toBe('string');
     // A sub-KB key keeps byte precision instead of rounding down to 0 KB.
-    expect(aside.querySelector('[data-attr="memory"] dd')?.getAttribute('data-value')).toBe('640 B');
+    expect(aside.querySelector('[data-attr="memory"] dd')?.getAttribute('data-value')).toBe(
+      '640 B',
+    );
     expect(aside.querySelector('[data-attr="encoding"] dd')?.getAttribute('data-value')).toBe(
       'embstr',
     );
@@ -368,9 +374,9 @@ describe('RedisKeyPropsSidebar (keyPropsSidebar slot)', () => {
     expect(aside.querySelector('[data-attr="freq"] dd')?.getAttribute('data-fallback-key')).toBe(
       'redis.keyProps.freqUnavailable',
     );
-    expect(aside.querySelector('[data-attr="maxmemory-policy"] dd')?.getAttribute('data-value')).toBe(
-      'allkeys-lfu',
-    );
+    expect(
+      aside.querySelector('[data-attr="maxmemory-policy"] dd')?.getAttribute('data-value'),
+    ).toBe('allkeys-lfu');
     // Labels are addressed by i18n key so copy can change without touching tests.
     expect(aside.querySelector('[data-attr="encoding"] dt')?.getAttribute('data-i18n-key')).toBe(
       'redis.keyProps.encoding',
@@ -383,9 +389,9 @@ describe('RedisKeyPropsSidebar (keyPropsSidebar slot)', () => {
     sidebar(relay, true);
     act(() => relay.selectKey('gone'));
     await waitFor(() =>
-      expect(screen.getByTestId('redis-kv-key-props-sidebar').getAttribute('data-props-state')).toBe(
-        'missing',
-      ),
+      expect(
+        screen.getByTestId('redis-kv-key-props-sidebar').getAttribute('data-props-state'),
+      ).toBe('missing'),
     );
     const aside = screen.getByTestId('redis-kv-key-props-sidebar');
     expect(aside.querySelector('[data-i18n-key="redis.keyProps.missing"]')).not.toBeNull();
@@ -402,9 +408,9 @@ describe('RedisKeyPropsSidebar (keyPropsSidebar slot)', () => {
     sidebar(relay, true);
     act(() => relay.selectKey('user:1'));
     await waitFor(() =>
-      expect(screen.getByTestId('redis-kv-key-props-sidebar').getAttribute('data-props-state')).toBe(
-        'failed',
-      ),
+      expect(
+        screen.getByTestId('redis-kv-key-props-sidebar').getAttribute('data-props-state'),
+      ).toBe('failed'),
     );
     expect(
       screen.getByTestId('redis-kv-key-props-sidebar').querySelector('[data-attr="memory"]'),
@@ -418,9 +424,9 @@ describe('RedisKeyPropsSidebar (keyPropsSidebar slot)', () => {
     sidebar(relay, true, onClose);
     act(() => relay.selectKey('user:1'));
     await waitFor(() =>
-      expect(screen.getByTestId('redis-kv-key-props-sidebar').getAttribute('data-props-state')).toBe(
-        'ready',
-      ),
+      expect(
+        screen.getByTestId('redis-kv-key-props-sidebar').getAttribute('data-props-state'),
+      ).toBe('ready'),
     );
     const readsBefore = commandInvoke.mock.calls.filter(
       ([, command]) => command === 'key_object_info',

@@ -85,9 +85,7 @@ export function installEditorLayoutShim(): void {
     const width = Math.max(0, this.endOffset - this.startOffset) * CHAR_WIDTH;
     return rectList([makeRect(left, lineTopOf(start), width || 1, LINE_HEIGHT)]);
   };
-  Range.prototype.getBoundingClientRect = function getBoundingClientRect(
-    this: Range,
-  ): DOMRect {
+  Range.prototype.getBoundingClientRect = function getBoundingClientRect(this: Range): DOMRect {
     return this.getClientRects()[0] ?? makeRect(0, 0, 0, LINE_HEIGHT);
   };
 }

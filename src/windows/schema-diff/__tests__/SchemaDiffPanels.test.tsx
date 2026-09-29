@@ -5,6 +5,9 @@ import { SchemaDiffRightPanel } from '../SchemaDiffRightPanel';
 import { SchemaDiffPlanPanel } from '../SchemaDiffPlanPanel';
 import { SchemaDiffDeployPanel } from '../SchemaDiffDeployPanel';
 import { SchemaDiffTableListPanel } from '../SchemaDiffTableListPanel';
+import { SchemaDiffObjectsStep } from '../SchemaDiffObjectsStep';
+import { SchemaDiffUnifiedObjectsPicker } from '../SchemaDiffUnifiedObjectsPicker';
+import { formatSchemaDiffText, SchemaDiffPanel } from '../../../components/schema/SchemaDiffPanel';
 
 vi.mock('../../../hooks/useI18n', () => ({
   useI18n: () => ({
@@ -54,6 +57,242 @@ describe('SchemaDiffTableListPanel', () => {
 
     fireEvent.click(screen.getByTestId('schema-diff-table-row-orders'));
     expect(onSelect).toHaveBeenCalledWith('orders');
+  });
+});
+
+describe('SchemaDiffObjectsStep target-only picker', () => {
+  it('shows source/target identity and leaves target-only tables unchecked', () => {
+    render(
+      <SchemaDiffObjectsStep
+        loading={false}
+        tables={[
+          {
+            name: 'users',
+            enabled: true,
+            origin: 'both',
+            sourceName: 'public.users',
+            targetName: 'users',
+          },
+          {
+            name: 'archive',
+            enabled: false,
+            origin: 'target-only',
+            targetName: 'archive',
+          },
+        ]}
+        onToggle={vi.fn()}
+        onSelectAll={vi.fn()}
+        onSelectNone={vi.fn()}
+      />,
+    );
+
+    const rows = screen.getAllByTestId('schema-diff-table-row');
+    expect(rows[0]).toHaveAttribute('data-table-origin', 'both');
+    expect(rows[1]).toHaveAttribute('data-table-origin', 'target-only');
+    expect(within(rows[1]!).getByRole('checkbox')).not.toBeChecked();
+    expect(screen.getByTestId('schema-diff-table-origin-archive')).toHaveTextContent(
+      'schemaDiff.targetOnly',
+    );
+  });
+});
+
+describe('SchemaDiffUnifiedObjectsPicker discovery errors', () => {
+  it('surfaces partial catalog failures and offers an explicit retry', () => {
+    const onRetry = vi.fn();
+    render(
+      <SchemaDiffUnifiedObjectsPicker
+        loading={false}
+        sourceObjects={[]}
+        targetObjects={[]}
+        selectedSourceKeys={[]}
+        selectedTargetKeys={[]}
+        errors={{ source: { function: 'permission denied' }, target: {} }}
+        crossDialect={false}
+        onToggleSource={vi.fn()}
+        onToggleTarget={vi.fn()}
+        onSelectAll={vi.fn()}
+        onClearSelections={vi.fn()}
+        onRetry={onRetry}
+      />,
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent('schemaDiff.objectPartialLoad');
+    expect(screen.getByTestId('schema-diff-object-error-source-function')).toHaveTextContent(
+      'schemaDiff.objectLoadFailed',
+    );
+    fireEvent.click(screen.getByTestId('schema-diff-object-retry'));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+});
+
+describe('SchemaDiffPanel target-only review', () => {
+  it('does not present a target-only table as identical', () => {
+    render(
+      <SchemaDiffPanel
+        diff={{
+          table: 'archive',
+          targetOnly: true,
+          missingOnTarget: [],
+          extraOnTarget: [],
+          added: [],
+          removed: [],
+          changed: [],
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId('schema-diff-target-only-detail')).toBeInTheDocument();
+    expect(screen.queryByText('schemaDiff.schemaIdentical')).not.toBeInTheDocument();
+  });
+
+  it('renders source additions, target extras and changed column details', () => {
+    render(
+      <SchemaDiffPanel
+        diff={{
+          table: 'users',
+          missingOnTarget: [
+            { name: 'email', dataType: 'text', nullable: true, isPrimaryKey: true },
+          ],
+          extraOnTarget: [
+            { name: 'legacy', dataType: 'integer', nullable: false, isPrimaryKey: true },
+          ],
+          added: [],
+          removed: [],
+          changed: [
+            {
+              name: 'name',
+              source: {
+                name: 'name',
+                dataType: 'varchar(128)',
+                nullable: true,
+                isPrimaryKey: true,
+              },
+              target: {
+                name: 'name',
+                dataType: 'text',
+                nullable: false,
+                isPrimaryKey: true,
+              },
+              changes: ['type', 'nullable'],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('schemaDiff.missingOnTarget')).toBeInTheDocument();
+    expect(screen.getByText('+ email (text, PK)')).toBeInTheDocument();
+    expect(screen.getByText('schemaDiff.extraOnTarget')).toBeInTheDocument();
+    expect(screen.getByText('- legacy (integer, NOT NULL, PK)')).toBeInTheDocument();
+    expect(screen.getByText('schemaDiff.colChanged')).toBeInTheDocument();
+    expect(screen.getByText('name')).toBeInTheDocument();
+    expect(screen.getByText('schemaDiff.source: varchar(128), PK')).toBeInTheDocument();
+    expect(screen.getByText('schemaDiff.target: text, NOT NULL, PK')).toBeInTheDocument();
+    expect(screen.getByText('type, nullable')).toBeInTheDocument();
+    expect(screen.queryByText('schemaDiff.schemaIdentical')).not.toBeInTheDocument();
+  });
+
+  it('formats a reviewed diff summary with all selected column changes', () => {
+    expect(
+      formatSchemaDiffText({
+        table: 'users',
+        missingOnTarget: [
+          { name: 'email', dataType: 'text', nullable: false, isPrimaryKey: false },
+        ],
+        extraOnTarget: [
+          { name: 'legacy', dataType: 'integer', nullable: true, isPrimaryKey: false },
+        ],
+        added: [],
+        removed: [],
+        changed: [
+          {
+            name: 'name',
+            source: {
+              name: 'name',
+              dataType: 'varchar(128)',
+              nullable: true,
+              isPrimaryKey: false,
+            },
+            target: {
+              name: 'name',
+              dataType: 'text',
+              nullable: true,
+              isPrimaryKey: false,
+            },
+            changes: ['type'],
+          },
+        ],
+      }),
+    ).toBe(
+      '-- Schema diff: users\n+ email text NOT NULL\n- legacy integer\n~ name: text -> varchar(128) (type)',
+    );
+  });
+
+  it('test_tester renders and exports CHECK constraint changes', () => {
+    const diff = {
+      table: 'users',
+      missingOnTarget: [],
+      extraOnTarget: [],
+      added: [],
+      removed: [],
+      changed: [],
+      missingCheckConstraints: [{ name: 'users_age_check', expression: 'age >= 0' }],
+      extraCheckConstraints: [{ name: 'users_status_check', expression: "status <> 'deleted'" }],
+    };
+
+    render(<SchemaDiffPanel diff={diff} />);
+    expect(screen.getByText('schemaDiff.checkMissing')).toBeInTheDocument();
+    expect(screen.getByText('+ users_age_check: CHECK (age >= 0)')).toBeInTheDocument();
+    expect(screen.getByText('schemaDiff.checkExtra')).toBeInTheDocument();
+    expect(
+      screen.getByText("- users_status_check: CHECK (status <> 'deleted')"),
+    ).toBeInTheDocument();
+    expect(formatSchemaDiffText(diff)).toBe(
+      "-- Schema diff: users\n+ users_age_check: CHECK (age >= 0)\n- users_status_check: CHECK (status <> 'deleted')",
+    );
+  });
+
+  it('test_tester renders and exports table option changes', () => {
+    const diff = {
+      table: 'orders',
+      missingOnTarget: [],
+      extraOnTarget: [],
+      added: [],
+      removed: [],
+      changed: [],
+      tableOptions: {
+        source: { comment: "owner's orders", engine: 'InnoDB', charset: 'utf8mb4' },
+        target: { comment: 'legacy orders', engine: 'MyISAM', charset: 'latin1' },
+        changes: ['comment', 'engine', 'charset'],
+      },
+    };
+
+    render(<SchemaDiffPanel diff={diff} />);
+    expect(screen.getByText('schemaDiff.tableOptions')).toBeInTheDocument();
+    expect(screen.getByText("~ comment: legacy orders -> owner's orders")).toBeInTheDocument();
+    expect(screen.getByText('~ engine: MyISAM -> InnoDB')).toBeInTheDocument();
+    expect(screen.getByText('~ charset: latin1 -> utf8mb4')).toBeInTheDocument();
+    expect(formatSchemaDiffText(diff)).toBe(
+      "-- Schema diff: orders\n~ table comment: legacy orders -> owner's orders\n~ table engine: MyISAM -> InnoDB\n~ table charset: latin1 -> utf8mb4",
+    );
+  });
+
+  it('supports legacy aliases and identifies an unchanged schema', () => {
+    const { rerender } = render(
+      <SchemaDiffPanel
+        diff={{
+          table: 'legacy_users',
+          added: [{ name: 'email', dataType: 'text', nullable: true, isPrimaryKey: false }],
+          removed: [{ name: 'old_id', dataType: 'integer', nullable: true, isPrimaryKey: false }],
+          changed: [],
+        }}
+      />,
+    );
+    expect(screen.getByText('+ email (text)')).toBeInTheDocument();
+    expect(screen.getByText('- old_id (integer)')).toBeInTheDocument();
+
+    rerender(<SchemaDiffPanel diff={{ table: 'same', added: [], removed: [], changed: [] }} />);
+    expect(screen.getByText('schemaDiff.schemaIdentical')).toBeInTheDocument();
   });
 });
 
@@ -345,5 +584,127 @@ describe('SchemaDiffDeployPanel', () => {
     const errorsList = screen.getByTestId('schema-diff-deploy-errors');
     expect(errorsList).toBeInTheDocument();
     expect(errorsList).toHaveTextContent('Multiple primary key defined');
+  });
+});
+
+it('blocks execution across rollback and result state transitions', () => {
+  const props = {
+    plan: samplePlan,
+    targetLabel: 'target',
+    useTransaction: true,
+    onUseTransactionChange: vi.fn(),
+    requireRollback: true,
+    onRequireRollbackChange: vi.fn(),
+    confirmText: '',
+    onConfirmTextChange: vi.fn(),
+    deploying: false,
+    onDeploy: vi.fn(),
+    result: null,
+  };
+  const { rerender } = render(<SchemaDiffDeployPanel {...props} />);
+  expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
+  rerender(<SchemaDiffDeployPanel {...props} useTransaction={false} />);
+  expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+  rerender(<SchemaDiffDeployPanel {...props} plan={{ ...samplePlan, targetDialect: 'mysql' }} />);
+  expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+  rerender(<SchemaDiffDeployPanel {...props} />);
+  expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
+  rerender(
+    <SchemaDiffDeployPanel
+      {...props}
+      result={{
+        status: 'unknown',
+        executedCount: 1,
+        statementCount: 1,
+        errors: ['COMMIT outcome unknown'],
+        statementResults: [],
+      }}
+    />,
+  );
+  expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+  expect(screen.getByTestId('schema-diff-deploy-status')).toHaveTextContent('unknown');
+});
+
+it('forces the transaction control for reviewed SQLite table rebuilds', () => {
+  const plan = {
+    ...samplePlan,
+    targetDialect: 'sqlite',
+    statements: [{ ...samplePlan.statements[0], requiresTransaction: true }],
+  };
+  render(
+    <SchemaDiffDeployPanel
+      plan={plan}
+      targetLabel="SQLite target"
+      useTransaction={false}
+      onUseTransactionChange={vi.fn()}
+      requireRollback={false}
+      onRequireRollbackChange={vi.fn()}
+      confirmText=""
+      onConfirmTextChange={vi.fn()}
+      deploying={false}
+      onDeploy={vi.fn()}
+      result={null}
+    />,
+  );
+
+  const transactionCheckbox = screen.getAllByRole('checkbox')[0];
+  expect(transactionCheckbox).toBeChecked();
+  expect(transactionCheckbox).toBeDisabled();
+  expect(screen.getByText('(schemaDiff.transactionRequired)')).toBeInTheDocument();
+  expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
+});
+
+describe('[tester] deployment review control journey', () => {
+  it('forwards edits and keeps deployment closed until requirements clear', () => {
+    const onUseTransactionChange = vi.fn();
+    const onRequireRollbackChange = vi.fn();
+    const onConfirmTextChange = vi.fn();
+    const onDeploy = vi.fn();
+    const plan = {
+      ...samplePlan,
+      statements: [{ ...samplePlan.statements[0], risk: 'destructive' as const }],
+    };
+    const props = {
+      plan,
+      targetLabel: 'test',
+      useTransaction: true,
+      onUseTransactionChange,
+      requireRollback: true,
+      onRequireRollbackChange,
+      confirmText: '',
+      onConfirmTextChange,
+      deploying: false,
+      onDeploy,
+      result: null,
+    };
+    const { rerender } = render(<SchemaDiffDeployPanel {...props} />);
+    expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    expect(onUseTransactionChange).toHaveBeenCalledWith(false);
+    fireEvent.click(screen.getAllByRole('checkbox')[1]);
+    expect(onRequireRollbackChange).toHaveBeenCalledWith(false);
+    fireEvent.change(screen.getByPlaceholderText('DEPLOY'), { target: { value: 'DEPLOY' } });
+    expect(onConfirmTextChange).toHaveBeenCalledWith('DEPLOY');
+    rerender(<SchemaDiffDeployPanel {...props} confirmText="DEPLOY" useTransaction={false} />);
+    expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+    rerender(<SchemaDiffDeployPanel {...props} confirmText="DEPLOY" />);
+    expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
+    fireEvent.click(screen.getByTestId('schema-diff-deploy'));
+    expect(onDeploy).toHaveBeenCalledTimes(1);
+    rerender(
+      <SchemaDiffDeployPanel
+        {...props}
+        confirmText="DEPLOY"
+        result={{
+          status: 'unknown',
+          executedCount: 1,
+          statementCount: 1,
+          errors: ['Commit outcome unknown'],
+          statementResults: [],
+        }}
+      />,
+    );
+    expect(screen.getByTestId('schema-diff-deploy')).toBeDisabled();
+    expect(screen.getByTestId('schema-diff-deploy-status')).toHaveTextContent('unknown');
   });
 });

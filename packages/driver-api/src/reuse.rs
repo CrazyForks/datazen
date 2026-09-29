@@ -56,6 +56,23 @@ impl DatabaseDriver for ReuseDriver {
         self.inner.sync_family()
     }
 
+    fn transfer_explicit_identity_insert_clause(&self) -> Option<&'static str> {
+        self.inner.transfer_explicit_identity_insert_clause()
+    }
+
+    fn transfer_sql_file_insert_batch_size(&self) -> usize {
+        self.inner.transfer_sql_file_insert_batch_size()
+    }
+
+    fn render_transfer_sql_file_insert(
+        &self,
+        insert_template: &str,
+        identity_override_marker: &str,
+    ) -> Result<String, DriverError> {
+        self.inner
+            .render_transfer_sql_file_insert(insert_template, identity_override_marker)
+    }
+
     fn type_normalizer(&self) -> Option<Arc<dyn TypeNormalizer>> {
         self.inner.type_normalizer()
     }
@@ -135,6 +152,15 @@ impl DatabaseDriver for ReuseDriver {
 
     async fn get_databases(&self, handle: &ConnectionHandle) -> Result<Vec<String>, DriverError> {
         self.inner.get_databases(handle).await
+    }
+
+    async fn has_complete_foreign_key_catalog_visibility(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<bool, DriverError> {
+        self.inner
+            .has_complete_foreign_key_catalog_visibility(handle)
+            .await
     }
 
     async fn get_tables(
@@ -248,6 +274,23 @@ impl DatabaseDriver for ReuseDriver {
         self.inner.query_with_params(handle, sql, params).await
     }
 
+    fn parameter_placeholder(
+        &self,
+        index: usize,
+        data_type: Option<&str>,
+    ) -> Result<String, DriverError> {
+        self.inner.parameter_placeholder(index, data_type)
+    }
+
+    async fn execute_with_params(
+        &self,
+        handle: &ConnectionHandle,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<u64, DriverError> {
+        self.inner.execute_with_params(handle, sql, params).await
+    }
+
     async fn execute(&self, handle: &ConnectionHandle, sql: &str) -> Result<u64, DriverError> {
         self.inner.execute(handle, sql).await
     }
@@ -331,6 +374,13 @@ impl DatabaseDriver for ReuseDriver {
         handle: &ConnectionHandle,
     ) -> Result<TransactionHandle, DriverError> {
         self.inner.begin_transaction(handle).await
+    }
+
+    async fn begin_read_snapshot(
+        &self,
+        handle: &ConnectionHandle,
+    ) -> Result<TransactionHandle, DriverError> {
+        self.inner.begin_read_snapshot(handle).await
     }
 
     async fn commit(&self, tx: TransactionHandle) -> Result<(), DriverError> {
@@ -532,6 +582,7 @@ mod tests {
         rows: usize,
         precise_cancel: bool,
         ddl_atomicity: Option<DdlAtomicity>,
+        full_fk_catalog_visibility: bool,
     }
 
     impl FakeDriver {
@@ -542,6 +593,7 @@ mod tests {
                 rows,
                 precise_cancel: false,
                 ddl_atomicity: None,
+                full_fk_catalog_visibility: false,
             })
         }
 
@@ -552,6 +604,7 @@ mod tests {
                 rows,
                 precise_cancel: true,
                 ddl_atomicity: None,
+                full_fk_catalog_visibility: false,
             })
         }
 
@@ -562,7 +615,15 @@ mod tests {
                 rows,
                 precise_cancel: false,
                 ddl_atomicity: Some(atomicity),
+                full_fk_catalog_visibility: false,
             })
+        }
+
+        fn with_full_fk_catalog_visibility(mut self: Arc<Self>) -> Arc<Self> {
+            Arc::get_mut(&mut self)
+                .expect("fake driver is uniquely owned")
+                .full_fk_catalog_visibility = true;
+            self
         }
 
         fn statement(&self, sql: &str) -> StatementResult {
@@ -591,6 +652,13 @@ mod tests {
 
         fn ddl_atomicity(&self) -> DdlAtomicity {
             self.ddl_atomicity.unwrap_or(DdlAtomicity::Unknown)
+        }
+
+        async fn has_complete_foreign_key_catalog_visibility(
+            &self,
+            _handle: &ConnectionHandle,
+        ) -> Result<bool, DriverError> {
+            Ok(self.full_fk_catalog_visibility)
         }
 
         async fn connect(
@@ -646,6 +714,8 @@ mod tests {
                 primary_keys: vec![],
                 indexes: vec![],
                 foreign_keys: vec![],
+                check_constraints: vec![],
+                table_options: TableOptions::default(),
             })
         }
 
@@ -856,6 +926,7 @@ mod tests {
                 rows: QUERY_STREAM_BATCH_SIZE + 2,
                 precise_cancel: false,
                 ddl_atomicity: None,
+                full_fk_catalog_visibility: false,
             },
         };
         let handle = ConnectionHandle {
@@ -895,6 +966,21 @@ mod tests {
             .iter()
             .any(|e| matches!(e, QueryStreamEvent::StatementStart { .. })));
         assert!(matches!(events.last(), Some(QueryStreamEvent::Done { .. })));
+    }
+
+    #[tokio::test]
+    async fn reuse_driver_forwards_complete_fk_catalog_visibility() {
+        let inner = FakeDriver::new(0, false).with_full_fk_catalog_visibility();
+        let reuse = ReuseDriver::new(inner, "mariadb");
+        let handle = ConnectionHandle {
+            id: "h".into(),
+            pool_id: "p".into(),
+        };
+
+        assert!(reuse
+            .has_complete_foreign_key_catalog_visibility(&handle)
+            .await
+            .expect("forward visibility query"));
     }
 
     #[tokio::test]

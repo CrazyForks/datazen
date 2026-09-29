@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyOptionsToRows,
+  defaultRowSelected,
   displayTableName,
   mappingLabelKey,
+  operationAllowed,
   rowDiffCounts,
+  rowKeyString,
+  selectedRowCount,
   summarizeMappings,
   tableHasRowDiffs,
+  tableKey,
+  tableMatchesFilter,
   type DataSyncTableResult,
 } from '../mappingView';
+import type { DataSyncOperation, DataSyncRowChange, SyncOptions } from '../../../commands/sync';
+import type { Value } from '../../../types';
 
 describe('mappingView', () => {
   it('labels every mapping status', () => {
@@ -123,5 +132,51 @@ describe('mappingView', () => {
         ],
       }),
     ).toBe(false);
+  });
+
+  it('keeps operation selection and filters fail-closed for every row state', () => {
+    const options: SyncOptions = { insert: true, update: false, delete: true };
+    expect(defaultRowSelected('INSERT', options)).toBe(true);
+    expect(defaultRowSelected('UPDATE', options)).toBe(false);
+    expect(defaultRowSelected('DELETE', options)).toBe(false);
+    expect(defaultRowSelected('UNCHANGED', options)).toBe(false);
+    expect(operationAllowed('INSERT', options)).toBe(true);
+    expect(operationAllowed('UPDATE', options)).toBe(false);
+    expect(operationAllowed('DELETE', options)).toBe(true);
+    expect(operationAllowed('UNCHANGED', options)).toBe(false);
+
+    const rows: DataSyncRowChange[] = [
+      { operation: 'INSERT', key: [1], sourceRow: [1], targetRow: null, changedColumns: [], selected: true },
+      { operation: 'UPDATE', key: [2], sourceRow: [2], targetRow: [1], changedColumns: ['id'], selected: true },
+      { operation: 'DELETE', key: [3], sourceRow: null, targetRow: [3], changedColumns: [], selected: true },
+      { operation: 'UNCHANGED', key: [4], sourceRow: [4], targetRow: [4], changedColumns: [], selected: true },
+    ];
+    const table: DataSyncTableResult = {
+      sourceTable: 'source_rows',
+      targetTable: 'target_rows',
+      status: 'MATCHED',
+      rows,
+    };
+    expect(selectedRowCount(table, options)).toBe(2);
+    expect(applyOptionsToRows(rows, options).map((row) => row.selected)).toEqual([
+      true,
+      false,
+      true,
+      false,
+    ]);
+    expect(tableMatchesFilter(table, 'insert', '')).toBe(true);
+    expect(tableMatchesFilter(table, 'update', '')).toBe(true);
+    expect(tableMatchesFilter(table, 'delete', '')).toBe(true);
+    expect(tableMatchesFilter(table, 'all', 'SOURCE')).toBe(true);
+    expect(tableMatchesFilter(table, 'incompatible', '')).toBe(false);
+    expect(tableKey({ ...table, sourceTable: '' })).toBe('target_rows');
+
+    expect(mappingLabelKey('BROKEN' as DataSyncTableResult['status'])).toBe(
+      'sync.mappingIncompatible',
+    );
+    expect(defaultRowSelected('BROKEN' as DataSyncOperation, options)).toBe(false);
+    expect(operationAllowed('BROKEN' as DataSyncOperation, options)).toBe(false);
+    expect(tableMatchesFilter(table, 'BROKEN' as never, '')).toBe(true);
+    expect(rowKeyString([BigInt(7)] as unknown as Value[])).toBe('7');
   });
 });

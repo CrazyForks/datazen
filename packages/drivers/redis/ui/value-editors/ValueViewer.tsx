@@ -152,7 +152,11 @@ export function ValueViewer({
   // Codec / View 两行必须留着，否则用户没法把视图切回文本档。
 
   return (
-    <div className="space-y-2" data-testid="redis-value-viewer" data-show-output={showOutput ? 'true' : 'false'}>
+    <div
+      className="space-y-2"
+      data-testid="redis-value-viewer"
+      data-show-output={showOutput ? 'true' : 'false'}
+    >
       <div className="flex flex-wrap items-center gap-2 text-[11px]">
         <span className="text-fg-muted">{t('redis.codec.label')}</span>
         <div className="flex flex-wrap gap-1" data-testid="redis-codec-group" role="group">
