@@ -2,10 +2,10 @@
 
 use super::PostgresDriver;
 use crate::catalog::{
-    PgColumnDdl, PgSequenceDdl, build_pg_alter_sequence_owned_by, build_pg_create_sequence_sql,
-    build_pg_create_table_ddl, pg_sequence_start,
+    build_pg_alter_sequence_owned_by, build_pg_create_sequence_sql, build_pg_create_table_ddl,
+    pg_sequence_start, PgColumnDdl, PgSequenceDdl,
 };
-use crate::execution::{PG_BACKEND_PID_SQL, PG_CANCEL_BACKEND_SQL, PgQueryExecution};
+use crate::execution::{PgQueryExecution, PG_BACKEND_PID_SQL, PG_CANCEL_BACKEND_SQL};
 use crate::sql::{apply_select_limit, parse_pg_table_ref};
 use datazen_driver_api::*;
 
@@ -387,12 +387,10 @@ async fn transaction_execution_cancel_is_pending_until_target_is_bound() {
         DriverError::QueryExecutionSessionMismatch
     ));
 
-    assert!(
-        driver
-            .bind_backend_pid(&handle, &execution_id, 42)
-            .await
-            .unwrap()
-    );
+    assert!(driver
+        .bind_backend_pid(&handle, &execution_id, 42)
+        .await
+        .unwrap());
     assert_eq!(
         driver
             .query_executions
