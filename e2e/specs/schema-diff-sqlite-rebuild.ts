@@ -35,6 +35,7 @@ describe('[tester] SQLite Schema Diff rebuild', () => {
   const sourceName = `SQLite Rebuild Source ${stamp}`;
   const targetName = `SQLite Rebuild Target ${stamp}`;
   const table = `rebuild_${stamp}`;
+  const staleTable = `stale_rebuild_${stamp}`;
   let mainWindow: string;
 
   before(async () => {
@@ -45,6 +46,9 @@ describe('[tester] SQLite Schema Diff rebuild', () => {
       source.exec(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, value BLOB NOT NULL)`);
       target.exec(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`);
       target.exec(`INSERT INTO ${table} (id, value) VALUES (7, 'kept')`);
+      source.exec(`CREATE TABLE ${staleTable} (id INTEGER PRIMARY KEY, value BLOB NOT NULL)`);
+      target.exec(`CREATE TABLE ${staleTable} (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`);
+      target.exec(`INSERT INTO ${staleTable} (id, value) VALUES (9, 'unchanged')`);
     } finally {
       source.close();
       target.close();
@@ -109,6 +113,47 @@ describe('[tester] SQLite Schema Diff rebuild', () => {
       expect(String(schema?.sql)).toMatch(/BLOB/i);
     } finally {
       target.close();
+    }
+  });
+
+  it('rejects a target schema changed after review before writing', async () => {
+    await openSchemaDiffWindow();
+    await selectSchemaDiffEndpoints(sourceName, targetName);
+    await setSchemaDiffTables(staleTable);
+    await clickSchemaDiffCompare();
+    await clickSchemaDiffGeneratePlan();
+    await advanceSchemaDiffToReview();
+    const confirmation = await $(
+      '[data-testid="schema-diff-deploy-panel"] input[placeholder="DEPLOY"]',
+    );
+    if (await confirmation.isExisting()) await confirmation.setValue('DEPLOY');
+
+    const target = new Sqlite(targetFile);
+    try {
+      target.exec(`ALTER TABLE ${staleTable} ADD COLUMN drift TEXT`);
+    } finally {
+      target.close();
+    }
+
+    let error = '';
+    try {
+      await deploySchemaDiffPlan();
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+    }
+    expect(error).toContain(`Target schema changed for ${staleTable}; compare again`);
+
+    const unchangedTarget = new Sqlite(targetFile);
+    try {
+      const row = unchangedTarget.prepare(`SELECT id, value, drift FROM ${staleTable}`).get();
+      expect(row).toEqual({ id: 9, value: 'unchanged', drift: null });
+      const schema = unchangedTarget
+        .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '${staleTable}'`)
+        .get();
+      expect(String(schema?.sql)).toMatch(/value\s+TEXT/i);
+      expect(String(schema?.sql)).toMatch(/drift\s+TEXT/i);
+    } finally {
+      unchangedTarget.close();
     }
   });
 });
