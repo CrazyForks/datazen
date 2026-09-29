@@ -625,6 +625,35 @@ it('blocks execution across rollback and result state transitions', () => {
   expect(screen.getByTestId('schema-diff-deploy-status')).toHaveTextContent('unknown');
 });
 
+it('forces the transaction control for reviewed SQLite table rebuilds', () => {
+  const plan = {
+    ...samplePlan,
+    targetDialect: 'sqlite',
+    statements: [{ ...samplePlan.statements[0], requiresTransaction: true }],
+  };
+  render(
+    <SchemaDiffDeployPanel
+      plan={plan}
+      targetLabel="SQLite target"
+      useTransaction={false}
+      onUseTransactionChange={vi.fn()}
+      requireRollback={false}
+      onRequireRollbackChange={vi.fn()}
+      confirmText=""
+      onConfirmTextChange={vi.fn()}
+      deploying={false}
+      onDeploy={vi.fn()}
+      result={null}
+    />,
+  );
+
+  const transactionCheckbox = screen.getAllByRole('checkbox')[0];
+  expect(transactionCheckbox).toBeChecked();
+  expect(transactionCheckbox).toBeDisabled();
+  expect(screen.getByText('(schemaDiff.transactionRequired)')).toBeInTheDocument();
+  expect(screen.getByTestId('schema-diff-deploy')).toBeEnabled();
+});
+
 describe('[tester] deployment review control journey', () => {
   it('forwards edits and keeps deployment closed until requirements clear', () => {
     const onUseTransactionChange = vi.fn();

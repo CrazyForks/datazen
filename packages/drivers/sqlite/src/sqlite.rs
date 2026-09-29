@@ -1,6 +1,8 @@
 //! SQLite driver backed by sqlx SqlitePool.
 
 use crate::structure;
+
+mod schema;
 use async_trait::async_trait;
 use datazen_driver_api::*;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -350,132 +352,8 @@ impl DatabaseDriver for SqliteDriver {
         database: &str,
         schema: Option<&str>,
     ) -> Result<TableSchema, DriverError> {
-        // SQLite has no schema level: a single-table read must pin no schema.
-        validate_schema_target(self, database, schema, SchemaScope::ExactSchema)?;
-        // Resolve against the caller's attached database, never the session's
-        // implicit `main`; blank keeps the old `main` fallback.
-        let catalog = Self::quote_schema(Self::effective_database(database));
-        let pools = self.pools.read().await;
-        let pool = Self::get_pool(&pools, handle)?;
-
-        let col_rows = sqlx::query(&format!(
-            "PRAGMA {catalog}.table_info({})",
-            self.quote_ident(table)
-        ))
-        .fetch_all(pool)
-        .await
-        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-
-        let mut columns = Vec::new();
-        let mut primary_keys = Vec::new();
-
-        for row in &col_rows {
-            let name: String = row.get("name");
-            let data_type: String = row.get("type");
-            let notnull: bool = row.get::<i32, _>("notnull") != 0;
-            let default: Option<String> = row.try_get("dflt_value").ok();
-            let pk: bool = row.get::<i32, _>("pk") != 0;
-
-            if pk {
-                primary_keys.push(name.clone());
-            }
-
-            columns.push(ColumnSchema {
-                name,
-                data_type,
-                nullable: !notnull,
-                default_value: default,
-                is_primary_key: pk,
-                is_auto_increment: false,
-                comment: None,
-            });
-        }
-
-        // Indexes
-        let idx_rows = sqlx::query(&format!(
-            "PRAGMA {catalog}.index_list({})",
-            self.quote_ident(table)
-        ))
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-
-        let mut indexes = Vec::new();
-        for idx_row in &idx_rows {
-            let idx_name: String = idx_row.get("name");
-            let is_unique: bool = idx_row.get::<i32, _>("unique") != 0;
-
-            let info_rows = sqlx::query(&format!(
-                "PRAGMA {catalog}.index_info(\"{}\")",
-                idx_name.replace('"', "\"\"")
-            ))
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-
-            let idx_columns: Vec<String> = info_rows
-                .iter()
-                .map(|r| r.get::<String, _>("name"))
-                .collect();
-
-            let is_primary = idx_name.starts_with("sqlite_autoindex_");
-            indexes.push(IndexInfo {
-                name: idx_name,
-                columns: idx_columns,
-                is_unique,
-                is_primary,
-                index_type: "btree".into(),
-            });
-        }
-
-        // Foreign keys
-        let fk_rows = sqlx::query(&format!(
-            "PRAGMA {catalog}.foreign_key_list({})",
-            self.quote_ident(table)
-        ))
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-
-        let mut fk_map: HashMap<i64, ForeignKeyInfo> = HashMap::new();
-        for fk_row in &fk_rows {
-            let id: i64 = fk_row.get::<i32, _>("id") as i64;
-            let from_col: String = fk_row.get("from");
-            let to_table: String = fk_row.get("table");
-            let to_col: String = fk_row.get("to");
-            let on_update: String = fk_row.try_get("on_update").unwrap_or_default();
-            let on_delete: String = fk_row.try_get("on_delete").unwrap_or_default();
-
-            fk_map
-                .entry(id)
-                .and_modify(|fk| {
-                    fk.columns.push(from_col.clone());
-                    fk.referenced_columns.push(to_col.clone());
-                })
-                .or_insert_with(|| ForeignKeyInfo {
-                    name: format!("fk_{}_{}_{}", table, to_table, id),
-                    columns: vec![from_col],
-                    referenced_table: to_table,
-                    referenced_columns: vec![to_col],
-                    on_update,
-                    on_delete,
-                    deferrability: ForeignKeyDeferrability::Unknown,
-                });
-        }
-
-        let foreign_keys: Vec<ForeignKeyInfo> = fk_map.into_values().collect();
-
-        Ok(TableSchema {
-            table_name: table.to_string(),
-            columns,
-            primary_keys,
-            indexes,
-            foreign_keys,
-            check_constraints: Vec::new(),
-            table_options: TableOptions::default(),
-        })
+        schema::get_table_schema(self, handle, table, database, schema).await
     }
-
     async fn query(
         &self,
         handle: &ConnectionHandle,
@@ -695,6 +573,68 @@ impl DatabaseDriver for SqliteDriver {
             pool_id: tx.connection_id,
         };
         self.execute(&handle, "ROLLBACK").await?;
+        Ok(())
+    }
+
+    async fn validate_schema_migration_plan(
+        &self,
+        handle: &ConnectionHandle,
+        target: SqlTarget<'_>,
+        expected_target_schemas: &[TableSchema],
+    ) -> Result<(), DriverError> {
+        if expected_target_schemas.is_empty() {
+            return Err(DriverError::TransactionError(
+                "SQLite reviewed rebuild is missing its target schema snapshot".into(),
+            ));
+        }
+        let database = target.database().unwrap_or("main");
+        for expected in expected_target_schemas {
+            let current = self
+                .get_table_schema(handle, &expected.table_name, database, target.schema())
+                .await?;
+            if current != *expected {
+                return Err(DriverError::TransactionError(format!(
+                    "SQLite table `{}` changed since the schema comparison was reviewed; refresh the comparison and review the new plan",
+                    expected.table_name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    async fn validate_schema_migration(
+        &self,
+        handle: &ConnectionHandle,
+        target: SqlTarget<'_>,
+    ) -> Result<(), DriverError> {
+        let requested_database = target.database().unwrap_or("main");
+        let databases = self.query(handle, "PRAGMA database_list").await?;
+        let mut selected_database = None;
+        for row in databases.rows {
+            let name = row.get(1).and_then(|value| match value {
+                Some(Value::String(value)) => Some(value.as_str()),
+                _ => None,
+            });
+            let file = row.get(2).and_then(|value| match value {
+                Some(Value::String(value)) => Some(value.as_str()),
+                _ => None,
+            });
+            if name == Some(requested_database) || file == Some(requested_database) {
+                selected_database = name.map(str::to_owned);
+                break;
+            }
+        }
+        let selected_database = selected_database.unwrap_or_else(|| "main".into());
+        let catalog = Self::quote_schema(&selected_database);
+        let violations = self
+            .query(handle, &format!("PRAGMA {catalog}.foreign_key_check"))
+            .await?;
+        if !violations.rows.is_empty() {
+            return Err(DriverError::TransactionError(format!(
+                "SQLite rebuild left {} foreign-key violation(s); transaction must roll back",
+                violations.rows.len()
+            )));
+        }
         Ok(())
     }
 

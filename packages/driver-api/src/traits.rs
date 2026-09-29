@@ -606,6 +606,31 @@ pub trait DatabaseDriver: Send + Sync {
         ))
     }
 
+    /// Validate that target catalog snapshots used to prepare an atomic
+    /// schema migration still match before the host executes its first write.
+    /// The host invokes this inside the transaction only for reviewed plans
+    /// that require atomic execution.
+    async fn validate_schema_migration_plan(
+        &self,
+        _handle: &ConnectionHandle,
+        _target: SqlTarget<'_>,
+        _expected_target_schemas: &[TableSchema],
+    ) -> Result<(), DriverError> {
+        Ok(())
+    }
+
+    /// Validate driver-specific invariants before committing a reviewed
+    /// schema migration. Drivers that need no extra validation may keep the
+    /// default. The host invokes this only for plans whose statements require
+    /// an atomic transaction.
+    async fn validate_schema_migration(
+        &self,
+        _handle: &ConnectionHandle,
+        _target: SqlTarget<'_>,
+    ) -> Result<(), DriverError> {
+        Ok(())
+    }
+
     async fn explain(
         &self,
         _handle: &ConnectionHandle,

@@ -400,12 +400,18 @@ export function SchemaDiffWindow() {
     void buildPlan();
   }, [step, plan, loading, buildPlan]);
 
+  const transactionRequired = Boolean(
+    plan?.statements.some((statement) => statement.requiresTransaction),
+  );
+  const transactionEnabled = transactionRequired || useTransaction;
   const deployAllowed = Boolean(
     plan &&
       !deployResult &&
       !plan.requirements?.length &&
+      (!transactionRequired ||
+        (transactionEnabled && dialectSupportsTransactionalDdl(plan.targetDialect))) &&
       (!requireRollback ||
-        (useTransaction && dialectSupportsTransactionalDdl(plan.targetDialect))) &&
+        (transactionEnabled && dialectSupportsTransactionalDdl(plan.targetDialect))) &&
       canRunDeploy({
         hasDestructive: planHasDestructive(plan),
         confirmText,
@@ -425,7 +431,7 @@ export function SchemaDiffWindow() {
       const result = await schemaDiffCommands.executeDeploy({
         targetDbSessionId: tgtConnId,
         plan,
-        useTransaction,
+        useTransaction: transactionEnabled,
         requireRollback,
         confirmDestructive: planHasDestructive(plan) ? confirmText.trim() : undefined,
         targetDatabase: endpoints.targetDatabase || null,
@@ -447,6 +453,7 @@ export function SchemaDiffWindow() {
     plan,
     requireRollback,
     selectedSavedProfile,
+    transactionEnabled,
     useTransaction,
   ]);
 
