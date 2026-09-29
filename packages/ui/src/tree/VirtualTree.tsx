@@ -370,7 +370,7 @@ export function VirtualTree<R extends TreeRowLevel>({
     <div
       {...consumerContainerProps}
       ref={scrollRef}
-      className={cn(tracksScroll && 'relative', className)}
+      className={cn(tracksScroll && 'relative', className, consumerContainerProps?.className)}
       onKeyDown={onKeyDown}
       onScroll={onScroll}
       data-testid={testId}

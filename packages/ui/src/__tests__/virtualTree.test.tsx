@@ -293,6 +293,35 @@ const NAV_KEYS: Record<string, TreeNavAction> = {
   a: 'select-all',
 };
 
+describe('VirtualTree · scroll-container class', () => {
+  const rows: Row[] = [row('a', 1)];
+
+  it('keeps the class a consumer passes through containerProps', () => {
+    // containerProps is documented as "never dropped", so a className handed
+    // through it has to survive the shell's own className merge. Dropping it
+    // silently unsets overflow on the scroll container, which is invisible
+    // until something tries to scroll.
+    const { container } = render(
+      <VirtualTree
+        rows={rows}
+        getKey={(r) => r.id}
+        isBranch={isBranch}
+        rowHeight={28}
+        className="tree"
+        containerProps={{ className: 'overflow-y-auto' }}
+        renderRow={({ row: r, itemProps }) => (
+          <div role="treeitem" {...itemProps}>
+            {r.id}
+          </div>
+        )}
+      />,
+    );
+    const shell = container.querySelector('.tree');
+    expect(shell).not.toBeNull();
+    expect(shell?.className).toContain('overflow-y-auto');
+  });
+});
+
 describe('VirtualTree · keyboard navigation', () => {
   function navHarness(rows: Row[], activeIndex: number, onActiveIndexChange = vi.fn()) {
     const onToggle = vi.fn();

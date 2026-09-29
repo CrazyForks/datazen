@@ -1,5 +1,9 @@
 import { expect, browser, $ } from '@wdio/globals';
-import { closeExtraWindows, openWorkflowWorkspace } from '../helpers.js';
+import {
+  closeExtraWindows,
+  connectSeededPgInWorkspace,
+  openWorkflowWorkspace,
+} from '../helpers.js';
 
 /**
  * E2E test for AskQuestion interaction in AI Chat.
@@ -67,11 +71,23 @@ async function cleanupTestWorkflow() {
 }
 
 async function openWorkflowAiChat() {
-  const aiBtn = await $('button[title="AI 创建工作流"]');
-  if (await aiBtn.isExisting()) {
-    await aiBtn.click();
-    await browser.pause(800);
-  }
+  // The control is an icon-only Sparkles button carrying only a translated
+  // title, so it must be located by its testid — and it must be WAITED on, not
+  // polled: an `isExisting()` probe silently skips the click while the
+  // workflow workspace is still mounting, and the injection then lands in a
+  // session the panel never renders.
+  const aiBtn = await $('[data-testid="workflow-ai-create-button"]');
+  await aiBtn.waitForDisplayed({ timeout: 15000 });
+  await aiBtn.click();
+  // Wait for the panel itself, not for a question block: no questions exist yet
+  // at this point in the flow.
+  await $('[data-testid="workflow-ai-create-panel"]').waitForDisplayed({ timeout: 15000 });
+}
+
+/** Inject, then require the QuestionBlock to actually appear. */
+async function injectAndWaitForQuestions(inject: () => Promise<boolean>) {
+  expect(await inject()).toBe(true);
+  await $('[data-testid="question-block"]').waitForDisplayed({ timeout: 15000 });
 }
 
 const MOCK_QUESTIONS = [
@@ -160,6 +176,11 @@ describe('AI AskQuestion Interaction (E2E)', () => {
   before(async () => {
     mainWindow = await browser.getWindowHandle();
     await browser.pause(2000);
+    // The workspace-mode sidebar (and therefore `workspace-nav-workflow`) only
+    // exists once the connection workspace is on screen. On a fresh session the
+    // app boots to the welcome page, where the whole sidebar is absent, so every
+    // navigation below would time out. Seed the connection first.
+    await connectSeededPgInWorkspace();
     await seedAskQuestionWorkflow();
     await browser.pause(500);
   });
@@ -221,16 +242,11 @@ describe('AI AskQuestion Interaction (E2E)', () => {
     await browser.pause(500);
 
     // Inject a simulated message with questions to test UI rendering
-    const injected = await injectAskQuestionMessage();
+    await injectAndWaitForQuestions(injectAskQuestionMessage);
 
-    if (injected) {
-      await browser.pause(1000);
-
-      // Check that question prompts are rendered
-      const body = await $('body').getText();
-      const hasQuestion = body.includes('database engine') || body.includes('数据库');
-      expect(hasQuestion).toBe(true);
-    }
+    // Option buttons and the custom-answer input are rendered for every question.
+    await $('[data-testid="question-option-db_type-pg"]').waitForDisplayed({ timeout: 10000 });
+    await $('[data-testid="question-custom-input-db_type"]').waitForDisplayed({ timeout: 10000 });
   });
 
   it('选择选项后应高亮', async () => {
@@ -274,31 +290,17 @@ describe('AI AskQuestion Interaction (E2E)', () => {
     await injectAskQuestionMessage();
     await browser.pause(1000);
 
-    const hasSubmitBtn = await browser.execute(() => {
-      const buttons = document.querySelectorAll('button');
-      for (const btn of buttons) {
-        const text = btn.textContent || '';
-        if (text.includes('提交回答') || text.includes('Submit Answers')) {
-          return true;
-        }
-      }
-      return false;
-    });
-
-    expect(hasSubmitBtn).toBe(true);
+    const submit = await $('[data-testid="question-submit"]');
+    await submit.waitForDisplayed({ timeout: 10000 });
+    await expect(submit).toBeEnabled();
   });
 
   it('（Tool Call）问题 UI 应渲染选项按钮', async () => {
     await openWorkflowWorkspace(mainWindow);
     await browser.pause(1000);
 
-    const injected = await injectToolCallAskQuestionMessage();
-    if (injected) {
-      await browser.pause(1000);
-      const body = await $('body').getText();
-      const hasQuestion = body.includes('database engine') || body.includes('数据库');
-      expect(hasQuestion).toBe(true);
-    }
+    await injectAndWaitForQuestions(injectToolCallAskQuestionMessage);
+    await $('[data-testid="question-option-db_type-pg"]').waitForDisplayed({ timeout: 10000 });
   });
 
   it('（Tool Call）选择选项后应高亮', async () => {
@@ -336,52 +338,28 @@ describe('AI AskQuestion Interaction (E2E)', () => {
   it('（Tool Call）提交后应生成 tool 角色消息', async () => {
     await openWorkflowWorkspace(mainWindow);
     await browser.pause(500);
-    await injectToolCallAskQuestionMessage();
-    await browser.pause(1000);
+    await injectAndWaitForQuestions(injectToolCallAskQuestionMessage);
 
-    // Select an option
-    await browser.execute(() => {
-      const buttons = document.querySelectorAll('button');
-      for (const btn of buttons) {
-        if (btn.textContent?.includes('PostgreSQL')) {
-          btn.click();
-          break;
-        }
-      }
-    });
-    await browser.pause(200);
+    // Select one option for each question, then submit.
+    const firstOption = await $('[data-testid="question-option-db_type-pg"]');
+    await firstOption.waitForDisplayed({ timeout: 10000 });
+    await firstOption.click();
+    await expect(firstOption).toHaveAttribute('aria-pressed', 'true');
 
-    // Select second question option
-    await browser.execute(() => {
-      const buttons = document.querySelectorAll('button');
-      for (const btn of buttons) {
-        if (btn.textContent?.includes('Read queries') || btn.textContent?.includes('SELECT')) {
-          btn.click();
-          break;
-        }
-      }
-    });
-    await browser.pause(200);
+    const secondOption = await $('[data-testid="question-option-query_type-select"]');
+    await secondOption.waitForDisplayed({ timeout: 10000 });
+    await secondOption.click();
+    await expect(secondOption).toHaveAttribute('aria-pressed', 'true');
 
-    // Check that submit button exists
-    const hasSubmit = await browser.execute(() => {
-      const buttons = document.querySelectorAll('button');
-      for (const btn of buttons) {
-        const text = btn.textContent || '';
-        if (text.includes('提交回答') || text.includes('Submit Answers')) {
-          return true;
-        }
-      }
-      return false;
-    });
-    expect(hasSubmit).toBe(true);
+    const submit = await $('[data-testid="question-submit"]');
+    await submit.waitForDisplayed({ timeout: 10000 });
+    await expect(submit).toBeEnabled();
   });
 
   it('（Tool Call）消息中应包含 toolCalls 字段', async () => {
     await openWorkflowWorkspace(mainWindow);
     await browser.pause(500);
-    await injectToolCallAskQuestionMessage();
-    await browser.pause(500);
+    expect(await injectToolCallAskQuestionMessage()).toBe(true);
 
     const hasToolCalls = await browser.execute(() => {
       const store = (window as any).__datazenAiStore;

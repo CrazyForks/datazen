@@ -648,9 +648,12 @@ export function QuestionBlock({
   if (submitted) return null;
 
   return (
-    <div className="mt-2 space-y-3 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2.5">
+    <div
+      className="mt-2 space-y-3 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2.5"
+      data-testid="question-block"
+    >
       {questions.map((q) => (
-        <div key={q.id}>
+        <div key={q.id} data-testid={`question-block-item-${q.id}`}>
           <p className="text-xs font-medium text-fg mb-1.5">{q.prompt}</p>
 
           {q.options.length > 0 && (
@@ -670,6 +673,8 @@ export function QuestionBlock({
                         ? 'border-accent bg-accent/15 text-accent font-medium'
                         : 'border-edge bg-surface text-fg-muted hover:text-fg hover:border-fg-muted',
                     )}
+                    data-testid={`question-option-${q.id}-${opt.id}`}
+                    aria-pressed={selected}
                     onClick={() => toggleOption(q.id, opt.id, q.allowMultiple)}
                   >
                     {opt.label}
@@ -682,6 +687,7 @@ export function QuestionBlock({
           <input
             type="text"
             className="w-full h-7 rounded border border-edge bg-surface px-2 text-xs text-fg outline-none focus:border-accent placeholder:text-fg-muted/50"
+            data-testid={`question-custom-input-${q.id}`}
             placeholder={t('chat.questions.customAnswer')}
             value={
               typeof answers[q.id] === 'string' && !q.options.find((o) => o.id === answers[q.id])
@@ -693,7 +699,12 @@ export function QuestionBlock({
         </div>
       ))}
 
-      <Button variant="primary" className="h-7 text-xs gap-1" onClick={handleSubmit}>
+      <Button
+        variant="primary"
+        className="h-7 text-xs gap-1"
+        data-testid="question-submit"
+        onClick={handleSubmit}
+      >
         <Send className="h-3 w-3" />
         {t('chat.questions.submit')}
       </Button>

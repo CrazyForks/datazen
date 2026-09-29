@@ -30,13 +30,6 @@ const NODE_SELECTOR =
 
 const HINT_SELECTOR = '[data-empty-group]';
 
-/**
- * KNOWN GAP —— `group` 表头是带子节点的 treeitem，却没有 `aria-expanded`，
- * 读屏会把它当叶子。当前 NavigatorTreeRow.tsx 未输出该属性；
- * 一旦补上，把下面两个 null 改成 'true' / 'false'，spec 即可转为强制契约。
- */
-const KNOWN_GROUP_ARIA_EXPANDED = null as string | null;
-
 type RowSnapshot = {
   label: string;
   role: string | null;
@@ -270,14 +263,20 @@ describe('连接树 ARIA tree 语义 (NAV-ARIA)', () => {
     if (!group) return;
     const selector = `[data-group-header][data-group-name="${group.label.slice('group:'.length)}"]`;
 
+    // `group` rows carry children, so they must expose aria-expanded rather
+    // than read as leaves. NavigatorTreeRow.tsx now emits it, so this is a
+    // hard contract rather than the tolerated known gap it used to be.
     const before = (await readRows()).find((row) => row.label === group.label);
-    expect(before?.expanded).toBe(KNOWN_GROUP_ARIA_EXPANDED);
+    expect(before?.expanded).toBe('true');
+    await waitForAttribute(selector, 'aria-expanded', 'true');
 
     expect(await clickByDataAttribute(selector)).toBe(true);
+    await waitForAttribute(selector, 'aria-expanded', 'false');
     await browser.pause(600);
     expect(await structuralViolations()).toEqual([]);
 
     expect(await clickByDataAttribute(selector)).toBe(true);
+    await waitForAttribute(selector, 'aria-expanded', 'true');
     await browser.pause(600);
     expect(await structuralViolations()).toEqual([]);
   });

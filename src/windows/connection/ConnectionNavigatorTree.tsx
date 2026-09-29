@@ -343,12 +343,21 @@ export const ConnectionNavigatorTree = forwardRef<
         if (isPathHierarchy) {
           void ensureNamespacePath([], entry.dbSessionId);
         }
-        // For multi-db connections, do not auto-expand the default database;
-        // keep expansion at the databases container level so the user sees the database list.
       });
 
-      if (!isMultiDb && !isPluginManaged && conn.database) {
-        const dbKey = `${connectionId}::${conn.database}`;
+      // Auto-expand using the *driver's* catalog name, not the configured one:
+      // the tree renders nodes keyed by what the driver reports, and when those
+      // two differ (SQLite reports its catalog name, MySQL can report a
+      // different case) the key built from `conn.database` never matches a real
+      // node, so the database stayed collapsed. The schema store's
+      // `currentDatabase` is the driver's own answer; fall back to the
+      // configured name when the session has not resolved one yet.
+      const resolved = useSchemaStore.getState().schemas.get(entry.dbSessionId)?.currentDatabase;
+      const dbName = resolved || conn.database;
+      // For multi-db connections, do not auto-expand the default database;
+      // keep expansion at the databases container level so the user sees the database list.
+      if (!isMultiDb && !isPluginManaged && dbName) {
+        const dbKey = `${connectionId}::${dbName}`;
         setExpandedDbs((prev) => new Set(prev).add(dbKey));
         setExpandedCats((prev) => new Set(prev).add(`${dbKey}::tables`));
       }
@@ -643,8 +652,8 @@ export const ConnectionNavigatorTree = forwardRef<
         overscan={25}
         scrollRef={scrollRef}
         testId="navigator-tree"
+        className="flex-1 min-h-0 overflow-y-auto py-1 select-none"
         containerProps={{
-          className: 'flex-1 min-h-0 overflow-y-auto py-1 select-none',
           onDragLeave: (e) => {
             const current = scrollRef.current;
             if (!current) return;

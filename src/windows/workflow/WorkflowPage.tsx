@@ -681,6 +681,7 @@ export function WorkflowPage({
         variant="secondary"
         className="h-6 w-6 !px-0"
         title={t('workflows.aiCreate.title')}
+        data-testid="workflow-ai-create-button"
         onClick={handleAiCreate}
       >
         <Sparkles className="h-3 w-3" />
@@ -1021,7 +1022,7 @@ export function WorkflowPage({
 
           {/* Panel content */}
           {activePanel?.type === 'ai-create' ? (
-            <div className="relative flex-1 min-h-0">
+            <div className="relative flex-1 min-h-0" data-testid="workflow-ai-create-panel">
               <div className="absolute inset-0">
                 <WorkflowChatPanel
                   connections={savedConnections}

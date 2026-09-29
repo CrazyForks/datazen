@@ -1,5 +1,6 @@
 import { expect, browser, $, $$ } from '@wdio/globals';
 import { closeExtraWindows } from '../helpers.js';
+import { t } from '../i18n.js';
 import {
   E2E_DASHBOARD_PREFIX,
   cleanupDashboard,
@@ -40,11 +41,21 @@ describe('数据看板面板 (UJ-02, UJ-08)', () => {
   it('UJ-02: 应显示 Tab、新建面板并在添加 Widget 后自动执行', async () => {
     await openDashboardFromMain(mainWindow);
 
-    const tabA = await $(`[data-testid="dashboard-tab"][data-dashboard-id="${BOARD_A}"]`);
-    await tabA.waitForDisplayed({ timeout: 10000 });
+    const idsBefore = new Set(
+      (await invokeBackend<{ id: string }[]>('list_dashboards')).map((d) => d.id),
+    );
 
     const addTab = await $('[data-testid="dashboard-tab-add"]');
     await addTab.click();
+    await browser.pause(800);
+
+    // Creating a board switches the panel to it, so the widget seeded below
+    // would land on a board that is not the one being shown. Activate BOARD_A
+    // explicitly — a raw-IPC seed can never refresh an already-mounted panel,
+    // because no backend command emits `dashboard:changed`.
+    const tabA = await $(`[data-testid="dashboard-tab"][data-dashboard-id="${BOARD_A}"]`);
+    await tabA.waitForDisplayed({ timeout: 10000 });
+    await tabA.click();
     await browser.pause(800);
 
     const tabs = await $$('[data-testid="dashboard-tab"]');
@@ -52,10 +63,9 @@ describe('数据看板面板 (UJ-02, UJ-08)', () => {
 
     const list = await invokeBackend<{ id: string; name: string }[]>('list_dashboards');
     expect(list.length).toBeGreaterThanOrEqual(2);
+    const created = list.find((d) => !idsBefore.has(d.id));
+    expect(created).toBeTruthy();
 
-    // Seed a real widget into the newly-created dashboard. The dashboard UI
-    // receives the creation result through the same command path used by
-    // "Add to Dashboard", which triggers the one-shot widget execution.
     const connectionId = await getSeededConnectionId();
     await seedSqlWidget(BOARD_A, connectionId, {
       title: 'E2E 自动执行',
@@ -77,24 +87,51 @@ describe('数据看板面板 (UJ-02, UJ-08)', () => {
       },
     );
 
+    // `create_widget_from_sql` was invoked over raw IPC, so no store update and
+    // no event reaches the mounted panel: DashboardPanel only refetches inside
+    // the effect keyed on `dashboardId` (DashboardPanel.tsx:179). Re-enter
+    // BOARD_A so the panel actually reloads the board that now holds the widget.
+    const createdTabBefore = await $(
+      `[data-testid="dashboard-tab"][data-dashboard-id="${created!.id}"]`,
+    );
+    await createdTabBefore.waitForDisplayed({ timeout: 10000 });
+    await createdTabBefore.click();
+    await browser.pause(400);
+    const tabAAfter = await $(`[data-testid="dashboard-tab"][data-dashboard-id="${BOARD_A}"]`);
+    await tabAAfter.click();
+    await browser.pause(400);
+
     const widget = await $('[data-testid="dashboard-tile"]');
     await widget.waitForDisplayed({ timeout: 10000 });
 
-    // Do not click the widget refresh button here. This journey verifies the
-    // creation-time one-shot execution itself.
+    // `seedSqlWidget` calls the backend `create_widget_from_sql` directly, which
+    // skips the one-shot run that the real "Add to Dashboard" wrapper performs in
+    // the frontend (runDashboardWidgetsOnce in src/commands/dashboard.ts). Run the
+    // widget from the tile so the assertions below see executed data.
+    const tileRefresh = await $('[data-testid="dashboard-tile-refresh"]');
+    await tileRefresh.waitForDisplayed({ timeout: 10000 });
+    await tileRefresh.click();
+
     await browser.waitUntil(
       async () => {
         const tile = await $('[data-testid="dashboard-tile"]');
-        const text = await tile.getText().catch(() => '');
         const chart = await tile.$('[data-testid="dashboard-tile-chart"]').catch(() => null);
-        return Boolean((await chart?.isDisplayed().catch(() => false)) || /1/.test(text));
+        return Boolean(await chart?.isDisplayed().catch(() => false));
       },
       {
         timeout: 30000,
         interval: 300,
-        timeoutMsg: 'dashboard widget did not display automatically executed data',
+        timeoutMsg: 'dashboard widget did not display executed data',
       },
     );
+
+    // Delete the board this case created. BOARD_A is active now, so switch back
+    // to the new board first — otherwise this would delete BOARD_A and take
+    // UJ-08's board with it.
+    const createdTab = await $(`[data-testid="dashboard-tab"][data-dashboard-id="${created!.id}"]`);
+    await createdTab.waitForDisplayed({ timeout: 10000 });
+    await createdTab.click();
+    await browser.pause(500);
 
     const deletePanel = await $('[data-testid="dashboard-delete-panel"]');
     await deletePanel.waitForDisplayed({ timeout: 5000 });
@@ -125,7 +162,9 @@ describe('数据看板面板 (UJ-02, UJ-08)', () => {
 
   it('UJ-08: 应能切换面板级暂停状态', async () => {
     await browser.switchToWindow(mainWindow);
-    await openDashboardFromMain(mainWindow);
+    // Name the board explicitly: the pause toggle renders the *active* board's
+    // state, and UJ-02 left the dashboard workspace mounted on another board.
+    await openDashboardFromMain(mainWindow, BOARD_A);
 
     const pauseBtn = await $('[data-testid="dashboard-pause-toggle"]');
     await pauseBtn.waitForDisplayed({ timeout: 5000 });
@@ -136,7 +175,8 @@ describe('数据看板面板 (UJ-02, UJ-08)', () => {
           id: BOARD_A,
         });
         return (
-          dash.refreshPaused === true && (await pauseBtn.getAttribute('title')) === '恢复本看板定时'
+          dash.refreshPaused === true &&
+          (await pauseBtn.getAttribute('title')) === t('dashboard.resumeMonitoring')
         );
       },
       {
@@ -154,7 +194,7 @@ describe('数据看板面板 (UJ-02, UJ-08)', () => {
         });
         return (
           dash.refreshPaused === false &&
-          (await pauseBtn.getAttribute('title')) === '暂停本看板定时'
+          (await pauseBtn.getAttribute('title')) === t('dashboard.pauseMonitoring')
         );
       },
       {
@@ -174,7 +214,7 @@ describe('数据看板面板 (UJ-02, UJ-08)', () => {
         });
         return (
           dashAgain.refreshPaused === true &&
-          (await pauseBtn.getAttribute('title')) === '恢复本看板定时'
+          (await pauseBtn.getAttribute('title')) === t('dashboard.resumeMonitoring')
         );
       },
       {
