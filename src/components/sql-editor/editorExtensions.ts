@@ -16,6 +16,8 @@ import {
   autocompletion,
   closeBrackets,
   acceptCompletion,
+  completionKeymap,
+  startCompletion,
   type Completion,
   type CompletionSource,
 } from '@codemirror/autocomplete';
@@ -618,7 +620,23 @@ export function createCompletionExtensions(
     [],
   );
 
-  return [completionSources, ...signatureHelpExts];
+  // The stock `completionKeymap` triggers on `Ctrl-Space`. That chord is
+  // delivered with its modifier flag already cleared on the WebKit build the
+  // E2E suite runs (measured: `['Control',' ']` and `['Alt',' ']` both arrive as
+  // a bare Space, only `['Meta',' ']` survives), so the stock binding is
+  // unreachable there and was simply never exercised — the extension was
+  // installed without any keymap at all, leaving `activateOnTyping` as the only
+  // way in. `Mod-Space` is the portable equivalent and is what VS Code and
+  // Sublime bind. It is prepended so it wins over the `Ctrl-Space` entry it
+  // replaces rather than sitting behind it; every other binding of the stock
+  // keymap (Escape, Enter, arrows) is kept as-is, because `closeCompletion` at
+  // `Prec.highest` is what the Escape-vs-multi-cursor contract depends on.
+  const completionKeymapExt = keymap.of([
+    { key: 'Mod-Space', run: startCompletion },
+    ...completionKeymap.filter((b) => b.key !== 'Ctrl-Space'),
+  ]);
+
+  return [completionSources, completionKeymapExt, ...signatureHelpExts];
 }
 
 /* -------------------------------------------------------------------------- */

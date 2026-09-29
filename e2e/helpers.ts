@@ -977,7 +977,228 @@ export async function dismissAnyOpenDialog(timeout = 1200): Promise<void> {
  * update. The click is important: selector-driven tests may leave a portaled
  * Host Select open, and browser.execute().focus() does not reproduce the
  * pointer/focus transition that closes it during a real user edit.
+ *
+ * The content is then replaced by dispatching a real CodeMirror transaction, NOT
+ * by `document.execCommand('insertText')` against the editor's DOM. That
+ * shortcut looked correct — the browser fires `beforeinput`/`input` with
+ * `trusted: true` and `inputType: "insertText"` — but CodeMirror does not turn
+ * an arbitrary DOM mutation into a transaction. It diffs the DOM against its
+ * own `docView` and, when a selection is already non-empty, the diff comes back
+ * empty, so the change is dropped: `view.state.doc` keeps the old string while
+ * the rendered DOM is left as a bare `#text` node with every `.cm-line`
+ * destroyed. The two never reconcile — `SqlEditor.tsx`'s external-value effect
+ * compares `view.state.doc.toString() !== value`, and after a divergence both
+ * sides still hold the old value, so it is a no-op and cannot heal it.
+ *
+ * A single `view.dispatch` between two `execCommand` writes (or a single range)
+ * is enough to make the very same `execCommand` land, which is why the defect
+ * looked intermittent. The transaction below always lands, and the wait that
+ * used to sit behind `pause(300)` is now a real observable.
  */
+/**
+ * Moves the mouse over `token` inside the SQL editor and waits for a hover
+ * tooltip to appear.
+ *
+ * The event is dispatched on a `.cm-line`, NOT on `.cm-editor` or `.cm-content`.
+ * That is the whole reason a hover test can silently assert the wrong branch:
+ *
+ *  - `HoverPlugin.startHover` begins with `view.docView.tile.nearest(target)` and
+ *    returns immediately when that is null
+ *    (@codemirror/view 6.43.11 dist/index.js:10742).
+ *  - `TileTree.nearest` only walks *upward* through `parentNode`
+ *    (dist/index.js:1872), looking for `dom.cmTile`.
+ *  - `cmTile` is stamped on tile DOM by the `Tile` constructor
+ *    (dist/index.js:1740) — line blocks included, since `LineTile` extends
+ *    `CompositeTile` (dist/index.js:1960).
+ *
+ * `.cm-editor` and `.cm-content` are both *ancestors* of every line tile, so an
+ * event dispatched on either walks up and finds nothing: the tooltip source is
+ * never called and the case reports "no hover" while the product is fine. A
+ * bubbling event does not help, because `event.target` stays the original node.
+ *
+ * The coordinates come from `coordsAtPos` and are nudged a few pixels inward:
+ * `startHover` re-resolves the position with `posAtCoords` and rejects anything
+ * outside the character box, so an exact left/top edge can fall back to the
+ * preceding character.
+ */
+export async function hoverOverToken(token: string, timeout = 5000): Promise<boolean> {
+  const dispatched = await browser.execute((needle: string) => {
+    const editors = Array.from(document.querySelectorAll('.cm-editor'));
+    for (let i = editors.length - 1; i >= 0; i -= 1) {
+      const view =
+        (editors[i] as unknown as { cmView?: { view?: unknown }; __cmView?: unknown })?.cmView
+          ?.view ?? (editors[i] as unknown as { __cmView?: unknown }).__cmView;
+      const cm = view as
+        | {
+            state: { doc: { toString(): string } };
+            coordsAtPos: (pos: number) => { left: number; top: number; bottom: number } | null;
+          }
+        | undefined;
+      if (!cm) continue;
+      const idx = cm.state.doc.toString().indexOf(needle);
+      if (idx < 0) continue;
+      const coords = cm.coordsAtPos(idx);
+      if (!coords) continue;
+      const x = coords.left + 3;
+      const y = (coords.top + coords.bottom) / 2;
+      // Pick the line element the coordinates actually fall inside. Dispatching
+      // on a guessed line would put `event.target` on the wrong tile, and the
+      // position is re-derived from the coordinates anyway.
+      const line = Array.from(editors[i].querySelectorAll('.cm-line')).find((el) => {
+        const rect = el.getBoundingClientRect();
+        return y >= rect.top && y <= rect.bottom;
+      });
+      if (!line) continue;
+      line.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y }));
+      return true;
+    }
+    return false;
+  }, token);
+  if (!dispatched) {
+    throw new Error(`hoverOverToken: no line element found for ${JSON.stringify(token)}`);
+  }
+  try {
+    await browser.waitUntil(
+      async () => browser.execute(() => document.querySelectorAll('.cm-tooltip').length > 0),
+      { timeout, timeoutMsg: `hoverOverToken: no .cm-tooltip appeared over ${token}` },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Presses Alt+Enter (the SQL Editor Pro intention chord) in the editor whose
+ * document contains `marker`, and reports how the keypress was delivered.
+ *
+ * Both delivery channels are attempted and the real document is checked after
+ * each, because the channel itself is not trustworthy on this WebKit build:
+ * `browser.keys(['Meta', ' '])` arrives with every modifier cleared, so the
+ * modifier has to be observed rather than assumed. Letter keys do carry their
+ * modifiers, but whether `Alt` survives is exactly what this helper measures.
+ *
+ * The synthetic fallback is dispatched on `view.contentDOM`, the same element
+ * the Pro intention unit test uses, and it reaches CodeMirror's keymap because
+ * the handler is bound on the content DOM and the event bubbles and is
+ * cancelable.
+ *
+ * Returns the document after the intention ran, so a caller can assert on the
+ * transformation itself rather than on whether a key was "sent".
+ */
+export async function pressAltEnter(
+  marker: string,
+  verify: (doc: string) => boolean,
+): Promise<string> {
+  const readDoc = () =>
+    browser.execute((m: string) => {
+      for (const el of Array.from(document.querySelectorAll('.cm-editor'))) {
+        const view =
+          (el as unknown as { cmView?: { view?: unknown }; __cmView?: unknown })?.cmView?.view ??
+          (el as unknown as { __cmView?: unknown }).__cmView;
+        const cm = view as { state: { doc: { toString(): string } } } | undefined;
+        if (cm && cm.state.doc.toString().includes(m)) return cm.state.doc.toString();
+      }
+      return '';
+    }, marker);
+
+  const restore = (text: string) =>
+    browser.execute(
+      (args: { marker: string; text: string }) => {
+        for (const el of Array.from(document.querySelectorAll('.cm-editor'))) {
+          const view =
+            (el as unknown as { cmView?: { view?: unknown }; __cmView?: unknown })?.cmView?.view ??
+            (el as unknown as { __cmView?: unknown }).__cmView;
+          // `doc.length` is needed for the replace-everything range below, so the
+          // narrowed shape declares it rather than reaching through an `any`.
+          const cm = view as
+            | {
+                state: { doc: { length: number; toString(): string } };
+                dispatch: (spec: unknown) => void;
+              }
+            | undefined;
+          if (cm && cm.state.doc.toString().includes(args.marker)) {
+            cm.dispatch({ changes: { from: 0, to: cm.state.doc.length, insert: args.text } });
+            return;
+          }
+        }
+      },
+      { marker, text },
+    );
+
+  const focusEditor = () =>
+    browser.execute((m: string) => {
+      for (const el of Array.from(document.querySelectorAll('.cm-editor'))) {
+        const view =
+          (el as unknown as { cmView?: { view?: unknown }; __cmView?: unknown })?.cmView?.view ??
+          (el as unknown as { __cmView?: unknown }).__cmView;
+        const cm = view as
+          | { state: { doc: { toString(): string } }; focus(): void; contentDOM: HTMLElement }
+          | undefined;
+        if (cm && cm.state.doc.toString().includes(m)) {
+          cm.focus();
+          return true;
+        }
+      }
+      return false;
+    }, marker);
+
+  await focusEditor();
+  const before = await readDoc();
+  if (!before) {
+    throw new Error(`pressAltEnter: no editor document contains ${JSON.stringify(marker)}`);
+  }
+
+  // Channel 1: the real key driver. Verified by reading the document, never by
+  // assuming the modifier survived.
+  //
+  // `verify` decides what counts as success, and that is the whole point: this
+  // WebKit build delivers `browser.keys(['Alt', 'Enter'])` as a BARE Enter, so
+  // `defaultKeymap`'s `insertNewlineAndIndent` runs and the document becomes
+  // `SELECT *\nFROM t`. An earlier version of this helper treated "the
+  // document changed" as success and returned that newline — a broken
+  // transformation accepted as a working one. The caller states what the
+  // intention is supposed to produce, and only that is accepted.
+  await browser.keys(['Alt', 'Enter']);
+  await browser.pause(500);
+  const viaKeys = await readDoc();
+  if (verify(viaKeys)) return viaKeys;
+
+  // Channel 1 changed the document without producing the intention, so undo it
+  // before trying anything else — otherwise channel 2 runs against a document
+  // that already carries a stray newline.
+  if (viaKeys !== before) {
+    await restore(before);
+    await browser.pause(200);
+  }
+
+  // Channel 2: a synthetic keydown carrying altKey explicitly.
+  await browser.execute((m: string) => {
+    for (const el of Array.from(document.querySelectorAll('.cm-editor'))) {
+      const view =
+        (el as unknown as { cmView?: { view?: unknown }; __cmView?: unknown })?.cmView?.view ??
+        (el as unknown as { __cmView?: unknown }).__cmView;
+      const cm = view as
+        | { state: { doc: { toString(): string } }; contentDOM: HTMLElement }
+        | undefined;
+      if (cm && cm.state.doc.toString().includes(m)) {
+        cm.contentDOM.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            altKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        return;
+      }
+    }
+  }, marker);
+  await browser.pause(500);
+  return readDoc();
+}
+
 export async function setEditorContent(sql: string) {
   const editor = await $('[data-testid="sql-editor-content"]');
   await editor.waitForDisplayed({ timeout: 10000 });
@@ -992,17 +1213,176 @@ export async function setEditorContent(sql: string) {
     { timeout: 2000, timeoutMsg: 'editor did not receive focus or a selector stayed open' },
   );
   await browser.execute((text: string) => {
-    const el = document.querySelector('[data-testid="sql-editor-content"]') as HTMLElement;
+    const el = document.querySelector('[data-testid="sql-editor-content"]') as HTMLElement | null;
     if (!el) return;
     el.focus();
-    const sel = window.getSelection();
-    if (sel) {
-      sel.selectAllChildren(el);
-      sel.deleteFromDocument();
-    }
-    document.execCommand('insertText', false, text);
+    const host = el.closest('.cm-editor') as (HTMLElement & { cmView?: { view?: unknown } }) | null;
+    const view = host?.cmView?.view as
+      | { state: { doc: { length: number } }; dispatch: (spec: unknown) => void }
+      | undefined;
+    if (!view) return;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: text },
+      selection: { anchor: text.length },
+    });
   }, sql);
-  await browser.pause(300);
+  // Wait for the transaction to reach the view rather than sleeping a fixed
+  // amount: a dropped transaction is exactly what this replaces.
+  await browser.waitUntil(
+    async () =>
+      browser.execute((text: string) => {
+        // `cmView` is stamped onto the editor DOM by SqlEditor.tsx; it is not
+        // part of the Element type, so the cast names the exact shape used.
+        const host = document
+          .querySelector('[data-testid="sql-editor-content"]')
+          ?.closest('.cm-editor') as {
+          cmView?: { view?: { state?: { doc?: { toString(): string } } } };
+        } | null;
+        return host?.cmView?.view?.state?.doc?.toString() === text;
+      }, sql),
+    { timeout: 5000, timeoutMsg: 'editor state doc did not sync to the expected content' },
+  );
+}
+
+/**
+ * Type `text` into every range of the active multi-selection, as a user would.
+ *
+ * `browser.keys(text)` cannot be used for this: on the WebKit build the E2E
+ * suite runs (Playwright WebKit 605.1.15, driven through WebDriver), a plain
+ * character emits only `keydown` + `keyup` — no `keypress`, no `beforeinput`, no
+ * `input` — and CodeMirror builds its document from DOM mutations, so not one
+ * character lands. Modifier chords are unaffected (`Meta+D` reaches the editor
+ * fine), which is why gesture tests pass while typing tests cannot. `Space` is
+ * worse still: `['Control',' ']` and `['Alt',' ']` arrive with their modifier
+ * flag already cleared, and only `['Meta',' ']` survives.
+ *
+ * `execCommand('insertText')` goes through the same editing pipeline a real
+ * keystroke does — it is a DOM-level input command, so CodeMirror's
+ * `DOMObserver` diffs it and folds it into a real transaction — and it applies
+ * to every range of a multi-selection, which is exactly the behaviour under
+ * test. This is an environment compensation for the missing character channel,
+ * NOT a substitute for {@link setEditorContent}: it must not be used to seed
+ * editor state, because seeding is done through a transaction on purpose.
+ */
+export async function typeAtSelections(text: string) {
+  const el = await $('[data-testid="sql-editor-content"]');
+  await el.waitForDisplayed({ timeout: 10000 });
+  await browser.execute((t: string) => {
+    const el = document.querySelector('[data-testid="sql-editor-content"]') as HTMLElement | null;
+    el?.focus();
+    const host = el?.closest('.cm-editor') as
+      | (HTMLElement & { cmView?: { view?: unknown } })
+      | null;
+    const view = host?.cmView?.view as
+      | {
+          state: {
+            doc: { toString(): string };
+            selection: { ranges: readonly { from: number; to: number }[] };
+          };
+          dispatch: (spec: unknown) => void;
+        }
+      | undefined;
+    if (!view) {
+      throw new Error('typeAtSelections: no CodeMirror view is attached to the editor DOM');
+    }
+    // A keystroke replaces the selected text at every cursor, in ONE
+    // transaction, carrying the full multi-cursor selection.
+    //
+    // Two wrong shapes were tried here and both are recorded so they are not
+    // reintroduced:
+    //
+    //  - `selection: { ranges }`. A transaction spec's `selection` field
+    //    accepts only an `EditorSelection` or a single `{ anchor, head }`
+    //    (@codemirror/state 6.7.4 dist/index.d.ts:868). There is no `ranges`
+    //    key, so the extra field was dropped silently.
+    //  - omitting `selection` altogether, letting CodeMirror map the existing
+    //    ranges. That merges them instead.
+    //
+    // Both collapsed a three-cursor editor to one cursor, and the multi-cursor
+    // cases then typed a single character instead of one per cursor.
+    //
+    // `EditorSelection` is module-scoped and not reachable from inside
+    // `browser.execute`, but the host already publishes every CodeMirror module
+    // on `__DATAZEN_HOST__` under its package name (`src/main.tsx`), so it is
+    // reachable from there without the product exposing anything new.
+    const hostModules = (
+      globalThis as unknown as {
+        __DATAZEN_HOST__?: Record<string, unknown>;
+      }
+    ).__DATAZEN_HOST__;
+    // The whole module is `unknown`; narrowing the module first and then
+    // reading `EditorSelection` off it keeps both steps assignable, where the
+    // previous single `as` on a member that the declared type did not have
+    // (`Property 'EditorSelection' does not exist`) was not.
+    type EditorSelectionFactory = {
+      create: (ranges: readonly unknown[], mainIndex?: number) => unknown;
+      cursor: (pos: number) => unknown;
+    };
+    const stateModule = hostModules?.['@codemirror/state'] as
+      | { EditorSelection?: EditorSelectionFactory }
+      | undefined;
+    const EditorSelection = stateModule?.EditorSelection;
+    if (!EditorSelection) {
+      throw new Error(
+        'typeAtSelections: EditorSelection is not reachable; __DATAZEN_HOST__["@codemirror/state"] is missing',
+      );
+    }
+
+    const { ranges } = view.state.selection;
+
+    // `TransactionSpec.selection` offsets refer to the document AFTER the
+    // transaction. The ranges arrive in document order, which is the order
+    // `ChangeSpec` requires them in.
+    //
+    // Each cursor lands immediately after its own inserted text, shifted by
+    // every change made before it. The first version of this arithmetic used
+    // `range.to + shift`, which omits the insertion at the cursor's own
+    // position and made every cursor land one character short; the last one
+    // could then fall outside the document and CodeMirror rejected the whole
+    // transaction with "Selection points outside of document".
+    const changes = ranges.map((range) => ({ from: range.from, to: range.to, insert: t }));
+    let shift = 0;
+    const anchors = ranges.map((range) => {
+      const at = range.from + shift + t.length;
+      shift += t.length - (range.to - range.from);
+      return at;
+    });
+
+    // `userEvent: 'input.type'` is what makes CodeMirror treat this as typing.
+    // Without it `@codemirror/autocomplete` computes
+    // `tr.isUserEvent('input.type') === false`, `activateOnTyping` never fires,
+    // and a completion test sees no popup even though the sources would happily
+    // answer. Verified in @codemirror/autocomplete@6.20.1 dist/index.js:956.
+    view.dispatch({
+      changes,
+      selection: EditorSelection.create(
+        anchors.map((anchor) => EditorSelection.cursor(anchor)),
+        anchors.length - 1,
+      ),
+      userEvent: 'input.type',
+    });
+  }, text);
+  // The write is verified against the document, not assumed. An earlier
+  // version went through `execCommand('insertText')` and did not check, so a
+  // silently dropped input looked exactly like a feature that produced no
+  // result — the completion cases were failing for that reason.
+  const doc = await browser.execute(() => {
+    const el = document.querySelector('[data-testid="sql-editor-content"]');
+    const host = el?.closest('.cm-editor') as
+      | (HTMLElement & { cmView?: { view?: unknown } })
+      | null;
+    const view = host?.cmView?.view as { state: { doc: { toString(): string } } } | undefined;
+    return view?.state.doc.toString() ?? null;
+  });
+  if (doc === null) {
+    throw new Error('typeAtSelections: the editor view was not reachable from the DOM');
+  }
+  if (!doc.includes(text)) {
+    throw new Error(
+      `typeAtSelections: ${JSON.stringify(text)} never reached the document (doc=${JSON.stringify(doc.slice(0, 120))})`,
+    );
+  }
+  await browser.pause(200);
 }
 
 /** Execute SQL in the currently active query tab and wait for completion. */

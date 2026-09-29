@@ -1,6 +1,5 @@
 import { expect, browser, $ } from '@wdio/globals';
 import {
-  captureJourneyStep,
   clickCardConnectButton,
   closeExtraWindows,
   setEditorContent,
@@ -10,18 +9,29 @@ import {
   waitForConnectionToolbar,
   executeSQL,
   invokeBackend,
+  typeAtSelections,
 } from '../helpers.js';
 
 /**
- * SQL Editor Intelligence tests.
+ * SQL Editor completion — the cases a **Community** build can satisfy.
  *
- * Tests alias completion, FK JOIN completion, Alt+Enter intentions
- * (star expansion, qualifier add/remove), INSERT inlay hints, and
- * hover/definition navigation. Requires a PostgreSQL connection.
+ * Only completion contexts live here: alias completion, FROM-table completion
+ * and WHERE-column completion. They are implemented in the Host
+ * (`src/components/sql-editor/completion/`), so a build without the Pro
+ * extension exercises them for real.
  *
- * Uses Host generic behavior — no specific database dialect assertions.
+ * The Alt+Enter intentions, the FK JOIN source, the INSERT inlay hints and the
+ * hover / definition-navigation cards are **Pro-only**: the Host asks the
+ * extension point for them and substitutes an empty list when it gets nothing
+ * back (`createIntentionExtensions` and `createHoverExtensions` in
+ * `src/components/sql-editor/editorExtensions.ts` both fall back to `?? []`).
+ * Those cases live with the code that implements them, in
+ * `packages/pro-extensions/sql-editor-pro/e2e/specs/sql-editor-intelligence.ts`.
+ *
+ * Requires a PostgreSQL connection. Host generic behaviour — no dialect-specific
+ * assertions.
  */
-describe('SQL Editor 智能功能 (SE-INT)', () => {
+describe('SQL Editor 补全 (SE-INT)', () => {
   let mainWindow: string;
   const connId = 'e2e_pg_sql_int';
   const connName = 'E2E-PostgreSQL-Int';
@@ -55,6 +65,17 @@ describe('SQL Editor 智能功能 (SE-INT)', () => {
     await openQueryTab();
   });
 
+  // Every case starts from a known workspace, not from whatever the previous
+  // one left behind. SE-INT-041's Mod+Click really does navigate — it opens the
+  // table's panel — so without this the cases that follow it run against that
+  // layout and cannot find the editor at all, failing with
+  // `element still not displayed` rather than saying anything about themselves.
+  // `openQueryTab` is idempotent: it polls until the editor has mounted and
+  // no-ops when a query tab is already open.
+  beforeEach(async () => {
+    await openQueryTab();
+  });
+
   after(async () => {
     try {
       await closeExtraWindows(mainWindow);
@@ -75,12 +96,11 @@ describe('SQL Editor 智能功能 (SE-INT)', () => {
     await editor.click();
     await browser.pause(200);
 
-    // Type alias trigger
-    await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content') as HTMLElement;
-      if (el) el.focus();
-    });
-    await browser.keys('a');
+    // Type a letter so `activateOnTyping` queries the sources. `browser.keys`
+    // is not a usable character channel on this WebKit build — a plain
+    // character arrives as keydown/keyup with no DOM input event, so CodeMirror
+    // never sees it (see `typeAtSelections` in ../helpers.ts).
+    await typeAtSelections('a');
     await browser.pause(800);
 
     // Check if autocomplete tooltip appeared
@@ -88,8 +108,7 @@ describe('SQL Editor 智能功能 (SE-INT)', () => {
       const tooltip = document.querySelector('.cm-tooltip-autocomplete');
       return tooltip !== null && tooltip.children.length > 0;
     });
-    // Autocomplete may or may not show depending on context
-    expect(typeof hasAutocomplete).toBe('boolean');
+    expect(hasAutocomplete).toBe(true);
 
     // Escape to close any open autocomplete
     await browser.keys('Escape');
@@ -97,6 +116,12 @@ describe('SQL Editor 智能功能 (SE-INT)', () => {
   });
 
   it('SE-INT-002: FROM 子句后应列出可用表', async () => {
+    // A table this case owns. Asserting on a table that merely happens to exist
+    // in the E2E database makes the case pass or fail on unrelated fixtures —
+    // `pg_stat_activity` was the earlier choice and this database does not even
+    // have it.
+    await executeSQL('CREATE TABLE IF NOT EXISTS zz_e2e_int_from (id INT)');
+    await openQueryTab();
     await setEditorContent('SELECT * FROM ');
     await browser.pause(300);
 
@@ -104,18 +129,43 @@ describe('SQL Editor 智能功能 (SE-INT)', () => {
     await editor.click();
     await browser.pause(500);
 
-    // Trigger completion by pressing Ctrl+Space or typing
-    await browser.keys(['Control', ' ']);
+    // Trigger the sources. This used to be `browser.keys(['Control', ' '])`,
+    // which cannot work here: with a capture-phase listener installed before
+    // the press, WebKit delivers the Space with `ctrlKey` already cleared, so
+    // the `Ctrl-Space` binding never matches. Typing reaches the same sources
+    // through `activateOnTyping`, which is the path a real user takes.
+    // `z` matches the first letter of the table this case created.
+    // CodeMirror's FuzzyMatcher only matches a SINGLE-character query at
+    // position 0 (`@codemirror/autocomplete` 6.20.1 dist/index.js:259-267:
+    // "For single-character queries, only match when they occur right at the
+    // start"), so a one-letter query needs a first letter that something
+    // actually starts with. Typing `a` matched no object at all, the candidate
+    // list came back empty, and the dialog was never built — which reads
+    // exactly like a broken feature.
+    await typeAtSelections('z');
     await browser.pause(800);
 
-    const hasAutocomplete = await browser.execute(() => {
-      const tooltip = document.querySelector('.cm-tooltip-autocomplete');
-      if (!tooltip) return false;
-      const items = tooltip.querySelectorAll('li');
-      return items.length > 0;
+    // Read existence AND contents in one call, for two reasons. Doing it in two
+    // steps gave two contradictory answers: the popup closes between the
+    // assertion and a later read, so a second read reported `null` while the
+    // first reported 44 items — a reader that can contradict itself is worse
+    // than no reader. And a bare "the popup exists" assertion passes on a list
+    // of SQL keywords, which says nothing about tables.
+    // The compared value is a joined string rather than a boolean, on purpose:
+    // expect-webdriverio rejects a second `message` argument ("Expect takes at
+    // most one argument"), so `expect(someBoolean).toBe(true)` prints only
+    // `false` and hides everything the popup actually offered. Joining the
+    // candidates makes the failure message carry the real list.
+    const offered = await browser.execute(() => {
+      const tip = document.querySelector('.cm-tooltip-autocomplete');
+      if (!tip) return '<no popup element>';
+      return Array.from(tip.querySelectorAll('li'))
+        .map((li) => li.textContent ?? '')
+        .join(' | ');
     });
-    // Should show table completions
-    expect(typeof hasAutocomplete).toBe('boolean');
+    expect(offered).toContain('zz_e2e_int_from');
+
+    await executeSQL('DROP TABLE IF EXISTS zz_e2e_int_from');
 
     await browser.keys('Escape');
     await browser.pause(200);
@@ -123,428 +173,13 @@ describe('SQL Editor 智能功能 (SE-INT)', () => {
 
   // ── FK JOIN 补全 ───────────────────────────────────────────────
 
-  it('SE-INT-010: JOIN 子句应提供 FK 关联补全', async () => {
-    // First, create a test table with FK relationship
-    await executeSQL(
-      'CREATE TABLE IF NOT EXISTS _e2e_int_parent (id SERIAL PRIMARY KEY, name TEXT)',
-    );
-    await executeSQL(
-      'CREATE TABLE IF NOT EXISTS _e2e_int_child (id SERIAL PRIMARY KEY, parent_id INT REFERENCES _e2e_int_parent(id))',
-    );
-
-    await openQueryTab();
-    await setEditorContent('SELECT * FROM _e2e_int_child c JOIN ');
-    await browser.pause(300);
-
-    const editor = await $('.cm-editor .cm-content');
-    await editor.click();
-    await browser.pause(500);
-
-    // Trigger completion
-    await browser.keys(['Control', ' ']);
-    await browser.pause(800);
-
-    const hasJoinCompletion = await browser.execute(() => {
-      const tooltip = document.querySelector('.cm-tooltip-autocomplete');
-      if (!tooltip) return false;
-      const items = tooltip.querySelectorAll('li');
-      return Array.from(items).some(
-        (li) => li.textContent?.includes('_e2e_int_parent') || li.textContent?.includes('FK'),
-      );
-    });
-    // FK JOIN completion may appear
-    expect(typeof hasJoinCompletion).toBe('boolean');
-
-    await browser.keys('Escape');
-    await browser.pause(200);
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_int_child');
-    await executeSQL('DROP TABLE IF EXISTS _e2e_int_parent');
-  });
-
   // ── Alt+Enter 意图 (星号展开) ──────────────────────────────────
-
-  it('SE-INT-020: Alt+Enter 在 * 上应提供星号展开意图', async () => {
-    await executeSQL(
-      'CREATE TABLE IF NOT EXISTS _e2e_int_star (id SERIAL PRIMARY KEY, name TEXT, email TEXT)',
-    );
-
-    await openQueryTab();
-    await setEditorContent('SELECT * FROM _e2e_int_star');
-    await browser.pause(500);
-
-    // Position cursor on the * character
-    await browser.execute(() => {
-      const cmView = (document.querySelector('.cm-editor') as any)?.cmView?.view;
-      if (!cmView) return;
-      const doc = cmView.state.doc.toString();
-      const starIdx = doc.indexOf('*');
-      if (starIdx >= 0) {
-        cmView.dispatch({ selection: { anchor: starIdx, head: starIdx + 1 } });
-      }
-    });
-    await browser.pause(300);
-
-    // Trigger Alt+Enter intention
-    await browser.keys(['Alt', 'Enter']);
-    await browser.pause(1000);
-
-    // Check if star was expanded to column list
-    const editorContent = await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content');
-      return el?.textContent || '';
-    });
-    // Star may or may not be expanded depending on metadata availability
-    const wasExpanded =
-      editorContent.includes('id') &&
-      editorContent.includes('name') &&
-      !editorContent.includes('*');
-    expect(typeof wasExpanded).toBe('boolean');
-
-    await captureJourneyStep('star-expansion-intention');
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_int_star');
-  });
 
   // ── Alt+Enter 意图 (限定符添加/移除) ──────────────────────────
 
-  it('SE-INT-021: Alt+Enter 在未限定列名上应提供限定符添加意图', async () => {
-    await executeSQL('CREATE TABLE IF NOT EXISTS _e2e_int_qual (id SERIAL PRIMARY KEY, val TEXT)');
-
-    await openQueryTab();
-    await setEditorContent('SELECT id FROM _e2e_int_qual');
-    await browser.pause(500);
-
-    // Position cursor on 'id' column
-    await browser.execute(() => {
-      const cmView = (document.querySelector('.cm-editor') as any)?.cmView?.view;
-      if (!cmView) return;
-      const doc = cmView.state.doc.toString();
-      const idIdx = doc.indexOf('id');
-      if (idIdx >= 0) {
-        cmView.dispatch({ selection: { anchor: idIdx, head: idIdx + 2 } });
-      }
-    });
-    await browser.pause(300);
-
-    // Trigger Alt+Enter intention
-    await browser.keys(['Alt', 'Enter']);
-    await browser.pause(1000);
-
-    const editorContent = await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content');
-      return el?.textContent || '';
-    });
-    // Qualifier may or may not be added depending on context
-    expect(typeof editorContent).toBe('string');
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_int_qual');
-  });
-
-  it('SE-INT-022: Alt+Enter 在已限定列名上应提供限定符移除意图', async () => {
-    await executeSQL('CREATE TABLE IF NOT EXISTS _e2e_int_qual2 (id SERIAL PRIMARY KEY, val TEXT)');
-
-    await openQueryTab();
-    await setEditorContent('SELECT t.id FROM _e2e_int_qual2 t');
-    await browser.pause(500);
-
-    // Position cursor on 't.id'
-    await browser.execute(() => {
-      const cmView = (document.querySelector('.cm-editor') as any)?.cmView?.view;
-      if (!cmView) return;
-      const doc = cmView.state.doc.toString();
-      const idx = doc.indexOf('t.id');
-      if (idx >= 0) {
-        cmView.dispatch({ selection: { anchor: idx, head: idx + 4 } });
-      }
-    });
-    await browser.pause(300);
-
-    // Trigger Alt+Enter intention
-    await browser.keys(['Alt', 'Enter']);
-    await browser.pause(1000);
-
-    const editorContent = await browser.execute(() => {
-      const el = document.querySelector('.cm-editor .cm-content');
-      return el?.textContent || '';
-    });
-    // Qualifier removal may or may not happen
-    expect(typeof editorContent).toBe('string');
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_int_qual2');
-  });
-
   // ── INSERT 值内联提示 ──────────────────────────────────────────
 
-  it('SE-INT-030: INSERT 语句应显示值内联提示', async () => {
-    await executeSQL(
-      'CREATE TABLE IF NOT EXISTS _e2e_int_insert (id SERIAL PRIMARY KEY, name TEXT, email TEXT)',
-    );
-
-    await openQueryTab();
-    await setEditorContent('INSERT INTO _e2e_int_insert (name, email) VALUES ');
-    await browser.pause(1000);
-
-    // Check for inlay hints (cm- Fictional inline decorations)
-    const hasInlayHints = await browser.execute(() => {
-      // Inlay hints render as .cm-inlinehint or similar decorations
-      const hints = document.querySelectorAll('.cm-inlineHint, .cm-inlayHint, [class*="inlay"]');
-      return hints.length > 0;
-    });
-    // Inlay hints may or may not be visible depending on metadata
-    expect(typeof hasInlayHints).toBe('boolean');
-
-    await captureJourneyStep('insert-inlay-hints');
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_int_insert');
-  });
-
-  it('SE-INT-031: INSERT 值内联提示应显示列名和类型', async () => {
-    await executeSQL(
-      'CREATE TABLE IF NOT EXISTS _e2e_int_insert2 (id SERIAL PRIMARY KEY, name TEXT, email TEXT)',
-    );
-
-    await openQueryTab();
-    await setEditorContent('INSERT INTO _e2e_int_insert2 (name, email) VALUES (');
-    await browser.pause(1000);
-
-    // Check for inlay hint content
-    const hintContent = await browser.execute(() => {
-      const hints = document.querySelectorAll('.cm-inlineHint, .cm-inlayHint, [class*="inlay"]');
-      return Array.from(hints)
-        .map((h) => h.textContent || '')
-        .join(' ');
-    });
-    // Hints may contain column names or types
-    expect(typeof hintContent).toBe('string');
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_int_insert2');
-  });
-
   // ── 悬停和定义导航 ─────────────────────────────────────────────
-
-  it('SE-INT-040: 悬停在表名上应显示表信息提示', async () => {
-    await executeSQL(
-      'CREATE TABLE IF NOT EXISTS _e2e_int_hover (id SERIAL PRIMARY KEY, name TEXT)',
-    );
-
-    await openQueryTab();
-    await setEditorContent('SELECT * FROM _e2e_int_hover');
-    await browser.pause(500);
-
-    // Position cursor on the table name
-    await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        const view = (editors[i] as any)?.cmView?.view || (editors[i] as any)?.__cmView;
-        if (view && view.state.doc.toString().includes('_e2e_int_hover')) {
-          cmView = view;
-          break;
-        }
-      }
-      if (!cmView) return;
-      cmView.focus();
-      const doc = cmView.state.doc.toString();
-      const idx = doc.indexOf('_e2e_int_hover');
-      if (idx >= 0) {
-        const targetLen = Math.min(doc.length, idx + 14);
-        cmView.dispatch({ selection: { anchor: idx, head: targetLen } });
-      }
-    });
-    await browser.pause(300);
-
-    // Hover over the table name (mouse move + delay)
-    await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      let cmEl: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        const view = (editors[i] as any)?.cmView?.view || (editors[i] as any)?.__cmView;
-        if (view && view.state.doc.toString().includes('_e2e_int_hover')) {
-          cmView = view;
-          cmEl = editors[i];
-          break;
-        }
-      }
-      if (!cmView) return;
-      const doc = cmView.state.doc.toString();
-      const idx = doc.indexOf('_e2e_int_hover');
-      if (idx >= 0) {
-        const coords = cmView.coordsAtPos(idx);
-        if (coords) {
-          const event = new MouseEvent('mousemove', {
-            bubbles: true,
-            clientX: coords.left,
-            clientY: coords.top,
-          });
-          (cmEl || document.querySelector('.cm-editor'))?.dispatchEvent(event);
-        }
-      }
-    });
-    await browser.pause(500);
-
-    // Wait for hover tooltip (300ms delay + render)
-    await browser.pause(500);
-
-    const hasHoverTooltip = await browser.execute(() => {
-      const tooltip = document.querySelector('.cm-tooltip');
-      return tooltip !== null && tooltip.textContent?.length > 0;
-    });
-    // Hover tooltip may or may not appear
-    expect(typeof hasHoverTooltip).toBe('boolean');
-
-    await captureJourneyStep('table-hover-tooltip');
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_int_hover');
-  });
-
-  it('SE-INT-041: Mod+Click 在表名上应触发导航回调', async () => {
-    await executeSQL('CREATE TABLE IF NOT EXISTS _e2e_int_nav (id SERIAL PRIMARY KEY, name TEXT)');
-
-    await openQueryTab();
-    await setEditorContent('SELECT * FROM _e2e_int_nav');
-    await browser.pause(500);
-
-    // Position cursor on the table name
-    await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        const view = (editors[i] as any)?.cmView?.view || (editors[i] as any)?.__cmView;
-        if (view && view.state.doc.toString().includes('_e2e_int_nav')) {
-          cmView = view;
-          break;
-        }
-      }
-      if (!cmView) return;
-      cmView.focus();
-      const doc = cmView.state.doc.toString();
-      const idx = doc.indexOf('_e2e_int_nav');
-      if (idx >= 0) {
-        cmView.dispatch({ selection: { anchor: idx, head: idx + 12 } });
-      }
-    });
-    await browser.pause(300);
-
-    // Mod+Click on the table name
-    await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      let cmEl: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        const view = (editors[i] as any)?.cmView?.view || (editors[i] as any)?.__cmView;
-        if (view && view.state.doc.toString().includes('_e2e_int_nav')) {
-          cmView = view;
-          cmEl = editors[i];
-          break;
-        }
-      }
-      if (!cmView) return;
-      const doc = cmView.state.doc.toString();
-      const idx = doc.indexOf('_e2e_int_nav');
-      if (idx < 0) return;
-      const coords = cmView.coordsAtPos(idx);
-      if (!coords) return;
-      const event = new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        clientX: coords.left,
-        clientY: coords.top,
-        metaKey: true,
-      });
-      (cmEl || document.querySelector('.cm-editor'))?.dispatchEvent(event);
-    });
-    await browser.pause(1000);
-
-    // Navigation callback may open a new panel or show a toast
-    // We just verify the click didn't throw an error
-    const bodyText = await $('body').getText();
-    expect(bodyText.length).toBeGreaterThan(0);
-
-    await captureJourneyStep('mod-click-navigation');
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_int_nav');
-  });
-
-  it('SE-INT-042: 悬停在列名上应显示列信息', async () => {
-    await executeSQL(
-      'CREATE TABLE IF NOT EXISTS _e2e_int_col (id SERIAL PRIMARY KEY, name TEXT, email TEXT)',
-    );
-
-    await openQueryTab();
-    await setEditorContent('SELECT t.name FROM _e2e_int_col t');
-    await browser.pause(500);
-
-    // Position cursor on 'name' column
-    await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        const view = (editors[i] as any)?.cmView?.view || (editors[i] as any)?.__cmView;
-        if (view && view.state.doc.toString().includes('_e2e_int_col')) {
-          cmView = view;
-          break;
-        }
-      }
-      if (!cmView) return;
-      cmView.focus();
-      const doc = cmView.state.doc.toString();
-      const idx = doc.indexOf('name');
-      if (idx >= 0) {
-        cmView.dispatch({ selection: { anchor: idx, head: idx + 4 } });
-      }
-    });
-    await browser.pause(300);
-
-    // Hover over the column name
-    await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      let cmEl: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        const view = (editors[i] as any)?.cmView?.view || (editors[i] as any)?.__cmView;
-        if (view && view.state.doc.toString().includes('_e2e_int_col')) {
-          cmView = view;
-          cmEl = editors[i];
-          break;
-        }
-      }
-      if (!cmView) return;
-      const doc = cmView.state.doc.toString();
-      const idx = doc.indexOf('name');
-      if (idx < 0) return;
-      const coords = cmView.coordsAtPos(idx);
-      if (!coords) return;
-      const event = new MouseEvent('mousemove', {
-        bubbles: true,
-        clientX: coords.left,
-        clientY: coords.top,
-      });
-      (cmEl || document.querySelector('.cm-editor'))?.dispatchEvent(event);
-    });
-    await browser.pause(500);
-
-    // Wait for hover tooltip
-    await browser.pause(500);
-
-    const hasColumnTooltip = await browser.execute(() => {
-      const tooltip = document.querySelector('.cm-tooltip');
-      return tooltip !== null;
-    });
-    expect(typeof hasColumnTooltip).toBe('boolean');
-
-    // Clean up
-    await executeSQL('DROP TABLE IF EXISTS _e2e_int_col');
-  });
 
   // ── 补全上下文 ─────────────────────────────────────────────────
 
@@ -561,8 +196,11 @@ describe('SQL Editor 智能功能 (SE-INT)', () => {
     await editor.click();
     await browser.pause(500);
 
-    // Trigger completion
-    await browser.keys(['Control', ' ']);
+    // Same reachability fix as SE-INT-002: `Ctrl-Space` cannot be delivered on
+    // this WebKit build, so the sources are queried by typing instead.
+    // `n` matches the `name` column, one of the two this table declares. Same
+    // single-character prefix rule as SE-INT-002.
+    await typeAtSelections('n');
     await browser.pause(800);
 
     const hasColumnCompletion = await browser.execute(() => {
@@ -573,7 +211,9 @@ describe('SQL Editor 智能功能 (SE-INT)', () => {
         (li) => li.textContent?.includes('id') || li.textContent?.includes('name'),
       );
     });
-    expect(typeof hasColumnCompletion).toBe('boolean');
+    // As above: whether the column completion actually offered `id`/`name`
+    // is the whole content of the case.
+    expect(hasColumnCompletion).toBe(true);
 
     await browser.keys('Escape');
     await browser.pause(200);

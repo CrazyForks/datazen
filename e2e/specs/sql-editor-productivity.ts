@@ -4,6 +4,7 @@ import {
   clickCardConnectButton,
   closeExtraWindows,
   setEditorContent,
+  typeAtSelections,
   openQueryTab,
   openConnectionsWorkspace,
   expandConnectedConnectionInNavigator,
@@ -31,6 +32,44 @@ import {
  *
  * Uses Host generic behavior — no specific database dialect assertions.
  */
+
+/**
+ * Installs `window.__dzEditorView()` — the single rule every helper in this file
+ * uses to find "the" CodeMirror view.
+ *
+ * Why this exists: the connection page mounts more than one editor
+ * (`QueryEditorSection.tsx:656` for the query tab, `DocumentConnectionView.tsx:841`
+ * for the document view), so `document.querySelectorAll('.cm-editor')` returns
+ * several. Before this resolver the file resolved that list three different
+ * ways — `.find()` (first), a reverse `for` loop (last), and
+ * `querySelector('.cm-editor')` (first) — so a helper could read selection from
+ * one editor while `setEditorContent` wrote into another. The symptom was a doc
+ * that never appeared in the view being asserted on: SE-PROD-021 timed out on
+ * "editor state doc did not sync" while SE-PROD-020, which only asserted a range
+ * count, passed.
+ *
+ * The rule is "whichever editor owns the `[data-testid="sql-editor-content"]`
+ * anchor", because that is the exact node `setEditorContent`
+ * (`e2e/helpers.ts:982`) focuses and types into. Resolve through the same anchor
+ * the writer uses and read/write can no longer diverge.
+ *
+ * It is installed on `window` rather than imported because `browser.execute`
+ * serializes its callback: an imported helper would be an undefined reference
+ * inside the page. This is the same constraint noted at the gesture helper below.
+ */
+const installEditorResolver = (): Promise<boolean> =>
+  browser.execute((testid: string) => {
+    const w = window as unknown as { __dzEditorView: () => unknown };
+    w.__dzEditorView = () => {
+      const content = document.querySelector(`[data-testid="${testid}"]`);
+      const editor = content?.closest('.cm-editor') as
+        | (HTMLElement & { cmView?: { view?: unknown } })
+        | null;
+      return editor?.cmView?.view ?? null;
+    };
+    return w.__dzEditorView() != null;
+  }, 'sql-editor-content');
+
 describe('SQL Editor 生产力功能 (SE-PROD)', () => {
   let mainWindow: string;
   const connId = 'e2e_pg_sql_prod';
@@ -63,6 +102,7 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     await expandConnectedConnectionInNavigator(connName);
     await browser.pause(1000);
     await openQueryTab();
+    await installEditorResolver();
   });
 
   after(async () => {
@@ -130,8 +170,15 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
         toChar: number | null;
         mods: Record<string, boolean>;
       }): boolean => {
+        // Scope the line search to the resolved editor. A document-wide
+        // `.cm-line` query can match a line rendered by a *different* editor on
+        // the page (the connection page mounts both the query tab and the
+        // document view), and then the gesture lands in the wrong view.
+        const view = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
+        const root = view?.dom as HTMLElement | undefined;
+        if (!root) return false;
         const lineFor = (text: string): HTMLElement | undefined =>
-          Array.from(document.querySelectorAll<HTMLElement>('.cm-line')).find(
+          Array.from(root.querySelectorAll<HTMLElement>('.cm-line')).find(
             (el) => text.length > 0 && (el.textContent || '').includes(text),
           );
         const fromLine = lineFor(args.fromLineText);
@@ -239,9 +286,7 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
           doc: '',
           mounted: false,
         };
-        const view = Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'))
-          .map((el) => (el as HTMLElement & { cmView?: { view?: unknown } }).cmView?.view)
-          .find((v) => Boolean(v)) as
+        const view = (window as unknown as { __dzEditorView: () => any }).__dzEditorView() as
           | {
               state: {
                 doc: { toString(): string; lineAt(p: number): { number: number } };
@@ -279,30 +324,18 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     await browser.waitUntil(
       async () =>
         await browser.execute(() => {
-          const editors = Array.from(document.querySelectorAll('.cm-editor'));
-          for (let i = editors.length - 1; i >= 0; i--) {
-            const view = (editors[i] as any)?.cmView?.view;
-            if (
-              view &&
-              view.state.doc.toString().includes('SELECT test_col, test_col, test_col FROM t')
-            )
-              return true;
-          }
-          return false;
+          const view = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
+          return Boolean(
+            view &&
+              view.state.doc.toString().includes('SELECT test_col, test_col, test_col FROM t'),
+          );
         }),
       { timeout: 5000, timeoutMsg: 'editor state doc did not sync to SE-PROD-020 content' },
     );
 
     // Select the first 'test_col'
     await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        if ((editors[i] as any)?.cmView?.view) {
-          cmView = (editors[i] as any).cmView.view;
-          break;
-        }
-      }
+      const cmView = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
       if (!cmView) return;
       cmView.focus();
       const doc = cmView.state.doc.toString();
@@ -316,15 +349,11 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     await browser.waitUntil(
       async () =>
         await browser.execute(() => {
-          const editors = Array.from(document.querySelectorAll('.cm-editor'));
-          for (let i = editors.length - 1; i >= 0; i--) {
-            const view = (editors[i] as any)?.cmView?.view;
-            if (!view) continue;
-            const ranges = view.state.selection.ranges;
-            if (ranges.length !== 1) continue;
-            return view.state.doc.sliceString(ranges[0].from, ranges[0].to) === 'test_col';
-          }
-          return false;
+          const view = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
+          if (!view) return false;
+          const ranges = view.state.selection.ranges;
+          if (ranges.length !== 1) return false;
+          return view.state.doc.sliceString(ranges[0].from, ranges[0].to) === 'test_col';
         }),
       { timeout: 5000, timeoutMsg: 'initial test_col selection did not land for SE-PROD-020' },
     );
@@ -335,14 +364,7 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
 
     // Check if multiple selections exist
     const selectionCount = await browser.execute(() => {
-      const editors = Array.from(document.querySelectorAll('.cm-editor'));
-      let cmView: any = null;
-      for (let i = editors.length - 1; i >= 0; i--) {
-        if ((editors[i] as any)?.cmView?.view) {
-          cmView = (editors[i] as any).cmView.view;
-          break;
-        }
-      }
+      const cmView = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
       if (!cmView) return 1;
       return cmView.state.selection.ranges.length;
     });
@@ -354,28 +376,14 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
   it('SE-PROD-021: 多次 Mod+D 应选择所有匹配项', async () => {
     const getRangeCount = () =>
       browser.execute(() => {
-        const editors = Array.from(document.querySelectorAll('.cm-editor'));
-        let cmView: any = null;
-        for (let i = editors.length - 1; i >= 0; i--) {
-          if ((editors[i] as any)?.cmView?.view) {
-            cmView = (editors[i] as any).cmView.view;
-            break;
-          }
-        }
+        const cmView = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
         if (!cmView) return 1;
         return cmView.state.selection.ranges.length;
       });
 
     const selectFirstFoo = () =>
       browser.execute(() => {
-        const editors = Array.from(document.querySelectorAll('.cm-editor'));
-        let cmView: any = null;
-        for (let i = editors.length - 1; i >= 0; i--) {
-          if ((editors[i] as any)?.cmView?.view) {
-            cmView = (editors[i] as any).cmView.view;
-            break;
-          }
-        }
+        const cmView = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
         if (!cmView) return false;
         cmView.focus();
         const doc = cmView.state.doc.toString();
@@ -394,12 +402,8 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     await browser.waitUntil(
       async () =>
         await browser.execute(() => {
-          const editors = Array.from(document.querySelectorAll('.cm-editor'));
-          for (let i = editors.length - 1; i >= 0; i--) {
-            const view = (editors[i] as any)?.cmView?.view;
-            if (view && view.state.doc.toString().includes('foo bar foo bar foo bar')) return true;
-          }
-          return false;
+          const view = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
+          return Boolean(view && view.state.doc.toString().includes('foo bar foo bar foo bar'));
         }),
       { timeout: 5000, timeoutMsg: 'editor state doc did not sync to SE-PROD-021 content' },
     );
@@ -408,16 +412,12 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     await browser.waitUntil(
       async () =>
         await browser.execute(() => {
-          const editors = Array.from(document.querySelectorAll('.cm-editor'));
-          for (let i = editors.length - 1; i >= 0; i--) {
-            const view = (editors[i] as any)?.cmView?.view;
-            if (!view) continue;
-            const ranges = view.state.selection.ranges;
-            if (ranges.length !== 1) continue;
-            const text = view.state.doc.sliceString(ranges[0].from, ranges[0].to);
-            if (text === 'foo') return true;
-          }
-          return false;
+          const view = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
+          if (!view) return false;
+          const ranges = view.state.selection.ranges;
+          if (ranges.length !== 1) return false;
+          const text = view.state.doc.sliceString(ranges[0].from, ranges[0].to);
+          return text === 'foo';
         }),
       { timeout: 5000, timeoutMsg: 'selection did not land on the first foo' },
     );
@@ -446,7 +446,7 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
 
     // Place cursor without selection
     await browser.execute(() => {
-      const cmView = (document.querySelector('.cm-editor') as any)?.cmView?.view;
+      const cmView = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
       if (!cmView) return;
       cmView.dispatch({ selection: { anchor: 0, head: 0 } });
     });
@@ -456,7 +456,7 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     await browser.pause(300);
 
     const selectionCount = await browser.execute(() => {
-      const cmView = (document.querySelector('.cm-editor') as any)?.cmView?.view;
+      const cmView = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
       if (!cmView) return 1;
       return cmView.state.selection.ranges.length;
     });
@@ -518,12 +518,23 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
     const cursors = await readSelection();
     expect(cursors.rangeCount).toBe(3);
 
+    // Focus the SAME node `setEditorContent` types into — the contentDOM that
+    // owns the `sql-editor-content` anchor — so the input lands in the editor
+    // this test then reads. Resolved through the shared resolver rather than a
+    // document-wide `.cm-editor .cm-content` query, which can select a different
+    // editor than the one under test.
     await browser.execute(() => {
-      const el = document.querySelector<HTMLElement>('.cm-editor .cm-content');
-      el?.focus();
+      const view = (window as unknown as { __dzEditorView: () => any }).__dzEditorView();
+      const content = view?.contentDOM as HTMLElement | undefined;
+      content?.focus();
     });
-    await browser.keys('bbb');
-    await browser.pause(300);
+
+    // `typeAtSelections`, not `browser.keys('bbb')`: this WebKit/WebDriver
+    // channel emits keydown/keyup for a plain character and never the DOM input
+    // event CodeMirror needs, so the characters are dropped. The helper documents
+    // the measured behaviour. It types into all three ranges at once, which is
+    // the behaviour under test.
+    await typeAtSelections('bbb');
 
     // The observable is the document, read from editor state rather than from
     // `.cm-content` textContent: CodeMirror renders only the visible window, so
@@ -536,15 +547,27 @@ describe('SQL Editor 生产力功能 (SE-PROD)', () => {
 
   // ── 矩形选择 ───────────────────────────────────────────────────
 
-  it('SE-PROD-040: Alt+拖动应创建矩形选择', async () => {
+  it('SE-PROD-040: Shift+Alt+拖动应创建矩形选择', async () => {
     await setEditorContent('col_a col_b col_c\nval_1 val_2 val_3');
     await browser.pause(300);
 
-    // A real Alt+drag from the start of line 1 down to the same column on line 2.
-    // This case used to dispatch an ordinary `{anchor, head}` range and then
-    // assert `not.toBeNull()` on `state.selection`, which is never null — so the
-    // rectangular gesture was never performed and nothing could ever fail.
-    const landed = await gesture('col_a', 0, 'val_1', 3, { altKey: true });
+    // A real Shift+Alt+drag from the start of line 1 down to the same column on
+    // line 2. This case used to dispatch an ordinary `{anchor, head}` range and
+    // then assert `not.toBeNull()` on `state.selection`, which is never null — so
+    // the rectangular gesture was never performed and nothing could ever fail.
+    //
+    // The Shift is load-bearing, not decoration. `multipleSelections.ts` registers
+    // `clickAddsSelectionRange` from `clickAddsCursor`, which returns false for
+    // any event carrying `shiftKey`; CodeMirror derives the rectangular style's
+    // `multiple` flag from that very facet at mousedown
+    // (`input.ts: this.multiple = allowMultipleSelections && addsSelectionRange(…)`)
+    // and appends the pre-existing ranges when it is true
+    // (`rectangular-selection.ts: EditorSelection.create(ranges.concat(startSel.ranges))`).
+    // So bare Alt+drag — with the 3 cursors SE-PROD-031 leaves behind — yields
+    // 2 + 3 = 5 ranges, and `toBe(2)` could never hold. Shift+Alt is also what
+    // `eventFilter` documents and what VS Code binds for column selection
+    // alongside its own Alt+click, so the two gestures stay distinguishable.
+    const landed = await gesture('col_a', 0, 'val_1', 3, { altKey: true, shiftKey: true });
     expect(landed).toBe(true);
     await browser.pause(300);
 

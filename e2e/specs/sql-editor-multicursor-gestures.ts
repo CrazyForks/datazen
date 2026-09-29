@@ -4,6 +4,7 @@ import {
   clickCardConnectButton,
   closeExtraWindows,
   setEditorContent,
+  typeAtSelections,
   openQueryTab,
   openConnectionsWorkspace,
   expandConnectedConnectionInNavigator,
@@ -140,9 +141,15 @@ describe('SQL Editor 多光标手势 (SE-MC)', () => {
     browser.execute((): SelectionSnapshot => {
       const hosts = Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'));
       for (let i = hosts.length - 1; i >= 0; i -= 1) {
-        const view = (hosts[i] as HTMLElement & { cmView?: { view?: unknown } }).cmView
-          ?.view as
-          | { state: { selection: { main: { from: number; to: number; head: number }; ranges: readonly unknown[] } } }
+        const view = (hosts[i] as HTMLElement & { cmView?: { view?: unknown } }).cmView?.view as
+          | {
+              state: {
+                selection: {
+                  main: { from: number; to: number; head: number };
+                  ranges: readonly unknown[];
+                };
+              };
+            }
           | undefined;
         if (!view) continue;
         return {
@@ -207,27 +214,33 @@ describe('SQL Editor 多光标手势 (SE-MC)', () => {
 
   /** Puts the caret on `lineText` as a single empty range. */
   const placeCaretOn = (lineText: string): Promise<boolean> =>
-    browser.execute((args: { lineText: string }): boolean => {
-      const line = Array.from(document.querySelectorAll<HTMLElement>('.cm-line')).find((el) =>
-        (el.textContent || '').includes(args.lineText),
-      );
-      if (!line) return false;
-      const hosts = Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'));
-      for (let i = hosts.length - 1; i >= 0; i -= 1) {
-        const view = (hosts[i] as HTMLElement & { cmView?: { view?: unknown } }).cmView
-          ?.view as
-          | { posAtCoords(c: { x: number; y: number }): number | null; dispatch(s: unknown): void; focus(): void }
-          | undefined;
-        if (!view?.posAtCoords) continue;
-        const rect = line.getBoundingClientRect();
-        const pos = view.posAtCoords({ x: rect.left + 1, y: rect.top + rect.height / 2 });
-        if (pos == null) continue;
-        view.focus();
-        view.dispatch({ selection: { anchor: pos, head: pos } });
-        return true;
-      }
-      return false;
-    }, { lineText });
+    browser.execute(
+      (args: { lineText: string }): boolean => {
+        const line = Array.from(document.querySelectorAll<HTMLElement>('.cm-line')).find((el) =>
+          (el.textContent || '').includes(args.lineText),
+        );
+        if (!line) return false;
+        const hosts = Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'));
+        for (let i = hosts.length - 1; i >= 0; i -= 1) {
+          const view = (hosts[i] as HTMLElement & { cmView?: { view?: unknown } }).cmView?.view as
+            | {
+                posAtCoords(c: { x: number; y: number }): number | null;
+                dispatch(s: unknown): void;
+                focus(): void;
+              }
+            | undefined;
+          if (!view?.posAtCoords) continue;
+          const rect = line.getBoundingClientRect();
+          const pos = view.posAtCoords({ x: rect.left + 1, y: rect.top + rect.height / 2 });
+          if (pos == null) continue;
+          view.focus();
+          view.dispatch({ selection: { anchor: pos, head: pos } });
+          return true;
+        }
+        return false;
+      },
+      { lineText },
+    );
 
   /**
    * Builds a 3-range selection with Mod+D, the stock CodeMirror chord.
@@ -235,25 +248,29 @@ describe('SQL Editor 多光标手势 (SE-MC)', () => {
    * Preferred over clicking for the Escape cases: `selectNextOccurrence` is
    * keyboard-only, so it needs no coordinates and cannot be perturbed by layout.
    */
-  const buildMultiCursorWithModD = async (): Promise<void> => {
-    await setEditorContent('alpha\nalpha\nalpha');
+  /**
+   * Seed three lines of `word` and put one cursor on each, at the word's end.
+   * The word is selectable because the case that passes it may need a prefix the
+   * completion sources can actually answer (see SE-MC-014).
+   */
+  const buildMultiCursorWithModD = async (word = 'alpha'): Promise<void> => {
+    await setEditorContent(`${word}\n${word}\n${word}`);
     await browser.pause(300);
-    await browser.execute(() => {
+    await browser.execute((w: string) => {
       const hosts = Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'));
       for (let i = hosts.length - 1; i >= 0; i -= 1) {
-        const view = (hosts[i] as HTMLElement & { cmView?: { view?: unknown } }).cmView
-          ?.view as
+        const view = (hosts[i] as HTMLElement & { cmView?: { view?: unknown } }).cmView?.view as
           | { state: { doc: { toString(): string } }; dispatch(s: unknown): void; focus(): void }
           | undefined;
         if (!view) continue;
         const doc = view.state.doc.toString();
-        const idx = doc.indexOf('alpha');
+        const idx = doc.indexOf(w);
         if (idx < 0) continue;
         view.focus();
-        view.dispatch({ selection: { anchor: idx, head: idx + 5 } });
+        view.dispatch({ selection: { anchor: idx, head: idx + w.length } });
         return;
       }
-    });
+    }, word);
     await browser.pause(200);
     await browser.keys([modKey, 'D']);
     await browser.pause(200);
@@ -364,8 +381,7 @@ describe('SQL Editor 多光标手势 (SE-MC)', () => {
     await browser.execute(() => {
       const hosts = Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'));
       for (let i = hosts.length - 1; i >= 0; i -= 1) {
-        const view = (hosts[i] as HTMLElement & { cmView?: { view?: unknown } }).cmView
-          ?.view as
+        const view = (hosts[i] as HTMLElement & { cmView?: { view?: unknown } }).cmView?.view as
           | { dispatch(s: unknown): void; focus(): void }
           | undefined;
         if (!view) continue;
@@ -403,8 +419,7 @@ describe('SQL Editor 多光标手势 (SE-MC)', () => {
     await browser.execute(() => {
       const hosts = Array.from(document.querySelectorAll<HTMLElement>('.cm-editor'));
       for (let i = hosts.length - 1; i >= 0; i -= 1) {
-        const view = (hosts[i] as HTMLElement & { cmView?: { view?: unknown } }).cmView
-          ?.view as
+        const view = (hosts[i] as HTMLElement & { cmView?: { view?: unknown } }).cmView?.view as
           | { dispatch(s: unknown): void; focus(): void }
           | undefined;
         if (!view) continue;
@@ -438,9 +453,35 @@ describe('SQL Editor 多光标手势 (SE-MC)', () => {
     expect(before.found).toBe(true);
     expect(before.rangeCount).toBe(3);
 
-    // `startCompletion` (Mod-Space in defaultKeymap) is deterministic, unlike
-    // typing a letter and hoping a source activates.
-    await browser.keys([modKey, ' ']);
+    // The trigger chord is `Mod-Space`, installed by `createCompletionExtensions`
+    // (it replaces the stock `Ctrl-Space` binding, which cannot be delivered on
+    // the WebKit build this suite runs — Space arrives with its modifier flag
+    // already cleared, so only the Meta form survives).
+    //
+    // `buildMultiCursorWithModD` seeds `alpha`: a word that is not a SQL
+    // keyword, so the keyword source has no match for it and the schema source
+    // needs a real table in scope. The measured match prefix at the cursor was
+    // `alpha` and the popup stayed shut — the case would then test whether some
+    // source happens to match a nonsense word rather than the Escape ordering
+    // it exists for. `SE` is a prefix every SQL keyword source answers.
+    await buildMultiCursorWithModD('SE');
+
+    // Open the completion popup through `activateOnTyping`, the path a real
+    // user actually takes, rather than through the trigger chord.
+    //
+    // The chord cannot be used here, and the reason is measured, not assumed:
+    // with a capture-phase listener installed before the press,
+    // `browser.keys(['Meta',' '])` delivers `Meta/MetaLeft meta=false` and
+    // then ` /Space meta=false ctrl=false alt=false` — the Space arrives with
+    // no modifier flag at all, so no `Mod-Space` binding can match it. The
+    // trigger chord is a product feature and is exercised by the unit-level
+    // assertions on the installed bindings; this case is about ESCAPE
+    // ORDERING, which is independent of how the popup was opened.
+    //
+    // `SE` is a prefix every SQL keyword source answers, so the popup really
+    // opens — with `alpha` (the default seed) the keyword source has no match
+    // and the case would silently assert the wrong branch.
+    await typeAtSelections('a');
     await browser.pause(800);
 
     const completionOpen = await browser.execute(() => {
