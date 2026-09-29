@@ -236,8 +236,60 @@ Journey 用小数据集保证 UI 路径稳定；类型与 apply 闭环见 `SYNC-
 | `E2E_KIWI_*` | Kiwi 插件 E2E（在 kiwi 仓 `pnpm e2e:kiwi`；可写 kiwi `e2e/.env`） |
 | `E2E_AI_*` | AI 功能 E2E |
 | `DATAZEN_DRIVERS=basic` | E2E 构建时仅 basic 四核心驱动（跳过 Git / 其余 path 驱动）（见 `pnpm e2e:minimal`） |
+| `DATAZEN_E2E_QUIET=1` | 静默模式：macOS 上拒绝应用激活，跑 E2E 时不抢走本机键盘焦点（见下节；仅 `webdriver` 构建生效） |
+| `DATAZEN_KEYRING` | 主密钥后端（`file` / `keyring`）。`e2e/run.mjs` 默认注入 `file`，见下方「主密钥与系统钥匙串」 |
+
+#### 主密钥与系统钥匙串
+
+主密钥 `master-key` 在 macOS 正式签名版里存登录钥匙串，开发/adhoc 构建则回落到
+`security` CLI。E2E 每次都用全新的 `DATAZEN_DATA_DIR`，本地没有 `.key` 兜底，因此
+每次启动都必然走一次 `security add-generic-password`。一旦钥匙串搜索列表异常
+（`security list-keychains` 报 `Module Directory Service error has occurred`），macOS 会弹出
+「找不到用于储存 master-key 的钥匙串 login / 还原为默认」模态框，**阻塞** `security` 子进程
+直到人工点掉，E2E 会整个挂死。
+
+`e2e/run.mjs` 因此默认给应用注入 `DATAZEN_KEYRING=file`，主密钥改落该次 data dir 的 `.key`；
+E2E 本就不该读写开发者真实钥匙串。需要显式覆盖时设 `DATAZEN_KEYRING=keyring` 退回原行为。
 
 无数据库时，仅 UI/设置类 spec（如 `settings.ts`、`i18n-*`、部分 `path-ipc-hardening`）仍可能通过；依赖真实连接的 suite 会失败。需要 Kiwi / OLAP 等插件驱动的 spec 必须用默认 `pnpm e2e`（全部插件）构建。
+
+### 静默模式（`DATAZEN_E2E_QUIET`）
+
+macOS 上 DataZen 会在启动完成时把自己激活成前台应用，跑 E2E 的人的编辑器就被抢走
+焦点。设置 `DATAZEN_E2E_QUIET=1` 可以让整套 E2E 安静地跑：
+
+```bash
+DATAZEN_E2E_QUIET=1 pnpm e2e:minimal        # 静默构建 + 静默跑
+DATAZEN_E2E_QUIET=1 pnpm e2e:skip-build     # 已有 webdriver 构建时静默跑
+```
+
+- `e2e/run.mjs` 启动应用时透传当前环境变量（`env: { ...process.env }`），不需要改任何脚本。
+- 只在 `webdriver` 构建里生效，实现在 `src-tauri/src/e2e_quiet.rs`；不带该 feature 的构建里
+  `enabled()` 恒为 `false`，shim 代码根本不会被编译进二进制。
+- 进程共有三处会主动激活自己：tao 的 `applicationDidFinishLaunching`（`AppState::launched`
+  里的 `window_activation_hack` + `activateIgnoringOtherApps:`）、wry 每建一个 webview 时的
+  `-[NSApplication activate]`，以及窗口 `show()` / `set_focus()` 走的 `makeKeyAndOrderFront:`。
+  前两处都发生在**第一个窗口之前**——Tauri 的 setup 钩子比它们晚，所以拦截必须放在
+  `bootstrap/run.rs` 构造 `tauri::Builder` **之前**，否则窗口策略怎么调都没用。
+- 生效方式（`e2e_quiet::install()`，两件事必须一起做）：
+  1. 用 objc2 把本进程 `NSApplication` **基类**上的 `activate` / `activateIgnoringOtherApps:`
+     替换成空实现。此刻 tao 的 `TaoApp` 子类还没建出来（`object_setClass` 在事件循环里），
+     而它并不自己实现这两个选择器，消息仍会落到基类。ObjC 方法替换是进程内的，系统里其它
+     应用不受影响。
+  2. 把激活策略降级为 `NSApplicationActivationPolicy::Accessory`：这个进程不再能被系统
+     激活（没有 Dock 图标、不进 Cmd-Tab），`show()` 那条经由 AppKit 内部路径的激活也随之
+     失效，窗口照常显示和渲染。
+- 只设策略不换选择器、或只在 setup 钩子里做，都拦不住启动那一次（实测两种情况都会在进程
+  启动后 0.3s 内被顶到前台）。
+- 为什么不用 `tauri.conf.json` 的 `focus: false`：DataZen 的窗口全部在代码里创建（配置里
+  `windows: []`，没有可落脚的配置项），而且 tao 每次 `set_focus()` 都会重新发起一次激活。
+- 窗口本身照常显示（`show()` / `set_focus()` 一行未改），只是进程不再被激活：静默模式下
+  WebView 里 `document.visibilityState === "visible"`、`document.hasFocus() === false`，
+  窗口继续渲染但不抢键盘。WebDriver 的 `keys` / `click` 是 JS 合成事件，
+  `saveScreenshot` 走 webview 快照，都不依赖应用处于前台状态，因此截图、视口断言、
+  CodeMirror 输入均不受影响。
+- `pnpm e2e:shots` 画廊采集与 `pnpm e2e:demo` 演示录制需要真实可见的前台窗口，跑它们时
+  不要设置该变量（默认为关闭，不设置即维持原行为）。
 
 ### Journey 截图留痕（`--screenshot`）
 

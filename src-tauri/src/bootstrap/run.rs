@@ -82,6 +82,11 @@ pub fn run() {
         .with(fmt::layer().with_writer(non_blocking).with_ansi(false))
         .init();
 
+    // 静默 E2E：必须早于事件循环。tao 在 `applicationDidFinishLaunching`
+    // （`AppState::launched`）里就会 `activateIgnoringOtherApps`，那一次发生在
+    // Tauri 的 setup 钩子之前，钩子里再拦已经晚了。
+    crate::e2e_quiet::install();
+
     let surface_bg = theme::surface_bg::SurfaceBgCache::load();
     let builder = tauri::Builder::default()
         .plugin(theme::surface_bg::SurfaceBootPlugin::new(surface_bg))

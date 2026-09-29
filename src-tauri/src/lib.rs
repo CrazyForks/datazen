@@ -10,6 +10,7 @@ pub mod data_sync;
 mod data_transfer;
 pub mod db;
 mod driver_init;
+mod e2e_quiet;
 mod i18n_locale;
 mod log_redact;
 pub mod mcp;
