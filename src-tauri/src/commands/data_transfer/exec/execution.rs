@@ -93,6 +93,18 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
     } else {
         request.selection.clone()
     };
+    let data_table_order = if plan.job.mode == TransferMode::Data {
+        Some(
+            crate::data_transfer::order_selected_tables(
+                &selected_source_tables(&plan.job, &effective_selection),
+                &plan.target_table_dependencies,
+                plan.job.write_mode,
+            )
+            .map_err(CommandError::from)?,
+        )
+    } else {
+        None
+    };
     validate_structure_selection(&plan, &effective_selection).map_err(CommandError::from)?;
     if plan.job.write_mode.is_destructive()
         && !plan.job.options.confirmed_destructive
@@ -198,6 +210,10 @@ pub(crate) async fn execute_data_transfer_impl_with_write_observer(
         &job.tables,
     )
     .await?;
+
+    if let Some(order) = data_table_order.as_deref() {
+        crate::data_transfer::reorder_inspected_tables(&mut inspected, order);
+    }
 
     if matches!(
         job.mode,
