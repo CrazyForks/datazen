@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { Button, cn } from '@datazen/ui';
+import { ChevronDown, ChevronRight, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Button, cn, Spinner } from '@datazen/ui';
 import { Input } from '@datazen/ui';
 import { useI18n } from '@datazen/ui';
 import { redisCommandInvoke } from '../shared/redisInvoke';
@@ -525,7 +525,7 @@ export function JsonEditor({ dbSessionId, dbIndex, redisKey, gateWrite }: JsonEd
 
       {loading ? (
         <div className="flex items-center gap-2 text-fg-muted">
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Spinner size="lg" />
           {t('redis.monitorLoading')}
         </div>
       ) : root === null ? (
@@ -537,11 +537,7 @@ export function JsonEditor({ dbSessionId, dbIndex, redisKey, gateWrite }: JsonEd
             disabled={initBusy}
             onClick={initRoot}
           >
-            {initBusy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              t('redis.jsonInitObject')
-            )}
+            {initBusy ? <Spinner size="md" /> : t('redis.jsonInitObject')}
           </Button>
         </div>
       ) : mode === 'tree' ? (

@@ -22,12 +22,15 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Copy, Pencil, RefreshCw, Trash2, X } from 'lucide-react';
-import { Button, Input, useI18n } from '@datazen/ui';
+import { Button, Input, useI18n, useCopyFeedback } from '@datazen/ui';
 import { useBoundConfirmDialog } from '@datazen/driver-sdk';
 
 /** Refresh intervals in ms; `0` is the 关 (off) state. */
 export const REFRESH_INTERVALS = [1000, 5000, 10000, 30000, 0] as const;
 export type RefreshIntervalMs = (typeof REFRESH_INTERVALS)[number];
+
+/** How long the `data-copied` marker stays on a copy button before reverting. */
+const COPIED_FEEDBACK_MS = 1200;
 
 export interface KeyHeaderRowProps {
   keyName: string;
@@ -65,7 +68,8 @@ export function KeyHeaderRow({
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(keyName);
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState<'key' | 'insert' | null>(null);
+  const [copiedKind, setCopiedKind] = useState<'key' | 'insert' | null>(null);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
 
   // Latest callbacks for the timer without re-arming it on every render.
   const refreshRef = useRef(onRefresh);
@@ -90,14 +94,18 @@ export function KeyHeaderRow({
     setRenaming(false);
   }, [keyName]);
 
-  const copy = async (kind: 'key' | 'insert', text: string) => {
-    try {
-      await navigator.clipboard?.writeText(text);
-      setCopied(kind);
-      setTimeout(() => setCopied((cur) => (cur === kind ? null : cur)), 1200);
-    } catch {
-      // Clipboard denial is not a state worth rendering; the copy stays silent.
-    }
+  /**
+   * `copied` is the shared, request-bound flag and `copiedKind` names which of
+   * the two copy buttons it belongs to; gating on both replaces the old
+   * "only clear if still the same kind" timer callback — a stale write can no
+   * longer clear a newer confirmation because the hook binds the rollback to
+   * the request that started it.
+   */
+  const copiedButton = copied ? copiedKind : null;
+
+  const runCopy = (kind: 'key' | 'insert', text: string) => {
+    copy(text);
+    setCopiedKind(kind);
   };
 
   const runRefresh = async () => {
@@ -226,8 +234,8 @@ export function KeyHeaderRow({
         className="rounded p-1.5 text-fg-muted hover:bg-surface-raised hover:text-fg"
         data-testid="redis-header-copy-key"
         data-i18n-key="redis.detail.header.copyKey"
-        data-copied={copied === 'key' ? 'true' : 'false'}
-        onClick={() => void copy('key', keyName)}
+        data-copied={copiedButton === 'key' ? 'true' : 'false'}
+        onClick={() => runCopy('key', keyName)}
       >
         <Copy className="h-3.5 w-3.5" />
       </button>
@@ -239,8 +247,8 @@ export function KeyHeaderRow({
           className="rounded p-1.5 text-fg-muted hover:bg-surface-raised hover:text-fg"
           data-testid="redis-header-copy-insert"
           data-i18n-key="redis.detail.header.copyInsert"
-          data-copied={copied === 'insert' ? 'true' : 'false'}
-          onClick={() => void copy('insert', insertStatement)}
+          data-copied={copiedButton === 'insert' ? 'true' : 'false'}
+          onClick={() => runCopy('insert', insertStatement)}
         >
           <Copy className="h-3.5 w-3.5" />
         </button>

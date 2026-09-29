@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../../components/ui/Button';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
 import { connectionCommands } from '../../commands/connection';
 import { tunnelCommands } from '../../commands/tunnel';
 import { useI18n } from '../../hooks/useI18n';
@@ -165,9 +166,7 @@ export function TunnelSettingsSection() {
 
       {storeError ? (
         <div className="flex items-center gap-3" data-testid="tunnel-load-error">
-          <p role="alert" className="text-xs text-red-400">
-            {storeError}
-          </p>
+          <ErrorBanner as="p">{storeError}</ErrorBanner>
           <Button size="sm" variant="ghost" onClick={() => void load(true)}>
             {t('common.retry')}
           </Button>
@@ -175,9 +174,9 @@ export function TunnelSettingsSection() {
       ) : null}
 
       {actionError ? (
-        <p role="alert" className="text-xs text-red-400" data-testid="tunnel-action-error">
+        <ErrorBanner as="p" data-testid="tunnel-action-error">
           {actionError}
-        </p>
+        </ErrorBanner>
       ) : null}
 
       {loading && !loaded ? (

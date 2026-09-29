@@ -132,6 +132,7 @@ export function SshTunnelFields({
                 <PathInput
                   value={form.sshKeyPath}
                   onChange={form.setSshKeyPath}
+                  onBrowse={form.pickPath}
                   placeholder="~/.ssh/id_rsa"
                   onKeyDown={form.tabFill(form.setSshKeyPath)}
                 />
@@ -231,6 +232,7 @@ export function SshTunnelFields({
                     <PathInput
                       value={form.sshJumpKeyPath}
                       onChange={form.setSshJumpKeyPath}
+                      onBrowse={form.pickPath}
                       placeholder="~/.ssh/id_rsa"
                     />
                   </div>

@@ -11,6 +11,7 @@ import type { McpServerConfig } from '../../types';
 import { isValidMcpServerId } from '../../types';
 import { SectionTitle, SettingRow, ToggleRow } from './settingsUi';
 import { SettingHint } from './SettingHint';
+import { pickPath } from '../../lib/pathPicker';
 
 const EMPTY_DRAFT: McpServerConfig = {
   id: '',
@@ -309,6 +310,7 @@ export function McpClientSection() {
               <PathInput
                 value={draft.command ?? ''}
                 onChange={(command) => setDraft((d) => ({ ...d, command }))}
+                onBrowse={pickPath}
                 placeholder="/usr/local/bin/my-mcp"
                 inputTestId="mcp-server-command-input"
               />

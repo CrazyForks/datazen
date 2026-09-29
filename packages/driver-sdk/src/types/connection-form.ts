@@ -6,6 +6,7 @@
  * host implementation and this contract fails host type-checking.
  */
 import type { Dispatch, KeyboardEvent, RefObject, SetStateAction } from 'react';
+import type { PathPicker } from '@datazen/ui';
 import type {
   DatabaseType,
   SavedTunnel,
@@ -155,4 +156,11 @@ export interface ConnectionFormState {
   setOptions: (
     next: Record<string, unknown> | ((prev: Record<string, unknown>) => Record<string, unknown>),
   ) => void;
+
+  /**
+   * Opens the host's native path picker. Driver connection fields render
+   * `@datazen/ui`'s `PathInput`, which is a pure view: it never calls a host
+   * API itself, so the host passes the picker in through this contract.
+   */
+  pickPath: PathPicker;
 }

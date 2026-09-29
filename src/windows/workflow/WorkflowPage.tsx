@@ -14,7 +14,6 @@ import {
   Clock,
   FolderOpen,
   History,
-  Loader2,
   Pencil,
   Play,
   Plus,
@@ -33,6 +32,7 @@ import { ChartView } from '../../components/chart/ChartView';
 import { WorkflowChatPanel } from '../../components/ai/WorkflowChatPanel';
 import { isChartableResult } from '../../lib/chart/fieldInference';
 import { Button } from '../../components/ui/Button';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
 import { Select } from '../../components/ui/Select';
 import { LocaleDomainLoading } from '../../components/LocaleDomainLoading';
 import { useResizable } from '../../hooks/useResizable';
@@ -76,6 +76,7 @@ import type {
   WorkflowListItem,
 } from '../../types';
 import type { ChartConfig } from '../../types/chart';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface WorkflowPageProps {
   embedded?: boolean;
@@ -642,8 +643,20 @@ export function WorkflowPage({
     [activePanel, embedded, onOpenDashboardInShell, t],
   );
 
+  // All hooks above. Gate the body on the `workflows` locale pack so the UI
+  // never renders raw/un-translated `t('workflows.*')` keys before it loads.
+  if (!localesReady) {
+    return <LocaleDomainLoading testId="workflow-locale-loading" />;
+  }
+
   // ── Render ────────────────────────────────────────────────────────
 
+  // Built AFTER the `localesReady` gate on purpose: the `t('workflows.*')`
+  // calls below run while this constant is *constructed*, and the guard only
+  // stops the element from being *rendered*. Constructing it earlier made
+  // every page load emit four bogus dev-only "[i18n] Missing translation"
+  // lines for keys that are perfectly well registered in the lazy `workflows`
+  // pack. Keep it below the gate.
   const workflowToolbar = (
     <div
       className={`flex items-center gap-1 ${embedded ? 'border-b border-edge px-3 py-2' : 'ml-2'}`}
@@ -668,6 +681,7 @@ export function WorkflowPage({
         variant="secondary"
         className="h-6 w-6 !px-0"
         title={t('workflows.aiCreate.title')}
+        data-testid="workflow-ai-create-button"
         onClick={handleAiCreate}
       >
         <Sparkles className="h-3 w-3" />
@@ -692,12 +706,6 @@ export function WorkflowPage({
       </Button>
     </div>
   );
-
-  // All hooks above. Gate the body on the `workflows` locale pack so the UI
-  // never renders raw/un-translated `t('workflows.*')` keys before it loads.
-  if (!localesReady) {
-    return <LocaleDomainLoading testId="workflow-locale-loading" />;
-  }
 
   return (
     <div
@@ -765,21 +773,20 @@ export function WorkflowPage({
             </p>
           )}
           {operationError && (
-            <div
-              role="alert"
-              className="flex items-start gap-2 border-b border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300"
+            <ErrorBanner
+              variant="strip"
+              // Was `text-red-300` in the pre-ErrorBanner inline bar. `red-300`
+              // is one step *brighter* than the old `red-400` default; brightness
+              // and alpha are different axes and `danger` is a single flat value,
+              // so there is no clean equivalent — this is an accepted visible
+              // change, not a bug.
+              className="py-2 text-danger"
+              icon={<AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+              onDismiss={() => setOperationError(null)}
+              dismissLabel={t('common.close')}
             >
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              <span className="select-text min-w-0 flex-1 break-words">{operationError}</span>
-              <button
-                type="button"
-                className="shrink-0 rounded px-1 text-red-200 hover:bg-red-500/20"
-                aria-label={t('common.close')}
-                onClick={() => setOperationError(null)}
-              >
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            </div>
+              {operationError}
+            </ErrorBanner>
           )}
 
           <div className="flex-1 overflow-y-auto">
@@ -875,7 +882,7 @@ export function WorkflowPage({
                           </span>
                         )}
                         {isWorkflowRunPanel(panel) && panel.isExecuting && (
-                          <Loader2 className="h-3 w-3 animate-spin text-accent" />
+                          <Spinner size="sm" tone="accent" />
                         )}
                       </button>
                       <button
@@ -941,11 +948,7 @@ export function WorkflowPage({
                 onClick={() => void handleExecute()}
                 disabled={isExecuting}
               >
-                {isExecuting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Play className="h-3.5 w-3.5" />
-                )}
+                {isExecuting ? <Spinner size="md" /> : <Play className="h-3.5 w-3.5" />}
                 {isExecuting ? t('workflows.executing') : t('workflows.execute')}
               </Button>
               {currentResult?.success && activePanel?.type === 'run' && (
@@ -1019,7 +1022,7 @@ export function WorkflowPage({
 
           {/* Panel content */}
           {activePanel?.type === 'ai-create' ? (
-            <div className="relative flex-1 min-h-0">
+            <div className="relative flex-1 min-h-0" data-testid="workflow-ai-create-panel">
               <div className="absolute inset-0">
                 <WorkflowChatPanel
                   connections={savedConnections}
@@ -1316,7 +1319,7 @@ function WorkflowSidebarList({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8 text-fg-muted text-xs">
-        <Loader2 className="h-4 w-4 animate-spin mr-1" />
+        <Spinner size="lg" className="mr-1" />
         {t('workflows.loading')}
       </div>
     );

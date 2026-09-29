@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Pencil } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import { getCachedTableSchema } from '../../lib/schemaCache';
 import { dataTypeTextClass } from '../../lib/dataTypeColors';
 import { Button } from '../../components/ui/Button';
@@ -8,6 +8,7 @@ import { cn } from '../../lib/cn';
 import { useI18n } from '../../hooks/useI18n';
 import { CopyableError } from '../../components/ui/CopyableError';
 import { useSchemaStore } from '../../stores/schemaStore';
+import { Spinner } from '../../components/ui/Spinner';
 
 interface StructureViewProps {
   dbSessionId: string;
@@ -111,7 +112,7 @@ export function StructureView({
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-fg-muted">
-        <Loader2 className="h-5 w-5 animate-spin" />
+        <Spinner size="xl" />
         {t('common.loadingTableStructure')}
       </div>
     );

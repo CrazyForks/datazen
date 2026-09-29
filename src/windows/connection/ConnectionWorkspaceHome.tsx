@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Check,
   ChevronRight,
@@ -7,11 +7,11 @@ import {
   Database,
   Download,
   GitFork,
-  Loader2,
   Plus,
   TableProperties,
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
+import { useCopyFeedback } from '../../components/ui/useCopyFeedback';
 import { DbTypeBadge } from '../../components/DbTypeBadge';
 import { ThemedIcon } from '../../components/ThemedIcon';
 import { useI18n } from '../../hooks/useI18n';
@@ -30,6 +30,10 @@ import { ConnectionCardList } from './home/ConnectionCardList';
 import { RecentQueriesList } from './home/RecentQueriesList';
 import { McpPromoBar } from './home/McpPromoBar';
 import { ShortcutFooter } from './home/ShortcutFooter';
+import { Spinner } from '../../components/ui/Spinner';
+
+/** How long the per-row "copied" marker stays before reverting. */
+const COPIED_FEEDBACK_MS = 2000;
 
 export interface ConnectionWorkspaceHomeProps {
   hasConnections: boolean;
@@ -134,7 +138,23 @@ export function ConnectionWorkspaceHome({
 
   const [recentQueries, setRecentQueries] = useState<QueryHistoryEntry[]>([]);
   const [copiedSqlId, setCopiedSqlId] = useState<string | null>(null);
+  const { copied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
   const [globalHistoryOpen, setGlobalHistoryOpen] = useState(false);
+
+  /**
+   * `copied` is the shared, request-bound flag and `copiedSqlId` names the row
+   * it belongs to; gating on both keeps a rolled-back write from leaving a
+   * stale "copied" marker on the last attempted row.
+   */
+  const copiedRowId = copied ? copiedSqlId : null;
+
+  const handleCopySql = useCallback(
+    (id: string, sql: string) => {
+      copy(sql);
+      setCopiedSqlId(id);
+    },
+    [copy],
+  );
 
   // Load recent query history (global or connection-scoped)
   useEffect(() => {
@@ -226,7 +246,7 @@ export function ConnectionWorkspaceHome({
       >
         <div className="flex flex-col items-center gap-3">
           {connectingDbType && <DbTypeBadge databaseType={connectingDbType} size={48} />}
-          <Loader2 className="h-5 w-5 animate-spin text-fg-muted" />
+          <Spinner size="xl" tone="muted" label={t('conn.connecting')} />
           {connectingName && <p className="text-sm text-fg-muted">{connectingName}</p>}
         </div>
       </div>
@@ -464,15 +484,14 @@ export function ConnectionWorkspaceHome({
                   </div>
                   <button
                     type="button"
+                    data-testid={`home-query-copy-${item.id}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void navigator.clipboard?.writeText(item.sql);
-                      setCopiedSqlId(item.id);
-                      setTimeout(() => setCopiedSqlId(null), 2000);
+                      handleCopySql(item.id, item.sql);
                     }}
                     className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-fg-muted hover:bg-surface hover:text-accent transition-colors"
                   >
-                    {copiedSqlId === item.id ? (
+                    {copiedRowId === item.id ? (
                       <>
                         <Check className="h-3.5 w-3.5 text-success" />
                         <span className="text-success">

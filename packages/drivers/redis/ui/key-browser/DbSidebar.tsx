@@ -1,5 +1,5 @@
-import { Database, Loader2 } from 'lucide-react';
-import { cn, useI18n } from '@datazen/ui';
+import { Database } from 'lucide-react';
+import { cn, useI18n, Spinner } from '@datazen/ui';
 import { dbIndexOfName } from './workbenchDatabases';
 
 /**
@@ -37,7 +37,7 @@ export function DbSidebar({
     >
       {loading && (
         <div className="flex items-center gap-2 px-3 py-2 text-xs text-fg-muted">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Spinner size="md" />
           {t('common.loading')}
         </div>
       )}

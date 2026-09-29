@@ -7,6 +7,7 @@
 import { act, fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KvSlotAction } from '@datazen/driver-sdk';
+import { registerTranslations } from '@datazen/ui';
 import { useKvSlotActions } from '../useKvSlotActions';
 
 const { settings, windowManager } = vi.hoisted(() => ({
@@ -24,6 +25,23 @@ vi.mock('../../../stores/settingsStore', () => ({
 }));
 
 vi.mock('../../../lib/windowManager', () => windowManager);
+
+/**
+ * The `useI18n` mock above only replaces the HOST hook. The dispatcher's dialog
+ * is a real `@datazen/ui` ConfirmDialog, which resolves its own three button
+ * labels through the package's i18n engine — and a unit test runs with a fresh
+ * module registry holding no host dictionaries at all. Seed them (the same
+ * PROBE pattern the package's own dialog tests use) so the "this flow must stay
+ * silent" guard below keeps testing the dispatcher, not the missing fixture.
+ * The assertion itself is untouched: it is still a blanket "no console.warn".
+ */
+registerTranslations({
+  en: {
+    'common.close': 'PROBE::Close',
+    'common.cancel': 'PROBE::Cancel',
+    'common.confirm': 'PROBE::Confirm',
+  },
+});
 
 /** Every action this build has no executor for (W3-A §1.2 degradation path). */
 const UNWIRED: KvSlotAction[] = [

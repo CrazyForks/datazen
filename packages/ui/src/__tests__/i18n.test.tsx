@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import {
   getLocale,
@@ -208,5 +208,73 @@ describe('[tester] R-8 扩展引入第 3 语言时驱动词条命中', () => {
     act(() => setLocale('en'));
     expect(screen.getByTestId('tester-lang').textContent).toBe('en');
     expect(screen.getByTestId('tester-driver-console').textContent).toBe('Console');
+  });
+});
+
+/**
+ * [wave2/i18n-failfast] 开发期把「静默回退到 key 本身」暴露出来。
+ *
+ * `t()` 的末位兜底是 key 本身。正确（UI 不会白屏）但完全无声：拼错的 key、
+ * 忘了注册的词条、locale 包没加载成功，在屏幕上长得一模一样 —— 都是一段英文
+ * key 字符串。所以 dev 下命中该回退时必须留痕，且同一个 key 只留一次
+ * （否则渲染上千行的表格会刷屏），生产环境必须完全闭嘴。
+ *
+ * 落点说明同本文件上方 R-8 块：护栏 R2 的豁免是文件级精确清单，新建
+ * `packages/**` 测试文件会直接被 R2 阻断，故并入引擎自己的单测文件。
+ */
+describe('开发期未注册词条告警（t() 回退到 key 本身时可见）', () => {
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  it('dev 环境下未注册词条命中 key 回退时输出 console.warn（已注册词条保持安静）', () => {
+    // 前置：本套件跑在 vitest 下，`import.meta.env.DEV` 为 true —— 告警分支
+    // 本就应当在测试里可达，否则「dev 会告警」这条契约无人守护。
+    expect(import.meta.env.DEV).toBe(true);
+
+    registerTranslations({ en: { 'failfast.registered': 'Registered' } });
+    expect(t('failfast.registered')).toBe('Registered');
+    // 已注册词条绝不能落到告警分支（否则告警会退化成「每次翻译都吵」）。
+    expect(warn).not.toHaveBeenCalled();
+
+    // 未注册：仍回退到 key 本身（渲染行为不变），但这次要出声。
+    expect(t('failfast.dev.missing')).toBe('failfast.dev.missing');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0] ?? '')).toContain('failfast.dev.missing');
+  });
+
+  it('同一个 key 重复命中只告警一次（去重）', () => {
+    // 模拟一个在每行都渲染的 key：去重前是 N 条噪音，去重后恒为 1 条。
+    for (let i = 0; i < 8; i += 1) {
+      expect(t('failfast.dev.repeated')).toBe('failfast.dev.repeated');
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // 切语言再命中同一个 key：仍不得二次告警（key 才是去重单位，不是语言）。
+    setLocale('zh-CN');
+    expect(t('failfast.dev.repeated')).toBe('failfast.dev.repeated');
+    setLocale('en');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('生产环境（DEV=false）不告警：回退行为不变，但完全静默', () => {
+    vi.stubEnv('DEV', false);
+    expect(import.meta.env.DEV).toBe(false);
+
+    // 纯生产路径不得付出一行 warn 的代价，回退本身照旧。
+    expect(t('failfast.prod.missing')).toBe('failfast.prod.missing');
+    expect(t('failfast.prod.missing')).toBe('failfast.prod.missing');
+    expect(warn).not.toHaveBeenCalled();
+
+    registerTranslations({ en: { 'failfast.prod.registered': 'Registered' } });
+    expect(t('failfast.prod.registered')).toBe('Registered');
+    expect(warn).not.toHaveBeenCalled();
   });
 });

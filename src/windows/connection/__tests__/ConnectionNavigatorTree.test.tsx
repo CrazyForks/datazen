@@ -158,6 +158,17 @@ vi.mock('../../../extensions/generated', () => {
   };
 });
 
+/**
+ * Painting window for the virtualizer mock below. `size: Infinity` (the
+ * default) paints every row, which is what most suites assume. Tests that
+ * exercise the "only the visible window exists in the DOM" boundary set
+ * `offset`/`size` and re-render.
+ */
+const virtualWindow = vi.hoisted(() => ({
+  offset: 0,
+  size: Number.POSITIVE_INFINITY,
+}));
+
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({
     count,
@@ -180,7 +191,10 @@ vi.mock('@tanstack/react-virtual', () => ({
     });
     return {
       getTotalSize: () => offset || count * 28,
-      getVirtualItems: () => items,
+      getVirtualItems: () => {
+        const end = Math.min(items.length, virtualWindow.offset + virtualWindow.size);
+        return items.slice(virtualWindow.offset, end);
+      },
     };
   },
 }));
@@ -529,6 +543,8 @@ afterEach(() => {
   useSchemaStore.getState().reset();
   vi.clearAllMocks();
   confirmMock.mockResolvedValue(true);
+  virtualWindow.offset = 0;
+  virtualWindow.size = Number.POSITIVE_INFINITY;
   // Deterministic fixtures for the next test regardless of how the previous
   // one mutated the module-level store mocks.
   connectionsState.connections = [MYSQL_CONN];
@@ -3237,5 +3253,675 @@ describe('ConnectionNavigatorTree imperative refresh guards', () => {
     await findByText('db_a');
     // Databases level is visible, but default database is not auto-expanded:
     expect(mockGetTables).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConnectionNavigatorTree ARIA tree semantics', () => {
+  it('marks the virtualized row container as the tree and keeps every node inside it', async () => {
+    const { container } = await renderWithSqlite(
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
+      {},
+      {},
+    );
+
+    const tree = await waitFor(() => {
+      const el = container.querySelector('[role="tree"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(container.querySelectorAll('[role="tree"]')).toHaveLength(1);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="settings"]')).not.toBeNull();
+    });
+
+    // The virtualizer wrapper is structural, so every node it paints must be a
+    // treeitem carrying a 1-based level — that is the whole contract here.
+    const items = [...tree.querySelectorAll('[role="treeitem"]')];
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) {
+      const level = Number(item.getAttribute('aria-level'));
+      expect(Number.isInteger(level), item.outerHTML.slice(0, 120)).toBe(true);
+      expect(level).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('numbers a single-db tree from the group header down to the table row', async () => {
+    const { container } = await renderWithSqlite(
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
+      {},
+      {},
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="settings"]')).not.toBeNull();
+    });
+
+    const levelOf = (selector: string) => {
+      const el = container.querySelector(selector);
+      expect(el, selector).not.toBeNull();
+      expect(el!.getAttribute('role'), selector).toBe('treeitem');
+      return el!.getAttribute('aria-level');
+    };
+
+    // ARIA levels are 1-based; section/group headers own the depth-1 children.
+    expect(levelOf('[data-group-header]')).toBe('1');
+    expect(levelOf('[data-conn-item]')).toBe('2');
+    expect(levelOf('[data-tree-node="db"]')).toBe('3');
+    expect(levelOf('[data-tree-node="category"]')).toBe('4');
+    expect(levelOf('[data-item-name="settings"]')).toBe('5');
+  });
+
+  it('keeps counting one level per nesting step in a schema-grouped tree', async () => {
+    const { container } = await renderPgTree();
+
+    const levelOf = (selector: string) => {
+      const el = container.querySelector(selector);
+      expect(el, selector).not.toBeNull();
+      return el!.getAttribute('aria-level');
+    };
+
+    // Schema rows only exist once the database's table payload resolves.
+    await waitFor(() => {
+      expect(container.querySelector('[data-tree-node="schema"]')).not.toBeNull();
+    });
+
+    expect(levelOf('[data-group-header]')).toBe('1');
+    expect(levelOf('[data-conn-item]')).toBe('2');
+    expect(levelOf('[data-tree-node="db"]')).toBe('3');
+    expect(levelOf('[data-tree-node="schema"]')).toBe('4');
+
+    fireEvent.click(container.querySelector('[data-schema-name="public"]')!);
+    await waitFor(() => {
+      expect(container.querySelector('[data-cat-id="tables"]')).not.toBeNull();
+    });
+    expect(levelOf('[data-tree-node="category"]')).toBe('5');
+
+    // Schema-scoped categories start collapsed; open one to reach the deepest
+    // level the navigator renders.
+    fireEvent.click(categoryButton(container, 'tables'));
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="users"]')).not.toBeNull();
+    });
+    expect(levelOf('[data-item-name="users"]')).toBe('6');
+  });
+
+  it('marks the recent section header as a top-level treeitem', async () => {
+    const recent = makeConn({
+      id: 'cfg-recent',
+      name: 'Recent Conn',
+      group: 'Group A',
+      lastConnectedAt: '2026-08-31T10:00:00Z',
+    });
+    connectionsState.connections = [recent];
+    connectionsState.groups = ['Group A'];
+    activeConnectionsState.connections = {};
+
+    const { container } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId={null} />,
+    );
+
+    const header = await waitFor(() => {
+      const el = container.querySelector('[data-section-header][data-section="recent"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(header.getAttribute('role')).toBe('treeitem');
+    expect(header.getAttribute('aria-level')).toBe('1');
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('leaves the pre-existing aria-expanded conditions untouched', async () => {
+    const { container } = await renderWithSqlite(
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
+      {},
+      {},
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-tree-node="category"]')).not.toBeNull();
+    });
+
+    // These rows already announced their expansion state before the tree roles
+    // landed; adding role="treeitem" must not change any of those conditions.
+    const db = container.querySelector('[data-tree-node="db"]')!;
+    expect(db.getAttribute('aria-expanded')).toBe('true');
+
+    const category = container.querySelector('[data-tree-node="category"]')!;
+    expect(category.getAttribute('aria-expanded')).toBe('true');
+
+    // The connection chevron keeps its own conditional aria-expanded, and a
+    // collapsed category flips it without losing the treeitem role.
+    const chevron = container.querySelector('[data-conn-item] button')!;
+    expect(chevron.getAttribute('aria-expanded')).toBe('true');
+
+    const views = container.querySelector('[data-cat-id="views"]')!;
+    expect(views.getAttribute('aria-level')).toBe('4');
+    expect(views.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(views);
+    await waitFor(() => {
+      expect(views.getAttribute('aria-expanded')).toBe('true');
+    });
+  });
+});
+
+// ── Independent audit of the ARIA tree contract ────────────────────────────
+//
+// The suite above lands role="treeitem" / aria-level on the common rows. This
+// one covers the variants that suite never renders (object, view, kv-db,
+// db-loading, namespace-node) and asserts the tree *structure* rather than
+// individual rows: an ARIA tree is only navigable when every item's level has a
+// real parent, so the helper below walks the painted rows the way a screen
+// reader would.
+
+describe('ConnectionNavigatorTree ARIA tree shape audit', () => {
+  /** Read a row, asserting it really is a treeitem. */
+  function treeRow(container: HTMLElement, selector: string): HTMLElement {
+    const el = container.querySelector<HTMLElement>(selector);
+    if (!el) throw new Error(`row not rendered: ${selector}`);
+    expect(el.getAttribute('role'), `role for ${selector}`).toBe('treeitem');
+    return el;
+  }
+
+  function levelOf(container: HTMLElement, selector: string): number {
+    const raw = treeRow(container, selector).getAttribute('aria-level');
+    expect(raw, `aria-level for ${selector}`).not.toBeNull();
+    return Number(raw);
+  }
+
+  /**
+   * Walk the painted treeitems in DOM order the way a screen reader builds its
+   * parent stack, and report every item whose level has no matching parent.
+   * `1 → 3` is a hole in the tree: the reader is told about a level-2 parent
+   * that is not in the tree at all.
+   */
+  function findLevelGaps(container: HTMLElement): string[] {
+    const openAncestors: number[] = [];
+    const gaps: string[] = [];
+    for (const item of container.querySelectorAll<HTMLElement>('[role="treeitem"]')) {
+      const level = Number(item.getAttribute('aria-level'));
+      const label =
+        item.getAttribute('data-item-name') ??
+        item.getAttribute('data-conn-name') ??
+        item.getAttribute('data-cat-id') ??
+        item.getAttribute('data-db-name') ??
+        item.getAttribute('data-schema-name') ??
+        item.getAttribute('data-tree-node') ??
+        item.getAttribute('data-section') ??
+        item.getAttribute('data-group-name') ??
+        item.textContent?.trim().slice(0, 20) ??
+        '?';
+      while (openAncestors.length && openAncestors[openAncestors.length - 1] >= level) {
+        openAncestors.pop();
+      }
+      if (level > 1 && openAncestors[openAncestors.length - 1] !== level - 1) {
+        gaps.push(
+          `level ${level} ("${label}") has no level ${level - 1} ancestor ` +
+            `(open ancestors: [${openAncestors.join(', ')}])`,
+        );
+      }
+      openAncestors.push(level);
+    }
+    return gaps;
+  }
+
+  function treeOf(container: HTMLElement): HTMLElement {
+    const el = container.querySelector<HTMLElement>('[role="tree"]');
+    if (!el) throw new Error('no [role="tree"] container');
+    return el;
+  }
+
+  /**
+   * The `db-loading` row is the only treeitem that renders the loading copy and
+   * carries no `data-*` identity of its own (a loading db row also spins, so
+   * matching on `.animate-spin` would pick the wrong node).
+   */
+  function loadingTreeItem(container: HTMLElement): HTMLElement {
+    const el = [...container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find(
+      (item) =>
+        item.textContent?.includes('common.loading') &&
+        !item.hasAttribute('data-tree-node') &&
+        !item.hasAttribute('data-conn-item'),
+    );
+    if (!el) throw new Error('db-loading treeitem not rendered');
+    return el;
+  }
+
+  it('covers the object-row variant: functions and triggers are level-5 treeitems', async () => {
+    const { container, findByText } = await renderWithSqlite(
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
+      {},
+      {},
+    );
+    await findByText('settings');
+
+    mockGetDatabaseObjects.mockImplementation((_connId: string, catId: string) =>
+      catId === 'function'
+        ? Promise.resolve([{ name: 'fn_calc', kind: 'function' }])
+        : Promise.resolve([]),
+    );
+    fireEvent.click(categoryButton(container, 'function'));
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="fn_calc"]')).not.toBeNull();
+    });
+
+    // SQLite is single-db with no schema grouping, so the chain is
+    // group → connection → db → category(function) → object.
+    expect(levelOf(container, '[data-group-header]')).toBe(1);
+    expect(levelOf(container, '[data-conn-item]')).toBe(2);
+    expect(levelOf(container, '[data-tree-node="db"]')).toBe(3);
+    expect(levelOf(container, '[data-cat-id="function"]')).toBe(4);
+    expect(levelOf(container, '[data-item-name="fn_calc"]')).toBe(5);
+    expect(findLevelGaps(container)).toEqual([]);
+  });
+
+  it('covers the view variant: a materialized view is a leaf table treeitem', async () => {
+    const { container } = await renderWithSqlite(
+      [
+        { name: 'settings', tableType: 'table', schema: undefined },
+        { name: 'v_report', tableType: 'view', schema: undefined },
+      ] as TableInfo[],
+      {},
+      {},
+    );
+    // Categories render collapsed, so open Views to reach the leaf rows.
+    await waitFor(() => {
+      expect(categoryButton(container, 'views')).toBeTruthy();
+    });
+    fireEvent.click(categoryButton(container, 'views'));
+    await waitFor(() => {
+      expect(container.querySelector('[data-tree-node="view"]')).not.toBeNull();
+    });
+
+    // Views share the table render path but flip data-tree-node to "view".
+    const viewRow = treeRow(container, '[data-tree-node="view"]');
+    expect(viewRow.getAttribute('data-item-name')).toBe('v_report');
+    expect(viewRow.getAttribute('aria-level')).toBe('5');
+    expect(levelOf(container, '[data-cat-id="views"]')).toBe(4);
+    expect(findLevelGaps(container)).toEqual([]);
+  });
+
+  it('covers the kv-db variant: key-value databases hang off the connection at level 3', async () => {
+    connectionsState.connections = [
+      makeConn({ id: 'cfg-kv', name: 'Redis Conn', databaseType: 'redis' }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-kv': { status: 'connected', dbSessionId: 'conn-kv', connectionId: 'cfg-kv' },
+    };
+    mockGetDatabases.mockResolvedValue(['db0', 'db1']);
+
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-kv" />,
+    );
+    await findByText('db0');
+
+    expect(levelOf(container, '[data-group-header]')).toBe(1);
+    expect(levelOf(container, '[data-conn-item]')).toBe(2);
+    expect(levelOf(container, '[data-tree-node="kv-db"]')).toBe(3);
+    // A key-value store has no categories, so the whole tree stops at level 3.
+    expect(container.querySelector('[data-tree-node="category"]')).toBeNull();
+    expect(findLevelGaps(container)).toEqual([]);
+  });
+
+  it('covers the db-loading variant at both places buildFlatRows emits it', async () => {
+    // (a) depth 3 — a database is still fetching its tables.
+    connectionsState.connections = [
+      makeConn({
+        id: 'cfg-sql',
+        name: 'Slow SQLite',
+        databaseType: 'sqlite',
+        database: '/data/app.db',
+      }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-sql': { status: 'connected', dbSessionId: 'conn-sql', connectionId: 'cfg-sql' },
+    };
+    mockGetDatabases.mockResolvedValue(['/data/app.db']);
+    mockGetTables.mockReturnValue(new Promise<TableInfo[]>(() => {}));
+
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-sql" />,
+    );
+    await findByText('common.loading');
+
+    // The db row spins too, so pick the treeitem that actually carries the
+    // loading copy rather than the first .animate-spin in the subtree.
+    const placeholder = loadingTreeItem(container);
+    expect(levelOf(container, '[data-tree-node="db"]')).toBe(3);
+    expect(placeholder.getAttribute('aria-level')).toBe('4');
+    expect(findLevelGaps(container)).toEqual([]);
+  });
+
+  it('covers the db-loading variant emitted for a key-value store at depth 2', async () => {
+    connectionsState.connections = [
+      makeConn({ id: 'cfg-kv', name: 'Redis Conn', databaseType: 'redis' }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-kv': { status: 'connecting', dbSessionId: '', connectionId: 'cfg-kv' },
+    };
+    mockGetDatabases.mockResolvedValue([]);
+
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-kv" />,
+    );
+    await findByText('common.loading');
+
+    // isConnecting short-circuits before any database is known, so this
+    // placeholder is a direct child of the connection row.
+    expect(levelOf(container, '[data-conn-item]')).toBe(2);
+    expect(loadingTreeItem(container).getAttribute('aria-level')).toBe('3');
+  });
+
+  it('covers the namespace-node variant: branches and typed leaves keep counting', async () => {
+    connectionsState.connections = [
+      makeConn({ id: 'cfg-doris', name: 'Doris Conn', databaseType: 'doris' }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-doris': { status: 'connected', dbSessionId: 'conn-doris', connectionId: 'cfg-doris' },
+    };
+    mockGetDatabases.mockResolvedValue(['db_x']);
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-doris" />,
+    );
+    await settleSessionLoad('conn-doris');
+    seedSessionSchema('conn-doris', {
+      currentDatabase: 'db_x',
+      namespaceTree: { public: { users: [] }, mv1: [] },
+      tables: [
+        { name: 'mv1', tableType: 'materializedView' },
+        { name: 'users', tableType: 'table' },
+      ] as TableInfo[],
+      loadedPaths: new Set<string>(),
+      pathItems: {},
+    });
+    await findByText('public');
+
+    // Top-level namespace nodes start at baseDepth 2 under the connection.
+    expect(levelOf(container, '[data-group-header]')).toBe(1);
+    expect(levelOf(container, '[data-conn-item]')).toBe(2);
+    expect(levelOf(container, '[data-tree-node="namespace"]')).toBe(3);
+    // A top-level materialized view is a namespace leaf, not a category leaf.
+    expect(levelOf(container, '[data-tree-node="view"]')).toBe(3);
+
+    fireEvent.click((await findByText('public')).closest('button')!);
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="users"]')).not.toBeNull();
+    });
+    expect(levelOf(container, '[data-item-name="users"]')).toBe(4);
+    expect(findLevelGaps(container)).toEqual([]);
+  });
+
+  it('keeps the two non-node variants out of the tree', async () => {
+    // `no-connections` — the whole tree is a single placeholder block.
+    connectionsState.connections = [];
+    connectionsState.groups = [];
+    activeConnectionsState.connections = {};
+    const empty = render(<ConnectionNavigatorTree {...baseProps} activeConnectionId={null} />);
+    await empty.findByText('main.noConnections');
+    expect(empty.container.querySelector('[role="treeitem"]')).toBeNull();
+    empty.unmount();
+
+    // `empty-group` — a hint row under an expanded but childless group header.
+    connectionsState.connections = [makeConn({ id: 'cfg-x', name: 'Lonely', group: 'Group Z' })];
+    connectionsState.groups = ['Group Z', 'Group Y'];
+    activeConnectionsState.connections = {};
+    const hint = render(<ConnectionNavigatorTree {...baseProps} activeConnectionId={null} />);
+    // Every group is expanded on mount (ConnectionNavigatorTree seeds
+    // expandedGroups from the group list), so the childless group paints its
+    // hint row straight away.
+    const groupHeader = (await hint.findByText('Group Y')).closest('[data-group-header]')!;
+    expect(groupHeader.getAttribute('role')).toBe('treeitem');
+    expect(groupHeader.getAttribute('aria-level')).toBe('1');
+
+    await waitFor(() => {
+      expect(hint.container.querySelector('[data-empty-group]')).not.toBeNull();
+    });
+    const emptyHint = hint.container.querySelector('[data-empty-group]')!;
+    expect(emptyHint.getAttribute('data-empty-group')).toBe('Group Y');
+    expect(emptyHint.getAttribute('role')).toBeNull();
+    expect(emptyHint.getAttribute('aria-level')).toBeNull();
+  });
+
+  it('never nests a group inside a section: every header is a level-1 treeitem', async () => {
+    const recent = makeConn({
+      id: 'cfg-recent',
+      name: 'Recent Conn',
+      group: 'Group A',
+      lastConnectedAt: '2026-08-31T10:00:00Z',
+    });
+    const a1 = makeConn({ id: 'cfg-a1', name: 'A One', group: 'Group A' });
+    const a2 = makeConn({ id: 'cfg-a2', name: 'A Two', group: 'Group A' });
+    const b1 = makeConn({ id: 'cfg-b1', name: 'B One', group: 'Group B' });
+    connectionsState.connections = [recent, a1, a2, b1];
+    connectionsState.groups = ['Group A', 'Group B'];
+    activeConnectionsState.connections = {};
+
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId={null} />,
+    );
+    await findByText('A One');
+    await findByText('B One');
+
+    // buildFlatRows pushes at most one header per top-level section, and it is
+    // a `section` XOR a `group` — so groups are siblings of sections, never
+    // children. Both therefore sit at level 1.
+    const sectionHeader = container.querySelector('[data-section-header][data-section="recent"]')!;
+    expect(sectionHeader.getAttribute('aria-level')).toBe('1');
+
+    const groupHeaders = [...container.querySelectorAll('[data-group-header]')];
+    expect(groupHeaders.map((g) => g.getAttribute('data-group-name')).sort()).toEqual([
+      'Group A',
+      'Group B',
+    ]);
+    for (const header of groupHeaders) {
+      expect(header.getAttribute('aria-level')).toBe('1');
+    }
+
+    // The recent connection is listed twice — once under the section, once
+    // under its own group — and both copies are level-2 children of a header.
+    const connNames = [...container.querySelectorAll('[data-conn-item]')].map((c) =>
+      c.getAttribute('data-conn-name'),
+    );
+    expect(connNames).toContain('Recent Conn');
+    expect(connNames.filter((n) => n === 'Recent Conn')).toHaveLength(2);
+    for (const conn of container.querySelectorAll('[data-conn-item]')) {
+      expect(conn.getAttribute('aria-level')).toBe('2');
+    }
+    expect(findLevelGaps(container)).toEqual([]);
+  });
+
+  it('keeps aria-level a property of the row, not of where the virtualizer paints it', async () => {
+    const { container, rerender } = await renderWithSqlite(
+      [
+        { name: 'settings', tableType: 'table', schema: undefined },
+        { name: 'audit_log', tableType: 'table', schema: undefined },
+        { name: 'v_report', tableType: 'view', schema: undefined },
+      ] as TableInfo[],
+      {},
+      {},
+    );
+    // Row order once both categories are open:
+    // 0 group, 1 connection, 2 db, 3 Tables, 4 settings, 5 audit_log,
+    // 6 Views, 7 v_report.
+    // Tables is the auto-expanded default category; Views is not.
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="settings"]')).not.toBeNull();
+    });
+    fireEvent.click(categoryButton(container, 'views'));
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="v_report"]')).not.toBeNull();
+    });
+
+    const levelByName = () =>
+      new Map(
+        [...container.querySelectorAll<HTMLElement>('[role="treeitem"][data-item-name]')].map(
+          (el) => [el.getAttribute('data-item-name'), el.getAttribute('aria-level')],
+        ),
+      );
+
+    const fullWindow = levelByName();
+    expect(fullWindow.get('settings')).toBe('5');
+    expect(fullWindow.get('audit_log')).toBe('5');
+    expect(fullWindow.get('v_report')).toBe('5');
+
+    // Scroll past the header, the connection and the db row: only the two
+    // table leaves stay in the DOM, and they must still report level 5 even
+    // though their level-1..4 ancestors are no longer painted.
+    virtualWindow.offset = 4;
+    virtualWindow.size = 2;
+    rerender(
+      <ConnectionNavigatorTree
+        {...baseProps}
+        activeConnectionId="cfg-sql"
+        onSelectTable={baseProps.onSelectTable}
+      />,
+    );
+
+    expect(container.querySelector('[data-group-header]')).toBeNull();
+    expect(container.querySelector('[data-conn-item]')).toBeNull();
+    expect(container.querySelector('[data-tree-node="db"]')).toBeNull();
+
+    const windowed = levelByName();
+    expect([...windowed.keys()].sort()).toEqual(['audit_log', 'settings']);
+    for (const [name, level] of windowed) {
+      expect(level, `level for ${name} after scrolling`).toBe(fullWindow.get(name));
+    }
+  });
+
+  it('describes the virtualization role shape: one tree, role-less row wrappers', async () => {
+    const { container } = await renderWithSqlite(
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
+      {},
+      {},
+    );
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="settings"]')).not.toBeNull();
+    });
+
+    const tree = treeOf(container);
+    expect(container.querySelectorAll('[role="tree"]')).toHaveLength(1);
+
+    // Every treeitem is a descendant of the single tree container, and the
+    // tree's direct children are the absolutely-positioned virtualizer
+    // wrappers, which stay generic divs (they contain focusable buttons, so
+    // role="presentation"/"none" would be an ARIA anti-pattern).
+    const directChildren = [...tree.children];
+    expect(directChildren.length).toBeGreaterThan(0);
+    for (const child of directChildren) {
+      expect(child.getAttribute('role')).toBeNull();
+      expect(child.querySelectorAll('[role="treeitem"]').length).toBeGreaterThan(0);
+    }
+    expect(tree.querySelectorAll('[role="treeitem"]').length).toBe(
+      directChildren.reduce(
+        (sum, child) => sum + child.querySelectorAll('[role="treeitem"]').length,
+        0,
+      ),
+    );
+  });
+
+  // ── Level and expansion state contracts ───────────────────────────────
+  //
+  // Every treeitem that owns children has to announce that state: a level the
+  // reader can resolve to a real parent, and an aria-expanded the reader can
+  // hear change. These were `it.fails` while the DOM did not meet them.
+
+  it('search results must not skip a level: a db is one level under its connection', async () => {
+    const { container, findByText } = await renderWithSqlite(
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
+      {},
+      {},
+    );
+    await findByText('settings');
+
+    // Searching drops the section/group header (buildFlatRows only emits one
+    // when `!query`) and moves connections to depth 0, while databases stay
+    // painted at depth 2. The reported level follows the logical parent
+    // rather than that indent, so the connection owns the database directly.
+    fireEvent.change(searchInput(container), { target: { value: 'SQLite' } });
+    await waitFor(() => {
+      expect(container.querySelector('[data-group-header]')).toBeNull();
+    });
+    expect(levelOf(container, '[data-conn-item]')).toBe(1);
+    expect(container.querySelector('[data-tree-node="db"]')).not.toBeNull();
+
+    expect(findLevelGaps(container)).toEqual([]);
+  });
+
+  it('a group header is a treeitem with children, so it must expose aria-expanded', async () => {
+    connectionsState.connections = [makeConn({ id: 'cfg-a1', name: 'A One', group: 'Group A' })];
+    connectionsState.groups = ['Group A'];
+    activeConnectionsState.connections = {};
+
+    const { findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId={null} />,
+    );
+    const header = (await findByText('Group A')).closest('[data-group-header]')!;
+    expect(header.getAttribute('aria-level')).toBe('1');
+    // Groups are seeded expanded on mount (ConnectionNavigatorTree expands
+    // every known group on the first effect), so the contract to pin is that
+    // the attribute exists and tracks the toggle, not a fixed initial value.
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(header);
+    await waitFor(() => {
+      expect(document.querySelector('[data-group-header]')?.getAttribute('aria-expanded')).toBe(
+        'false',
+      );
+    });
+  });
+
+  it('a connection treeitem must carry aria-expanded itself, not only its chevron button', async () => {
+    const { container, findByText } = await renderWithSqlite(
+      [{ name: 'settings', tableType: 'table', schema: undefined }],
+      {},
+      {},
+    );
+    await findByText('settings');
+
+    const conn = container.querySelector('[data-conn-item]')!;
+    // The chevron <button> inside the row still reports the state...
+    expect(conn.querySelector('button')!.getAttribute('aria-expanded')).toBe('true');
+    // ...but a screen reader walking the tree reads the treeitem, which is
+    // silent, so the node announces as a leaf.
+    expect(conn.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('an expanded namespace branch is a treeitem with children and needs aria-expanded', async () => {
+    connectionsState.connections = [
+      makeConn({ id: 'cfg-doris', name: 'Doris Conn', databaseType: 'doris' }),
+    ];
+    activeConnectionsState.connections = {
+      'cfg-doris': { status: 'connected', dbSessionId: 'conn-doris', connectionId: 'cfg-doris' },
+    };
+    mockGetDatabases.mockResolvedValue(['db_x']);
+    const { container, findByText } = render(
+      <ConnectionNavigatorTree {...baseProps} activeConnectionId="cfg-doris" />,
+    );
+    await settleSessionLoad('conn-doris');
+    seedSessionSchema('conn-doris', {
+      currentDatabase: 'db_x',
+      namespaceTree: { public: { users: [] } },
+      tables: [] as TableInfo[],
+      loadedPaths: new Set<string>(),
+      pathItems: {},
+    });
+    await findByText('public');
+
+    // The tree is virtualized and recycles row elements by index, so a
+    // captured element is not a stable handle on a row: once the click
+    // shifts the rows, the same element is re-rendered as something else.
+    // Look the branch up by its label, and look it up again afterwards
+    // rather than reusing the element captured before the click.
+    const branch = (await findByText('public')).closest('[data-tree-node="namespace"]')!;
+    expect(branch.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(branch);
+    await waitFor(() => {
+      expect(container.querySelector('[data-item-name="users"]')).not.toBeNull();
+    });
+    // `branch` is still in the document after the click, but it now renders a
+    // different row than the one that was clicked — hence the re-resolve.
+    const expanded = (await findByText('public')).closest('[data-tree-node="namespace"]')!;
+    expect(expanded.getAttribute('aria-expanded')).toBe('true');
   });
 });

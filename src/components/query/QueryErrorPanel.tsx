@@ -1,6 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { Check, Copy, Lightbulb, MessageSquare, RotateCcw, Stethoscope, Wand2 } from 'lucide-react';
+import { useCopyFeedback } from '../ui/useCopyFeedback';
 import { useI18n } from '../../hooks/useI18n';
+
+/** How long the "copied" error label stays before reverting. */
+const COPIED_FEEDBACK_MS = 1500;
 
 interface QueryErrorPanelProps {
   message: string;
@@ -29,14 +33,12 @@ export function QueryErrorPanel({
   onAskInChat,
 }: Readonly<QueryErrorPanelProps>) {
   const { t } = useI18n();
-  const [errorCopied, setErrorCopied] = useState(false);
+  const { copied: errorCopied, copy } = useCopyFeedback(COPIED_FEEDBACK_MS);
 
   const handleCopyError = useCallback(() => {
-    void navigator.clipboard.writeText(message);
+    copy(message);
     onCopy?.();
-    setErrorCopied(true);
-    window.setTimeout(() => setErrorCopied(false), 1500);
-  }, [message, onCopy]);
+  }, [copy, message, onCopy]);
 
   const explain = onExplain ?? onDiagnose;
 

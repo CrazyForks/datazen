@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, File, Folder, Layers, Loader2, Table2 } from 'lucide-react';
+import { ChevronLeft, File, Folder, Layers, Table2 } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { contextCommands } from '../../commands/context';
 import { databaseCommands } from '../../commands/database';
 import { useI18n } from '../../hooks/useI18n';
 import type { ContextEntry, ContextItem, TableInfo } from '../../types';
+import { Spinner } from '../ui/Spinner';
 
 const RECENT_KEY = 'datazen.contextRecent';
 const MAX_RECENT = 8;
@@ -299,7 +300,7 @@ export function ContextPicker({
 
       {loading && (
         <div className="flex items-center gap-2 px-3 py-3 text-xs text-fg-muted">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Spinner size="md" />
           {t('common.loading')}
         </div>
       )}

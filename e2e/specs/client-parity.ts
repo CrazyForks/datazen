@@ -264,9 +264,13 @@ describe('Client parity P0–P2', () => {
     await closeExtraWindows(mainWindow);
     await openNewConnectionDialogFromUi();
     await expandNewConnectionSshSection();
+    // Selecting the inline tunnel source auto-enables SSH together with the
+    // kind (useTunnelFormState sets `sshEnabled` from `kind === 'ssh'`), so the
+    // checkbox is already checked and the fields are already showing. Clicking
+    // it here would switch SSH back off, not on.
     const sshCheckbox = await $('[data-testid="new-conn-ssh-tunnel-checkbox"]');
     await sshCheckbox.waitForDisplayed({ timeout: 10000 });
-    await sshCheckbox.click();
+    await expect(sshCheckbox).toBeSelected();
     await expect(await $('[data-testid="new-conn-ssh-auth-agent"]')).toBeDisplayed();
     await $('[data-testid="new-conn-ssh-auth-agent"]').click();
     await expect(await $('[data-testid="new-conn-ssh-auth-agent-hint"]')).toBeDisplayed();
