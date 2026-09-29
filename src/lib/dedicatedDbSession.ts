@@ -25,6 +25,7 @@ export async function ensureDedicatedSession(
   current: DedicatedSideSession | null,
   connectionId: string,
   database: string,
+  databaseOverride: string | null = database,
 ): Promise<DedicatedSideSession | null> {
   if (!connectionId || !database) return null;
   if (
@@ -41,7 +42,10 @@ export async function ensureDedicatedSession(
     }
   }
   await releaseDedicatedSession(current?.dbSessionId);
-  const dbSessionId = await connectionCommands.connectDedicated(connectionId, database);
+  const dbSessionId = await connectionCommands.connectDedicated(
+    connectionId,
+    databaseOverride ?? undefined,
+  );
   return { connectionId, database, dbSessionId };
 }
 

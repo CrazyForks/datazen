@@ -9,3 +9,4 @@ packages/*/target/
 pnpm-lock.yaml
 *.min.js
 *.map
+src/stores/__tests__/fixtures/panelStore.pre-fix-227b6af8e.ts

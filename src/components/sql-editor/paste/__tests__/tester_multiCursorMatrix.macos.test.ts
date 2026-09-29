@@ -119,16 +119,34 @@ describe('[tester] 裁定 1 · Mod-d 族（macOS 分支，Mod ≡ Cmd）', () =>
     //   modifiers(base[68]='d', event, true) = "Shift-Meta-d" 正好命中它。
     // 因此正确表述是「在真实四绑定 keymap 中被 Mod-D 遮蔽」，而非「结构上不可达」。
     expect(
-      reachableAlone('Shift-Mod-d', { key: 'd', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD }),
+      reachableAlone('Shift-Mod-d', {
+        key: 'd',
+        code: 'KeyD',
+        keyCode: 68,
+        shiftKey: true,
+        ...MOD,
+      }),
     ).toBe(true);
     expect(
-      reachableAlone('Shift-Mod-d', { key: 'đ', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD }),
+      reachableAlone('Shift-Mod-d', {
+        key: 'đ',
+        code: 'KeyD',
+        keyCode: 68,
+        shiftKey: true,
+        ...MOD,
+      }),
     ).toBe(true);
 
     // Shift-Mod-D 在**真实浏览器形态**（keyCode=68）下真正不可达：
     // 回退两步分别拼出 "Shift-Meta-d" 与（不带 Shift 的）"Meta-D"，都拼不出 "Shift-Meta-D"。
     expect(
-      reachableAlone('Shift-Mod-D', { key: 'D', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD }),
+      reachableAlone('Shift-Mod-D', {
+        key: 'D',
+        code: 'KeyD',
+        keyCode: 68,
+        shiftKey: true,
+        ...MOD,
+      }),
     ).toBe(false);
 
     // 与非 mac 分支完全一致的例外：keyCode 缺失时 base[0] 为 undefined，回退分支不进入，
@@ -145,12 +163,12 @@ describe('[tester] 裁定 1 · Mod-d 族（macOS 分支，Mod ≡ Cmd）', () =>
 
   it('mac 命中顺序矩阵', () => {
     expect(winnerAmongFour({ key: 'd', code: 'KeyD', keyCode: 68, ...MOD })).toBe('Mod-d');
-    expect(
-      winnerAmongFour({ key: 'D', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD }),
-    ).toBe('Mod-D');
-    expect(
-      winnerAmongFour({ key: 'đ', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD }),
-    ).toBe('Mod-D');
+    expect(winnerAmongFour({ key: 'D', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD })).toBe(
+      'Mod-D',
+    );
+    expect(winnerAmongFour({ key: 'đ', code: 'KeyD', keyCode: 68, shiftKey: true, ...MOD })).toBe(
+      'Mod-D',
+    );
   });
 });
 

@@ -11,6 +11,7 @@ import {
   closeExtraWindows,
   invokeBackend,
   openSchemaDiffWindow,
+  selectDzOption,
   selectDzOptionInWrap,
   selectSchemaDiffEndpoints,
   stubClipboardCapture,
@@ -76,7 +77,7 @@ describe('结构对比窗口 (SD-001~SD-004, SD-LIM)', () => {
     }
     await clickSchemaDiffNext({ requireEnabled: false });
     const body = await $('body').getText();
-    expect(body).toContain(t('schemaDiff.tableRequired'));
+    expect(body).toContain(t('schemaDiff.selectionRequired'));
     await captureJourneyStep('schema-diff-table-required');
   });
 
@@ -206,5 +207,39 @@ describe('结构对比窗口 (SD-001~SD-004, SD-LIM)', () => {
       await invokeBackend('test_reset_dialog_queue');
     }
     await captureJourneyStep('schema-diff-export-config');
+  });
+
+  it('SD-010: 保存并加载 profile 应恢复范围并触发新的对象检查', async () => {
+    await seedSecondPgConnection(browser);
+    await openSchemaDiffWindow();
+    await selectSchemaDiffEndpoints(E2E_PG_CONN_NAME, 'E2E-PG-目标');
+    await clickSchemaDiffNext();
+    await clickSchemaDiffCompare();
+    await advanceSchemaDiffToPlan();
+
+    await $('[data-testid="schema-diff-profile-save"]').click();
+    const dialog = await $('[data-testid="schema-diff-profile-dialog"]');
+    await dialog.waitForDisplayed({ timeout: 8000 });
+    await $('[data-testid="schema-diff-profile-name"]').setValue('E2E Schema Profile');
+    await $('[data-testid="schema-diff-profile-save-confirm"]').click();
+    await browser.waitUntil(
+      async () =>
+        (await $('[data-testid="schema-diff-profile-select"]').getText()).includes(
+          'E2E Schema Profile',
+        ),
+      { timeout: 8000, timeoutMsg: '等待 Schema Diff profile 保存完成超时' },
+    );
+
+    await selectDzOption('E2E Schema Profile', 'E2E Schema Profile');
+    await $('[data-testid="schema-diff-profile-load"]').click();
+    await browser.waitUntil(
+      async () =>
+        await $('[data-testid="schema-diff-objects-panel"]')
+          .isDisplayed()
+          .catch(() => false),
+      { timeout: 15000, timeoutMsg: '加载 Schema Diff profile 后未回到对象检查步骤' },
+    );
+    expect(await $$('[data-testid="schema-diff-table-row"]')).not.toHaveLength(0);
+    await captureJourneyStep('schema-diff-profile-loaded');
   });
 });

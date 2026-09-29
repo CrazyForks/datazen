@@ -13,7 +13,7 @@
 //! ## Layout
 //!
 //! This file holds the shared vocabulary — the types the rest of the app names,
-//! the connection guard, and the retention policy. The four data domains live
+//! the connection guard, and the retention policy. The data domains live
 //! beside it, one file each, so that adding a domain does not mean growing this
 //! one:
 //!
@@ -22,6 +22,7 @@
 //! | [`query_history`] | `query_history`: append, filter, page, delete |
 //! | [`workflow_history`] | `workflow_history`: record and replay |
 //! | [`legacy_favorites`] | the retired `favorite_queries` table (read-only) |
+//! | [`migration_run`] | migration run records and their filters |
 //! | [`schema`] | table creation, the v1→v4 migration ring, JSON import |
 //!
 //! Retention ([`HistoryDb::purge`]) stays here because it spans two of them and
@@ -39,6 +40,55 @@ use crate::workflow::workflows::WorkflowExecutionResult;
 
 pub const MAX_QUERY_HISTORY: usize = 1000;
 pub const MAX_WORKFLOW_HISTORY: usize = 100;
+pub const MAX_MIGRATION_RUN_HISTORY: usize = 1000;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationRunRecord {
+    pub id: String,
+    pub operation: String,
+    pub status: String,
+    pub outcome: String,
+    pub phase: String,
+    pub profile_id: Option<String>,
+    pub profile_revision: Option<String>,
+    pub source_connection_id: Option<String>,
+    pub target_connection_id: Option<String>,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub selected_count: u64,
+    pub committed_count: u64,
+    pub failed_count: u64,
+    pub conflict_count: u64,
+    pub cancelled: bool,
+    pub rollback_outcome: String,
+    pub error_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationRunFilter {
+    pub operation: Option<String>,
+    pub status: Option<String>,
+    pub profile_id: Option<String>,
+    pub connection_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationRunPage {
+    pub items: Vec<MigrationRunRecord>,
+    pub total: u64,
+    pub offset: u64,
+    pub limit: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MigrationProfileRef {
+    pub id: String,
+    pub revision: String,
+}
 
 /// Name of the retired favorites table. Never created again; only read.
 pub const LEGACY_FAVORITES_TABLE: &str = "favorite_queries";
@@ -199,6 +249,7 @@ pub struct HistoryDb {
 }
 
 mod legacy_favorites;
+mod migration_run;
 mod query_history;
 mod schema;
 mod workflow_history;

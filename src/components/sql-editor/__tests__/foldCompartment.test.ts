@@ -199,9 +199,9 @@ describe('fold compartment: atomic batch reconfiguration', () => {
       view.dispatch({
         effects: StateEffect.appendConfig.of(
           EditorView.updateListener.of((update) => {
-            const frame = `${update.state.facet(statementTags)}/${update.state.facet(foldTags)}/${
-              update.state.facet(extraTags)
-            }`;
+            const frame = `${update.state.facet(statementTags)}/${update.state.facet(foldTags)}/${update.state.facet(
+              extraTags,
+            )}`;
             if (seen.at(-1) !== frame) seen.push(frame);
           }),
         ),
@@ -354,7 +354,9 @@ describe('settings bag: the lookup every compartment depends on', () => {
     // still a bag, and preferring it over a populated one would silently
     // ignore every setting an older install had written.
     const legacy = { codeFolding: true };
-    expect(readProSettingsBag({ 'sql-editor-enhanced': legacy, 'sql-editor-pro': current })).toBe(legacy);
+    expect(readProSettingsBag({ 'sql-editor-enhanced': legacy, 'sql-editor-pro': current })).toBe(
+      legacy,
+    );
   });
 
   it('falls through to a later id when the first is absent or not a bag', () => {
@@ -378,17 +380,30 @@ describe('settings bag: the lookup every compartment depends on', () => {
   });
 
   it('reads folding off that bag, honouring the fallback for absent and non-boolean values', () => {
-    expect(proSettingFlag(readProSettingsBag({ 'sql-editor-enhanced': {} }), 'codeFolding')).toBe(true);
-    expect(proSettingFlag(readProSettingsBag({ 'sql-editor-enhanced': { codeFolding: false } }), 'codeFolding')).toBe(
-      false,
+    expect(proSettingFlag(readProSettingsBag({ 'sql-editor-enhanced': {} }), 'codeFolding')).toBe(
+      true,
     );
+    expect(
+      proSettingFlag(
+        readProSettingsBag({ 'sql-editor-enhanced': { codeFolding: false } }),
+        'codeFolding',
+      ),
+    ).toBe(false);
     // Only a real boolean switches folding off. A stray string or number is a
     // settings-corruption symptom, and treating it as `false` would disable a
     // feature the user never turned off.
-    expect(proSettingFlag(readProSettingsBag({ 'sql-editor-enhanced': { codeFolding: 'no' } }), 'codeFolding')).toBe(
-      true,
-    );
-    expect(proSettingFlag(readProSettingsBag({ 'sql-editor-enhanced': { codeFolding: 0 } }), 'codeFolding')).toBe(true);
+    expect(
+      proSettingFlag(
+        readProSettingsBag({ 'sql-editor-enhanced': { codeFolding: 'no' } }),
+        'codeFolding',
+      ),
+    ).toBe(true);
+    expect(
+      proSettingFlag(
+        readProSettingsBag({ 'sql-editor-enhanced': { codeFolding: 0 } }),
+        'codeFolding',
+      ),
+    ).toBe(true);
   });
 
   it('agrees with the Pro extension on the same bag and the same key', () => {

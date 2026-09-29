@@ -90,6 +90,8 @@ const pack = {
   'sync.pagePrev': 'Précédent',
   'sync.pageNext': 'Suivant',
   'sync.refreshPreview': 'Rafraîchir',
+  'sync.sqlPreviewLimitReached':
+    'L’aperçu SQL est limité à 16 Mio. Sélectionnez moins de lignes ou d’opérations pour examiner le SQL. Vous pouvez toujours consulter la comparaison des lignes et exécuter les modifications vérifiées.',
   'sync.execute': 'Exécuter',
   'sync.executing': 'Exécution de la synchronisation…',
   'sync.executingSql': 'Exécution de {count} instruction(s) SQL…',
@@ -171,6 +173,9 @@ const pack = {
   'transfer.mapping.noTables': 'Aucune table activée à mapper.',
   'transfer.mapping.targetTable': 'Table cible',
   'transfer.mapping.createNew': 'Créer une nouvelle table',
+  'transfer.mapping.targetDefaultCollation': 'Utiliser la collation par défaut de la base cible',
+  'transfer.mapping.targetDefaultCollationHint':
+    'Le tri du texte, les comparaisons de casse ou d’accents et le comportement des index uniques peuvent changer.',
   'transfer.mapping.sourceColumn': 'Colonne source',
   'transfer.mapping.targetColumn': 'Colonne cible',
   'transfer.mapping.skip': 'Ignorer',
@@ -193,6 +198,9 @@ const pack = {
   'transfer.limitations.dontShowAgain': 'Ne plus afficher ce message',
   'transfer.ddlOverrideHint':
     'Modifiez l’instruction CREATE ci-dessus ; l’exécution lancera votre SQL modifié.',
+  'transfer.ddlKind.index': 'Indice',
+  'transfer.ddlKind.foreignKey': 'Clé étrangère',
+  'transfer.ddlKind.dropTable': 'Supprimer la table',
 
   // --- Schema Diff ---
   'schemaDiff.description':
@@ -253,6 +261,8 @@ const pack = {
   'schemaDiff.reviewTarget': 'Cible',
   'schemaDiff.reviewTables': 'Tables',
   'schemaDiff.useTransaction': 'Exécuter en transaction (si le dialecte le permet)',
+  'schemaDiff.transactionRequired':
+    'requis pour préserver la sécurité de la reconstruction des tables SQLite',
   'schemaDiff.txUnsupported': 'ce dialecte valide souvent le DDL automatiquement',
   'schemaDiff.requireRollback': 'Exiger un SQL de rollback complet',
   'schemaDiff.rollbackIncomplete': 'Rollback SQL manquant pour',
@@ -325,5 +335,215 @@ const pack = {
     'Veuillez d’abord sélectionner les bases de données source et cible',
   'schemaDiff.colChanged': 'Colonne modifiée',
   'schemaDiff.identical': 'Identique',
+  'migrationHistory.open': 'Historique des exécutions',
+  'migrationHistory.title': 'Historique des exécutions de migration',
+  'migrationHistory.empty': 'Aucune exécution n’a encore été enregistrée.',
+  'migrationHistory.outcome': 'Résultat',
+  'migrationHistory.counts': 'Validées / échouées / conflits',
+  'migrationHistory.rollback': 'Annuler',
+  'migrationHistory.profile': 'Révision du profil',
+  'migrationHistory.syncUnknownHint':
+    'Le plan précédent ne sera pas réutilisé. Reconnectez-vous, examinez les schémas actuels et comparez les lignes actuelles avant d’examiner un nouveau plan.',
+  'migrationHistory.syncReconcile': 'Comparer les données actuelles',
+  'migrationHistory.syncReconcileBusy':
+    'Attendez la fin de l’exécution en cours avant de lancer une nouvelle comparaison.',
+  'migrationHistory.syncReconcileMissingConnection':
+    'Une connexion enregistrée pour un point de terminaison n’existe plus. Sélectionnez à nouveau les deux points de terminaison avant de comparer.',
+  'migrationHistory.syncReconcileProfileReady':
+    'La révision du profil enregistré correspond. Examinez et comparez les données actuelles avant d’étudier un nouveau plan.',
+  'migrationHistory.syncReconcileProfileChanged':
+    'Le profil enregistré a été modifié ou supprimé. Sélectionnez à nouveau le périmètre et les filtres, puis examinez et comparez les données actuelles.',
+  'migrationHistory.syncReconcileScopeUnavailable':
+    'Le périmètre du profil enregistré n’a pas pu être vérifié avec les bases de données actuelles. Sélectionnez à nouveau le périmètre et les filtres, puis examinez et comparez les données actuelles.',
+  'migrationHistory.syncReconcileConfirmScope': 'J’ai vérifié le périmètre sélectionné',
+  'migrationHistory.syncReconcileNeedsScope':
+    'Sélectionnez à nouveau les bases de données, les schémas, les tables et les filtres éventuels, puis examinez et comparez les données actuelles.',
+  'sync.executionUnknown':
+    'Le résultat de l’écriture n’a pas pu être confirmé. Effectuez une nouvelle comparaison avant de réessayer.',
+  'sync.executionNotStarted':
+    'L’exécution n’a pas démarré. Vérifiez le contexte des points de terminaison et effectuez une nouvelle comparaison avant de réessayer.',
+  'sync.cancellingExecution': 'Annulation demandée. En attente du résultat de la transaction…',
+  'sync.conflictPolicyLabel': 'Gestion des conflits',
+  'sync.conflictPolicyAbort': 'Abandonner et annuler la transaction',
+  'sync.conflictPolicySkip': 'Ignorer les conflits',
+  'sync.conflictPolicyForce': 'Forcer les mises à jour/suppressions',
+  'sync.conflictPolicySkipWarning':
+    'Les conflits sont ignorés ; les autres lignes peuvent être validées.',
+  'sync.conflictPolicyForceWarning':
+    'Les modifications simultanées sur la cible risquent d’être écrasées.',
+  'sync.sourceFilter': 'Filtre',
+  'sync.recordset': 'Plage de lignes',
+  'sync.recordsetHint':
+    'Limitez la comparaison à une plage de clés primaires. La même limite s’applique à la source et à la cible.',
+  'sync.recordsetEnable': 'Définir une plage',
+  'sync.recordsetDisable': 'Effacer la plage',
+  'sync.recordsetOrder': 'Trier par',
+  'sync.recordsetStart': 'Début',
+  'sync.recordsetEnd': 'Fin',
+  'sync.recordsetUnbounded': 'Sans limite',
+  'sync.recordsetInclusive': 'Inclusif',
+  'sync.recordsetLimit': 'Nombre maximal de lignes',
+  'sync.recordsetLimitInvalid': 'Utilisez un entier positif sûr.',
+  'sync.conflictsSkipped': '{count} conflit(s) simultané(s) ignoré(s)',
+  'sync.clearAllInsert': 'Effacer les insertions',
+  'sync.clearAllUpdate': 'Effacer les mises à jour',
+  'sync.clearAllDelete': 'Effacer les suppressions',
+  'sync.pageScope': 'Page chargée uniquement',
+  'sync.pageScopeAll': 'Toutes les lignes des opérations de table sélectionnées',
+  'sync.loadingPage': 'Chargement…',
+  'sync.profile.name': 'Nom du profil',
+  'sync.profile.namePlaceholder': 'Nommer cette configuration de synchronisation',
+  'sync.profile.select': 'Sélectionner un profil enregistré',
+  'sync.profile.save': 'Enregistrer le profil',
+  'sync.profile.load': 'Charger le profil',
+  'sync.profile.delete': 'Supprimer le profil',
+  'sync.profile.saved': 'Profil de synchronisation enregistré',
+  'sync.profile.loaded': 'Profil de synchronisation chargé ; l’inspection actualisera le mappage',
+  'sync.profile.deleted': 'Profil de synchronisation supprimé',
+  'sync.profile.missingFields':
+    'Sélectionnez les deux points de terminaison et saisissez un nom de profil.',
+  'sync.profile.missingConnection':
+    'Ce profil fait référence à une connexion qui n’existe plus. Choisissez de nouveaux points de terminaison ou supprimez le profil.',
+  'transfer.destination.database': 'Base de données',
+  'transfer.destination.sqlFile': 'Fichier SQL',
+  'transfer.destination.sqlFileSelected': 'Fichier SQL sélectionné',
+  'transfer.destination.sqlDialect': 'Dialecte SQL',
+  'transfer.destination.sourceDialect': 'Dialecte source ({dialect})',
+  'transfer.destination.sqlDialectHint':
+    'Choisissez un dialecte cible enregistré. L’aperçu et le fichier généré utiliseront ses identifiants, types et littéraux.',
+  'transfer.destination.sqlEncoding': 'Encodage du fichier SQL',
+  'transfer.destination.sqlEncodingUtf8': 'UTF-8 sans BOM',
+  'transfer.destination.sqlEncodingUtf8Bom': 'UTF-8 avec BOM',
+  'transfer.destination.sqlEncodingUtf16Le': 'UTF-16LE avec BOM',
+  'transfer.destination.sqlEncodingUtf16Be': 'UTF-16BE avec BOM',
+  'transfer.destination.sqlCompression': 'Compression du fichier SQL',
+  'transfer.destination.sqlCompressionNone': 'Aucune (.sql)',
+  'transfer.destination.sqlCompressionGzip': 'Compression gzip (.sql.gz)',
+  'transfer.destination.sourceDatabase': 'Base de données source',
+  'transfer.destination.targetDatabase': 'Base de données/catalogue cible (facultatif)',
+  'transfer.destination.targetDatabasePlaceholder':
+    'Laissez vide pour utiliser la valeur par défaut du dialecte',
+  'transfer.destination.targetSchema': 'Schéma cible (facultatif)',
+  'transfer.destination.targetSchemaPlaceholder':
+    'Laissez vide pour utiliser la valeur par défaut du dialecte',
+  'transfer.destination.targetScopeHint':
+    'Utilisez un seul segment d’identifiant. MySQL et ClickHouse utilisent la base de données/le catalogue ; PostgreSQL utilise le schéma ; SQL Server accepte les deux.',
+  'transfer.destination.sqlFileHint':
+    'Le chemin du fichier SQL est conservé par l’hôte et le fichier sera écrit de façon atomique après l’aperçu.',
+  'transfer.destination.chooseHint': 'Choisissez un fichier SQL pour continuer.',
+  'transfer.profile.name': 'Nom du profil',
+  'transfer.profile.namePlaceholder': 'Nommer cette configuration de transfert',
+  'transfer.profile.save': 'Enregistrer le profil',
+  'transfer.profile.load': 'Charger le profil',
+  'transfer.profile.select': 'Sélectionner un profil enregistré',
+  'transfer.profile.missingFields':
+    'Sélectionnez les points de terminaison requis et saisissez un nom de profil.',
+  'transfer.profile.chooseFile':
+    'Choisissez une nouvelle destination de fichier SQL avant de continuer.',
+  'transfer.preview.backToSetup': 'Retour à la configuration',
+  'transfer.batchSizeLimit': 'Choisissez un nombre entier compris entre 1 et 500 lignes.',
+  'transfer.resumeCapabilityHint':
+    'La reprise au sein d’une table est vérifiée uniquement pour les transferts PostgreSQL/MySQL entre des sessions source et cible distinctes, vers des tables transactionnelles existantes (table PostgreSQL ordinaire ou MySQL InnoDB), avec une clé primaire complète prise en charge. Les autres tables conservent le comportement transactionnel par table entière. Pour reprendre, laissez cette session de l’application ouverte, utilisez le jeton dans les 24 heures et ne modifiez ni les lignes source sélectionnées ni les lignes cible validées. Toute modification de la source invalide le jeton ; les modifications de la cible doivent être rapprochées manuellement avant de continuer.',
+  'transfer.resumeAvailableHint':
+    'La reprise est disponible depuis cette session de l’application ouverte pendant 24 heures après le dernier point de contrôle. Pendant la pause, ne modifiez pas les lignes source sélectionnées ni les lignes cible validées. Les modifications de la source invalident le jeton ; celles de la cible ne sont pas vérifiées automatiquement et doivent être rapprochées avant de continuer.',
+  'transfer.sourceFilterPreview': 'Filtre source',
+  'transfer.recordsetPreview': 'Plage d’enregistrements source',
+  'transfer.runCancelled': 'Annulé',
+  'transfer.runPartial': 'Transfert incomplet',
+  'transfer.runUnknownOutcome': 'Résultat du transfert inconnu',
+  'transfer.partialExplanation':
+    'Les tables terminées et le DDL peuvent rester appliqués. Dans la mesure du possible, les écritures de données en cours sont annulées. Vérifiez les erreurs avant de réessayer ; les résultats inconnus doivent être vérifiés.',
+  'transfer.confirmedRowsInserted': 'Lignes insérées confirmées',
+  'transfer.rowsUnknown': 'Lignes au résultat inconnu',
+  'transfer.unknownOutcomeExplanation':
+    'La base de données n’a pas confirmé si l’écriture en cours a été validée ou annulée. Vérifiez les données cibles avant de réessayer.',
+  'transfer.tableOutcome.committed': 'Validée',
+  'transfer.tableOutcome.rolledBack': 'Annulée',
+  'transfer.tableOutcome.partiallyApplied': 'Partiellement appliquée',
+  'transfer.tableOutcome.notStarted': 'Non démarrée',
+  'transfer.tableOutcome.unknown': 'Inconnue',
+  'transfer.historyOutcome.notRequired': 'Non requis',
+  'transfer.historyOutcome.notStarted': 'Non démarrée',
+  'transfer.historyOutcome.rolledBack': 'Annulée',
+  'transfer.historyOutcome.unknown': 'Inconnue',
+  'transfer.historyOutcome.partiallyApplied': 'Partiellement appliquée',
+  'transfer.mapping.sourceFilter': 'Filtre des lignes source',
+  'transfer.mapping.sourceFilterHint':
+    'Seules les lignes source correspondantes sont copiées. Les valeurs sont transmises comme paramètres liés.',
+  'transfer.mapping.recordset': 'Plage d’enregistrements source',
+  'transfer.mapping.recordsetHint':
+    'Sélectionnez une plage de clés source avec des limites facultatives ou un nombre maximal. Les clés composites utilisent toutes les colonnes de clé primaire dans l’ordre déclaré. Cela sélectionne les lignes pour cette exécution ; il ne s’agit pas d’un point de reprise.',
+  'transfer.mapping.noRecordset':
+    'Aucune plage d’enregistrements ; toutes les lignes source correspondant au filtre sont copiées.',
+  'transfer.mapping.recordsetOrder': 'Trier par',
+  'transfer.mapping.recordsetOrderRequired':
+    'Choisissez une colonne source. L’ordre déclaré complet des clés primaires composites est appliqué automatiquement.',
+  'transfer.mapping.recordsetTextCollationHint':
+    'Lorsque les deux limites sont définies, les composants textuels de la clé doivent correspondre ; des limites textuelles différentes sont refusées si la collation source est inconnue.',
+  'transfer.mapping.recordsetStart': 'Limite de début',
+  'transfer.mapping.recordsetEnd': 'Limite de fin',
+  'transfer.mapping.recordsetUnbounded': 'Sans limite',
+  'transfer.mapping.recordsetInclusive': 'Inclusif',
+  'transfer.mapping.recordsetLimit': 'Nombre maximal de lignes',
+  'transfer.mapping.addFilter': 'Ajouter un filtre',
+  'transfer.mapping.noSourceFilter': 'Aucun filtre source ; toutes les lignes seront copiées.',
+  'transfer.mapping.filterLogic': 'Correspondance',
+  'transfer.mapping.filterAll': 'Toutes les conditions',
+  'transfer.mapping.filterAny': 'N’importe quelle condition',
+  'schemaDiff.selectionRequired': 'Sélectionnez au moins une table ou un objet de schéma à migrer',
+  'schemaDiff.crossDialectObjectNote':
+    'Les objets de schéma utilisent un DDL propre à chaque dialecte et ne peuvent pas être migrés entre différents types de bases de données. Les sélections enregistrées sont conservées ; effacez-les pour continuer la migration des tables.',
+  'schemaDiff.crossDialectObjectBlocked':
+    'Effacez les objets de schéma sélectionnés avant de continuer une migration de tables entre dialectes.',
+  'schemaDiff.clearObjectSelections': 'Effacer les objets de schéma sélectionnés',
+  'schemaDiff.profileSelect': 'Profil enregistré',
+  'schemaDiff.profileLoad': 'Charger le profil',
+  'schemaDiff.profileSave': 'Enregistrer le profil',
+  'schemaDiff.profileDelete': 'Supprimer le profil',
+  'schemaDiff.profileSaveTitle': 'Enregistrer le profil Schema Diff',
+  'schemaDiff.profileSaveHint':
+    'Enregistrez les points de terminaison, le périmètre, la sélection des tables et les options de comparaison actuels.',
+  'schemaDiff.profileNamePlaceholder': 'Nom du profil',
+  'schemaDiff.profileNameRequired': 'Saisissez un nom de profil',
+  'schemaDiff.profileSetupRequired':
+    'Sélectionnez les deux points de terminaison et au moins une table ou un objet de schéma avant l’enregistrement',
+  'schemaDiff.objectIdentityIncomplete':
+    'Les sélections de routines nécessitent une signature et les sélections de déclencheurs nécessitent leur table cible.',
+  'schemaDiff.savedObjectsMissing':
+    'Impossible de restaurer {count} sélection(s) d’objet(s) de schéma enregistré(s), car leur identité exacte est indisponible.',
+  'schemaDiff.schemaObjects': 'Vues et objets de base de données',
+  'schemaDiff.schemaObjectsHint':
+    'Sélectionnez les deux côtés pour comparer ou remplacer un objet. Les sélections présentes uniquement à la source créent des objets ; celles présentes uniquement sur la cible nécessitent une approbation destructive pour les supprimer.',
+  'schemaDiff.schemaObjectsLoading':
+    'Chargement des vues, types, séquences, routines et déclencheurs…',
+  'schemaDiff.objectSource': 'Objets source',
+  'schemaDiff.objectTarget': 'Objets cibles',
+  'schemaDiff.objectSideSelectionCount': '{count} objet(s) sélectionné(s) sur {total}',
+  'schemaDiff.objectSelectAllSource': 'Sélectionner tous les objets source',
+  'schemaDiff.objectSelectNoneSource': 'Effacer les objets source',
+  'schemaDiff.objectSelectAllTarget': 'Sélectionner tous les objets cibles',
+  'schemaDiff.objectSelectNoneTarget': 'Effacer les objets cibles',
+  'schemaDiff.objectKind.view': 'Vues',
+  'schemaDiff.objectKind.type': 'Types de données',
+  'schemaDiff.objectKind.sequence': 'Séquences',
+  'schemaDiff.objectKind.function': 'Fonctions',
+  'schemaDiff.objectKind.procedure': 'Procédures',
+  'schemaDiff.objectKind.trigger': 'Déclencheurs',
+  'schemaDiff.objectKindEmpty': 'Aucun objet trouvé',
+  'schemaDiff.objectLoadFailed': 'Impossible de charger cette liste d’objets : {error}',
+  'schemaDiff.objectPartialLoad':
+    'Certaines listes d’objets n’ont pas pu être lues. Développez le type concerné pour afficher les détails ou relancez la découverte.',
+  'schemaDiff.objectRetry': 'Réessayer la découverte des objets',
+  'schemaDiff.sourceOnly': 'Source uniquement (ADD)',
+  'schemaDiff.targetOnly': 'Cible uniquement (DROP)',
+  'schemaDiff.sourceAndTarget': 'Les deux',
+  'schemaDiff.targetOnlyDetail':
+    'Cette table existe uniquement sur la cible. Sa sélection ajoute explicitement une opération DROP TABLE et nécessite une approbation destructive.',
+  'schemaDiff.checkMissing': 'Contraintes CHECK manquantes sur la cible (ADD)',
+  'schemaDiff.checkExtra': 'Contraintes CHECK supplémentaires sur la cible (DROP)',
+  'schemaDiff.tableOptions': 'Options de table',
+  'schemaDiff.tableOptionComment': 'Commentaire',
+  'schemaDiff.tableOptionEngine': 'Moteur',
+  'schemaDiff.tableOptionCharset': 'Jeu de caractères',
 } as const;
 export default pack;

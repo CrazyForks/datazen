@@ -192,6 +192,7 @@ cargo test -p datazen-driver-postgres  # 示例：某个驱动 crate 的 Rust �
 ### E2E 测试
 
 - **构建方式**：必须使用 `pnpm tauri:build:webdriver`（或 `pnpm e2e` 自动触发）。**禁止**直接执行裸 `cargo build` 或缺少驱动注入参数的编译。
+- **数据迁移三件套的 DMG 打包边界**：Schema Diff、Data Sync、Data Transfer 的 WDIO 构建如果已成功生成可运行的 `DataZen.app`，但随后仅在 macOS DMG 打包阶段失败，该 DMG 问题不属于本功能的阻塞项；不要为此中断迁移功能开发或专门修复打包脚本。继续用生成的 `.app` 运行 WDIO，并以应用启动和 WDIO 结果判断功能验证状态。
 - **测试落点**：Host 通用 UI 交互路径在 `e2e/specs/`；驱动特定方言 E2E 必须写在 `packages/drivers/<id>/e2e/`。
 - **契约矩阵**：`e2e/contract/` 定义统一跨库 journeys，通过 `pnpm e2e:contract:matrix` 运行。
 

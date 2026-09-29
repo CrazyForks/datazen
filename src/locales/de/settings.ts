@@ -330,5 +330,9 @@ const pack = {
     'Eine WebSocket-Prüfung testet das Relay: Im Modus raw_binary bestätigt sie lediglich, dass das Relay erreichbar ist, während datazen_v1 einen Kanal zum Ziel öffnet.',
   'settings.tunnels.test.scope.general':
     'Eine bestandene Prüfung garantiert niemals, dass Ihre Datenbank über diesen Tunnel erreichbar ist.',
+  'settings.updater.manualDescription':
+    'Dieser Build verfügt über keinen signierten Update-Kanal. Aktualisieren Sie ihn, indem Sie eine passende Version aus GitHub Releases installieren.',
+  'settings.updater.manualVariant': 'Aktueller Build: {variant}',
+  'settings.updater.openReleases': 'Release-Seite öffnen',
 } as const;
 export default pack;

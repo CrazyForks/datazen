@@ -335,7 +335,7 @@ pub fn format_compact_ddl(table_name: &str, schema: &TableSchema) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datazen_driver_api::{ColumnSchema, ForeignKeyInfo, IndexInfo};
+    use datazen_driver_api::{ColumnSchema, ForeignKeyDeferrability, ForeignKeyInfo, IndexInfo};
 
     #[test]
     fn format_compact_ddl_basic() {
@@ -364,6 +364,8 @@ mod tests {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("users", &schema);
         assert!(ddl.starts_with("users ("));
@@ -389,6 +391,8 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("settings", &schema);
         assert!(ddl.contains("DEFAULT 'light'"));
@@ -423,7 +427,10 @@ mod tests {
                 referenced_columns: vec!["id".into()],
                 on_update: "NO ACTION".into(),
                 on_delete: "CASCADE".into(),
+                deferrability: ForeignKeyDeferrability::Unknown,
             }],
+            check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("orders", &schema);
         assert!(ddl.contains("FK: user_id -> users.id"));
@@ -438,6 +445,8 @@ mod tests {
             primary_keys: vec![],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("empty", &schema);
         assert_eq!(ddl, "empty ()");
@@ -459,6 +468,8 @@ mod tests {
             primary_keys: vec!["id".into()],
             indexes: vec![],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("t", &schema);
         assert!(ddl.contains("id int PK"));
@@ -487,6 +498,8 @@ mod tests {
                 index_type: "btree".into(),
             }],
             foreign_keys: vec![],
+            check_constraints: vec![],
+            table_options: Default::default(),
         };
         let ddl = format_compact_ddl("t", &schema);
         // PK index should NOT appear in the Indexes section

@@ -99,7 +99,7 @@ describe('数据传输 PG→MySQL 跨方言旅程 (DT-PG-MYSQL-JOURNEY)', () => 
       });
       await invokeBackend('execute_query', {
         dbSessionId: setupTgtSession!,
-        sql: `CREATE TABLE ${TABLE} (id INT PRIMARY KEY, name VARCHAR(255) NOT NULL, qty INT)`,
+        sql: `CREATE TABLE ${TABLE} (id INT PRIMARY KEY, name LONGTEXT NOT NULL, qty INT)`,
       });
     });
   });
@@ -181,7 +181,11 @@ describe('数据传输 PG→MySQL 跨方言旅程 (DT-PG-MYSQL-JOURNEY)', () => 
 
   it('Step 6: 执行跨方言传输并验证 MySQL 目标行数', async () => {
     const execute = await $('[data-testid="data-transfer-execute"]');
-    await execute.waitForClickable({ timeout: 15000 });
+    const pageText = (await $('body').getText()).slice(-2500);
+    await execute.waitForClickable({
+      timeout: 15000,
+      timeoutMsg: `Transfer execution remained disabled. Page state: ${pageText}`,
+    });
     await execute.click();
     await browser.pause(2000);
     await captureJourneyStep('dt-pg-mysql-09-executed', 0, true);

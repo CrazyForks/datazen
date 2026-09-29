@@ -2,12 +2,25 @@
 
 use super::PostgresDriver;
 use crate::catalog::{
-    build_pg_alter_sequence_owned_by, build_pg_create_sequence_sql, build_pg_create_table_ddl,
-    pg_sequence_start, PgColumnDdl, PgSequenceDdl,
+    PgColumnDdl, PgSequenceDdl, build_pg_alter_sequence_owned_by, build_pg_create_sequence_sql,
+    build_pg_create_table_ddl, pg_sequence_start,
 };
-use crate::execution::{PgQueryExecution, PG_BACKEND_PID_SQL, PG_CANCEL_BACKEND_SQL};
+use crate::execution::{PG_BACKEND_PID_SQL, PG_CANCEL_BACKEND_SQL, PgQueryExecution};
 use crate::sql::{apply_select_limit, parse_pg_table_ref};
 use datazen_driver_api::*;
+
+#[test]
+fn format_sql_literal_keeps_binary_bytes_lossless() {
+    let driver = PostgresDriver::new();
+    assert_eq!(
+        driver.format_sql_literal(&Some(Value::Bytes(vec![0x00, 0xff, 0xfe]))),
+        "'\\x00fffe'"
+    );
+    assert_eq!(
+        driver.format_sql_literal(&Some(Value::String("O'Brien".into()))),
+        "'O''Brien'"
+    );
+}
 
 #[test]
 fn fetch_tables_sql_uses_pg_catalog_system_schema_filters() {
@@ -191,6 +204,20 @@ async fn begin_transaction_requires_pool() {
 }
 
 #[tokio::test]
+async fn begin_read_snapshot_requires_pool() {
+    let driver = PostgresDriver::new();
+    let handle = ConnectionHandle {
+        id: "conn".into(),
+        pool_id: "missing-pool".into(),
+    };
+    let err = driver.begin_read_snapshot(&handle).await.unwrap_err();
+    assert!(
+        matches!(err, DriverError::ConnectionFailed(_)),
+        "expected ConnectionFailed, got {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn commit_and_rollback_without_begin_error() {
     let driver = PostgresDriver::new();
     let tx = TransactionHandle {
@@ -360,10 +387,12 @@ async fn transaction_execution_cancel_is_pending_until_target_is_bound() {
         DriverError::QueryExecutionSessionMismatch
     ));
 
-    assert!(driver
-        .bind_backend_pid(&handle, &execution_id, 42)
-        .await
-        .unwrap());
+    assert!(
+        driver
+            .bind_backend_pid(&handle, &execution_id, 42)
+            .await
+            .unwrap()
+    );
     assert_eq!(
         driver
             .query_executions
@@ -489,6 +518,38 @@ fn build_pg_create_sequence_sql_and_owned_by() {
 }
 
 #[test]
+fn postgres_sequence_catalog_ddl_covers_attributes_and_owned_by() {
+    let sql = object_ddl_sql_with_metadata(
+        "postgresql",
+        ObjectKind::Sequence,
+        "orders_id_seq",
+        Some("public"),
+        None,
+        None,
+        None,
+    )
+    .expect("PostgreSQL sequences have catalog-backed DDL");
+    for fragment in [
+        "pg_sequence",
+        "s.seqincrement",
+        "s.seqmin",
+        "s.seqmax",
+        "s.seqstart",
+        "s.seqcache",
+        "s.seqcycle",
+        "OWNED BY",
+        "pg_depend",
+        "ns.nspname = 'public'",
+        "c.relname = 'orders_id_seq'",
+    ] {
+        assert!(
+            sql.contains(fragment),
+            "catalog SQL missing {fragment}: {sql}"
+        );
+    }
+}
+
+#[test]
 fn build_pg_create_table_ddl_omits_pk_when_empty() {
     let columns = vec![PgColumnDdl {
         name: "x".into(),
@@ -523,11 +584,36 @@ fn apply_select_limit_is_independent_of_subquery_limit() {
     );
 }
 
+#[test]
+fn migration_parameters_have_typed_safe_placeholders() {
+    let driver = PostgresDriver::new();
+    assert_eq!(
+        driver
+            .parameter_placeholder(1, Some("numeric(65,30)"))
+            .unwrap(),
+        "$1::numeric"
+    );
+    assert_eq!(
+        driver.parameter_placeholder(2, Some("uuid")).unwrap(),
+        "$2::uuid"
+    );
+    assert_eq!(
+        driver.parameter_placeholder(3, Some("bytea")).unwrap(),
+        "$3"
+    );
+    assert_eq!(
+        driver
+            .parameter_placeholder(4, Some("text); DROP TABLE x;--"))
+            .unwrap(),
+        "$4"
+    );
+}
+
 /// 回归：流式执行必须把面板选中的库解析成对应的连接池。
 ///
-/// 背景：`query_stream_with_execution` 只拿到会话默认库，于是查询面板里选的
-/// database 被静默丢弃，SQL 永远跑在默认库上（报 `relation does not exist`）。
-/// `pin_query_execution_pool` 是修复的关键一步，这里覆盖它的三条约束。
+/// 背景：query_stream_with_execution 只拿到会话默认库，于是查询面板里选的
+/// database 被静默丢弃，SQL 永远跑在默认库上（报 relation does not exist）。
+/// pin_query_execution_pool 是修复的关键一步，这里覆盖它的三条约束。
 mod stream_target_pool {
     use super::*;
     use sqlx::postgres::PgPoolOptions;

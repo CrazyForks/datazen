@@ -170,10 +170,12 @@ async function runSessionBootstrap() {
       .catch((e: unknown) => done(String(e)));
   });
 
-  // Create a per-worker isolated PG database so parallel specs never conflict.
-  _workerDb = createWorkerDatabase();
-
-  await seedDefaultPgConnection(browser, _workerDb);
+  // Database-fixture-only suites can opt out of global worker DB creation and
+  // seeding. This keeps their writes scoped to their own unique-prefix tables.
+  if (process.env.E2E_SKIP_WORKER_DATABASE !== '1') {
+    _workerDb = createWorkerDatabase();
+    await seedDefaultPgConnection(browser, _workerDb);
+  }
 
   // The Tauri process (and its ConnectionManager) is reused across spec files,
   // so the live `conn_e2e_pg` session can still be bound to the previous
@@ -301,6 +303,8 @@ export const config: WebdriverIO.Config = {
       './specs/mysql.ts',
       './specs/multi-database.ts',
       './specs/data-sync-real.ts',
+      './specs/data-sync-tuple-range.ts',
+      './specs/data-sync-unknown-outcome.ts',
       './specs/data-sync-edge-cases.ts',
       './specs/client-parity.ts',
       './specs/host-contract-matrix.ts',
@@ -396,10 +400,14 @@ export const config: WebdriverIO.Config = {
       './specs/journeys/data-transfer-journey.ts',
       './specs/journeys/data-transfer-pg-mysql-journey.ts',
       './specs/journeys/data-transfer-mysql-pg-journey.ts',
+      './specs/journeys/data-transfer-tuple-recordset-journey.ts',
+      './specs/journeys/data-transfer-fk-order-journey.ts',
     ],
     // Schema Diff only (`pnpm e2e:schema-diff`)
     'schema-diff': [
       './specs/schema-diff-window.ts',
+      './specs/schema-diff-dependency-order.ts',
+      './specs/schema-diff-unified-planner.ts',
       './specs/schema-diff-diverse-types.ts',
       './specs/schema-diff-cross-dialect.ts',
       './specs/schema-diff-options-matrix.ts',
@@ -416,6 +424,8 @@ export const config: WebdriverIO.Config = {
       './specs/journeys/data-transfer-journey.ts',
       './specs/journeys/data-transfer-pg-mysql-journey.ts',
       './specs/journeys/data-transfer-mysql-pg-journey.ts',
+      './specs/journeys/data-transfer-tuple-recordset-journey.ts',
+      './specs/journeys/data-transfer-fk-order-journey.ts',
       './specs/journeys/data-transfer-type-mapping-journey.ts',
       './specs/connection-navigator-expansion.ts',
       './specs/journeys/zero-state-query-journey.ts',
@@ -472,7 +482,12 @@ export const config: WebdriverIO.Config = {
       './specs/data-sync-edge-cases.ts',
       './specs/journeys/data-sync-journey.ts',
       './specs/data-sync-real.ts',
+      './specs/data-sync-tuple-range.ts',
     ],
+    // Real scheduled/unattended migration workflow journeys. Opt in with
+    // E2E_MIGRATION_LIVE=1; PostgreSQL/MySQL are skipped explicitly when the
+    // live fixture is unavailable.
+    'migration-live-workflow': ['./specs/migration-live-workflow.ts'],
   },
   // Always 1 per WDIO process; multi-process parallelism via run.mjs --instances N.
   maxInstances: 1,

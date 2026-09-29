@@ -89,6 +89,38 @@ pub struct IRTable {
     pub table_options: Option<String>,
 }
 
+/// A secondary or primary index represented independently from the table
+/// columns.  Keeping object metadata outside `IRTable` preserves the existing
+/// table DDL contract while allowing transfer/export renderers to carry the
+/// objects that are not needed by row comparison.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IRIndex {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub is_unique: bool,
+    pub is_primary: bool,
+    pub index_type: String,
+}
+
+/// A foreign-key constraint in dialect-neutral form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IRForeignKey {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub referenced_table: String,
+    pub referenced_columns: Vec<String>,
+    pub on_update: String,
+    pub on_delete: String,
+}
+
+/// Table-level objects that can be emitted after all table definitions and
+/// row data have been written.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IRTableObjects {
+    pub indexes: Vec<IRIndex>,
+    pub foreign_keys: Vec<IRForeignKey>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

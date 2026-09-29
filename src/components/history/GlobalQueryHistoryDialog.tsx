@@ -97,14 +97,7 @@ export function GlobalQueryHistoryDialog({
       range: query.range,
       sort: query.sort,
     }),
-    [
-      query.connectionId,
-      query.database,
-      query.schema,
-      query.range,
-      query.sort,
-      debouncedSearch,
-    ],
+    [query.connectionId, query.database, query.schema, query.range, query.sort, debouncedSearch],
   );
 
   useEffect(() => {
@@ -226,9 +219,7 @@ export function GlobalQueryHistoryDialog({
           onChange={setQuery}
           connections={connections}
           databases={[...new Set(page.entries.map((e) => e.database).filter(Boolean))]}
-          schemas={[
-            ...new Set(page.entries.map((e) => e.schema).filter((s): s is string => !!s)),
-          ]}
+          schemas={[...new Set(page.entries.map((e) => e.schema).filter((s): s is string => !!s))]}
         />
 
         {notice && (
@@ -258,9 +249,7 @@ export function GlobalQueryHistoryDialog({
             type="button"
             onClick={() =>
               setSelected((prev) =>
-                prev.size === visible.length
-                  ? new Set()
-                  : new Set(visible.map((e) => e.id)),
+                prev.size === visible.length ? new Set() : new Set(visible.map((e) => e.id)),
               )
             }
             className="hover:text-accent"
@@ -360,7 +349,8 @@ export function GlobalQueryHistoryDialog({
 
 /** Mirrors `rangeSinceIso` in historyQuery, kept inline to avoid a Date per render. */
 function rangeSince(range: HistoryQueryState['range']): string | null {
-  const days = range === 'today' ? 1 : range === '7d' ? 7 : range === '30d' ? 30 : range === '90d' ? 90 : 0;
+  const days =
+    range === 'today' ? 1 : range === '7d' ? 7 : range === '30d' ? 30 : range === '90d' ? 90 : 0;
   if (days === 0) return null;
   return new Date(Date.now() - days * 86_400_000).toISOString();
 }

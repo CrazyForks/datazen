@@ -17,6 +17,17 @@ interface DiffDetailProps {
   table: DataSyncTableResult;
   options: SyncOptions;
   onUpdateRows: (rows: DataSyncRowChange[]) => void;
+  onSelectAllOperation?: (operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) => void;
+  onClearAllOperation?: (operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) => void;
+  isOperationSelected?: (
+    operation: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>,
+  ) => boolean;
+  hasTableSelection?: boolean;
+  pageLoading?: boolean;
+  pageIndex?: number;
+  hasPreviousPage?: boolean;
+  hasNextPage?: boolean;
+  onPageChange?: (direction: 'previous' | 'next') => void;
 }
 
 function operationBadgeClass(op: string): string {
@@ -32,7 +43,20 @@ function operationBadgeClass(op: string): string {
   }
 }
 
-export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
+export function DiffDetail({
+  table,
+  options,
+  onUpdateRows,
+  onSelectAllOperation,
+  onClearAllOperation,
+  isOperationSelected,
+  hasTableSelection = false,
+  pageLoading = false,
+  pageIndex = 0,
+  hasPreviousPage = false,
+  hasNextPage = false,
+  onPageChange,
+}: DiffDetailProps) {
   const { t } = useI18n();
   const [page, setPage] = useState(0);
 
@@ -40,32 +64,54 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
     setPage(0);
   }, [table.sourceTable]);
 
+  const serverPaged = table.pageSize !== undefined || table.rowCount !== undefined;
   const diffRows = useMemo(
     () => (table.rows ?? []).filter((r) => r.operation !== 'UNCHANGED'),
     [table.rows],
   );
 
-  const pageCount = Math.max(1, Math.ceil(diffRows.length / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount - 1);
-  const pageRows = diffRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const pageCount = serverPaged
+    ? Math.max(1, Math.ceil((table.rowCount ?? diffRows.length) / (table.pageSize ?? PAGE_SIZE)))
+    : Math.max(1, Math.ceil(diffRows.length / PAGE_SIZE));
+  const safePage = serverPaged ? pageIndex : Math.min(page, pageCount - 1);
+  const pageRows = serverPaged
+    ? diffRows
+    : diffRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   const toggleRow = (idx: number, checked: boolean) => {
-    const globalIdx = safePage * PAGE_SIZE + idx;
     const next = [...(table.rows ?? [])];
-    const target = diffRows[globalIdx];
+    const target = pageRows[idx];
     const fullIdx = next.findIndex((r) => rowKeyString(r.key) === rowKeyString(target.key));
     if (fullIdx < 0) return;
     next[fullIdx] = { ...next[fullIdx], selected: checked };
     onUpdateRows(next);
   };
 
-  const selectAllOp = (op: DataSyncRowChange['operation']) => {
+  const selectAllOp = (op: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) => {
     const next = (table.rows ?? []).map((r) => {
       if (r.operation !== op) return r;
       if (!operationAllowed(op, options)) return { ...r, selected: false };
       return { ...r, selected: true };
     });
     onUpdateRows(next);
+  };
+
+  const handleSelectAllOperation = (op: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) => {
+    if (onSelectAllOperation) {
+      onSelectAllOperation(op);
+      return;
+    }
+    selectAllOp(op);
+  };
+
+  const handleClearAllOperation = (op: Exclude<DataSyncRowChange['operation'], 'UNCHANGED'>) => {
+    if (onClearAllOperation) {
+      onClearAllOperation(op);
+      return;
+    }
+    onUpdateRows(
+      (table.rows ?? []).map((row) => (row.operation === op ? { ...row, selected: false } : row)),
+    );
   };
 
   const maxCols = useMemo(() => {
@@ -76,7 +122,7 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
     return max;
   }, [pageRows]);
 
-  if (diffRows.length === 0) {
+  if (diffRows.length === 0 && (!serverPaged || !hasNextPage)) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-fg-muted">
         {t('sync.noRowDiffs')}
@@ -90,34 +136,76 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
         <span className="font-mono text-xs font-semibold">{table.sourceTable}</span>
         <div className="flex-1" />
         {options.insert && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[10px]"
-            onClick={() => selectAllOp('INSERT')}
-          >
-            {t('sync.selectAllInsert')}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[10px]"
+              data-testid="data-sync-select-all-INSERT"
+              onClick={() => handleSelectAllOperation('INSERT')}
+            >
+              {t('sync.selectAllInsert')}
+            </Button>
+            {isOperationSelected?.('INSERT') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-[10px]"
+                data-testid="data-sync-clear-all-INSERT"
+                onClick={() => handleClearAllOperation('INSERT')}
+              >
+                {t('sync.clearAllInsert')}
+              </Button>
+            )}
+          </div>
         )}
         {options.update && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[10px]"
-            onClick={() => selectAllOp('UPDATE')}
-          >
-            {t('sync.selectAllUpdate')}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[10px]"
+              data-testid="data-sync-select-all-UPDATE"
+              onClick={() => handleSelectAllOperation('UPDATE')}
+            >
+              {t('sync.selectAllUpdate')}
+            </Button>
+            {isOperationSelected?.('UPDATE') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-[10px]"
+                data-testid="data-sync-clear-all-UPDATE"
+                onClick={() => handleClearAllOperation('UPDATE')}
+              >
+                {t('sync.clearAllUpdate')}
+              </Button>
+            )}
+          </div>
         )}
         {options.delete && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[10px]"
-            onClick={() => selectAllOp('DELETE')}
-          >
-            {t('sync.selectAllDelete')}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[10px]"
+              data-testid="data-sync-select-all-DELETE"
+              onClick={() => handleSelectAllOperation('DELETE')}
+            >
+              {t('sync.selectAllDelete')}
+            </Button>
+            {isOperationSelected?.('DELETE') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-[10px]"
+                data-testid="data-sync-clear-all-DELETE"
+                onClick={() => handleClearAllOperation('DELETE')}
+              >
+                {t('sync.clearAllDelete')}
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -132,9 +220,9 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
                 <th
                   key={i}
                   className="border-b border-edge p-2 text-left"
-                  title={t('sync.colIndexHint', { n: i + 1 })}
+                  title={table.columns?.[i] ?? t('sync.colIndexHint', { n: i + 1 })}
                 >
-                  {t('sync.colN', { n: i + 1 })}
+                  {table.columns?.[i] ?? t('sync.colN', { n: i + 1 })}
                 </th>
               ))}
             </tr>
@@ -180,10 +268,14 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
                     const s = src[colIdx] ?? null;
                     const tg = tgt[colIdx] ?? null;
                     const isChanged =
-                      row.operation === 'UPDATE' &&
-                      (changed.size === 0 ? s !== tg : changed.has(`col${colIdx}`));
+                      row.operation === 'UPDATE' && changed.has(table.columns?.[colIdx] ?? '');
                     return (
-                      <td key={colIdx} className="p-2 align-top">
+                      <td
+                        key={colIdx}
+                        data-column={table.columns?.[colIdx]}
+                        data-changed={isChanged}
+                        className="p-2 align-top"
+                      >
                         {row.operation === 'INSERT' && (
                           <span className="font-mono text-green-700 dark:text-green-400">
                             {formatCell(s)}
@@ -196,10 +288,10 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
                         )}
                         {row.operation === 'UPDATE' && (
                           <div className="space-y-0.5 font-mono">
-                            <div className={cn(isChanged && 'text-fg-muted line-through')}>
+                            <div className={cn(isChanged && 'text-accent')}>
                               {t('sync.sourceShort')}: {formatCell(s)}
                             </div>
-                            <div className={cn(isChanged && 'text-accent')}>
+                            <div className={cn(isChanged && 'text-fg-muted line-through')}>
                               {t('sync.targetShort')}: {formatCell(tg)}
                             </div>
                           </div>
@@ -214,26 +306,37 @@ export function DiffDetail({ table, options, onUpdateRows }: DiffDetailProps) {
         </table>
       </div>
 
-      {pageCount > 1 && (
+      {(pageCount > 1 || serverPaged) && (
         <div className="flex shrink-0 items-center justify-between border-t border-edge px-3 py-2 text-xs text-fg-muted">
-          <span>{t('sync.pageOf', { page: safePage + 1, total: pageCount })}</span>
+          <span>
+            {serverPaged
+              ? `${t('sync.pageOf', { page: safePage + 1, total: pageCount })} · ${t(hasTableSelection ? 'sync.pageScopeAll' : 'sync.pageScope')}`
+              : t('sync.pageOf', { page: safePage + 1, total: pageCount })}
+          </span>
           <div className="flex gap-1">
             <Button
               variant="ghost"
               size="sm"
-              disabled={safePage <= 0}
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={serverPaged ? pageLoading || !hasPreviousPage : safePage <= 0}
+              onClick={() => {
+                if (serverPaged) onPageChange?.('previous');
+                else setPage((p) => Math.max(0, p - 1));
+              }}
             >
               {t('sync.pagePrev')}
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              disabled={safePage >= pageCount - 1}
-              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={serverPaged ? pageLoading || !hasNextPage : safePage >= pageCount - 1}
+              onClick={() => {
+                if (serverPaged) onPageChange?.('next');
+                else setPage((p) => Math.min(pageCount - 1, p + 1));
+              }}
             >
               {t('sync.pageNext')}
             </Button>
+            {pageLoading && <span className="px-1">{t('sync.loadingPage')}</span>}
           </div>
         </div>
       )}

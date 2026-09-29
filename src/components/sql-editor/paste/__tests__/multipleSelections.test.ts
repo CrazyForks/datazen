@@ -26,10 +26,7 @@ function realOrderExtensions(): Extension[] {
 }
 
 /** Builds a real EditorView whose keymap precedence matches the SQL editor. */
-function mountView(
-  doc: string,
-  anchor: number,
-): { view: EditorView; parent: HTMLElement } {
+function mountView(doc: string, anchor: number): { view: EditorView; parent: HTMLElement } {
   const parent = document.createElement('div');
   document.body.appendChild(parent);
   const state = EditorState.create({
@@ -365,9 +362,9 @@ describe('multipleSelections', () => {
     // `base[keyCode]` (base[68] === "d"). This is the ONLY way `Shift-Mod-d`
     // is ever reached — a layout safety net, not dead weight. The event must
     // carry the keyCode a real browser always sends.
-    expect(
-      probeFor({ key: 'đ', code: 'KeyD', keyCode: 68, ctrlKey: true, shiftKey: true }),
-    ).toBe('Shift-Mod-d');
+    expect(probeFor({ key: 'đ', code: 'KeyD', keyCode: 68, ctrlKey: true, shiftKey: true })).toBe(
+      'Shift-Mod-d',
+    );
   });
 
   it('keeps the Mod-d family working end to end under the real mount order', () => {

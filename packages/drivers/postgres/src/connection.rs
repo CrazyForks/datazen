@@ -523,4 +523,37 @@ impl PostgresDriver {
             server_type: "PostgreSQL".to_string(),
         })
     }
+
+    pub(crate) async fn physical_database_identity_impl(
+        &self,
+        handle: &ConnectionHandle,
+        database: &str,
+    ) -> Result<Option<String>, DriverError> {
+        let pool = self.pool_for_target(handle, database).await?;
+        let Ok(row) = sqlx::query(
+            "SELECT system_identifier::text AS system_identifier, current_database() AS database_name FROM pg_control_system()",
+        )
+        .fetch_one(&pool)
+        .await
+        else {
+            // The postmaster start time identifies one running node, not a
+            // PostgreSQL cluster; aliases that route to different replicas
+            // could otherwise be incorrectly treated as separate databases.
+            return Ok(None);
+        };
+        let server: String = row
+            .try_get("system_identifier")
+            .map_err(|error| DriverError::QueryFailed(error.to_string()))?;
+        let database: String = row
+            .try_get("database_name")
+            .map_err(|error| DriverError::QueryFailed(error.to_string()))?;
+        Ok(Some(
+            serde_json::json!({
+                "driver": "postgresql",
+                "server": server,
+                "database": database,
+            })
+            .to_string(),
+        ))
+    }
 }

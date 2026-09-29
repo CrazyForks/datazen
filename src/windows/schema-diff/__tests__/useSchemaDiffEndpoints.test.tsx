@@ -46,7 +46,7 @@ vi.mock('../../../commands/connection', () => ({
   },
 }));
 
-function pgConn(id: string, name: string, database?: string): ConnectionConfig {
+function pgConn(id: string, name: string, database?: string, schema?: string): ConnectionConfig {
   return {
     id,
     name,
@@ -55,6 +55,7 @@ function pgConn(id: string, name: string, database?: string): ConnectionConfig {
     port: 5432,
     sslMode: 'prefer',
     database,
+    schema,
   };
 }
 
@@ -224,6 +225,42 @@ describe('useSchemaDiffEndpoints', () => {
     expect(connectionCommands.pingConnection).toHaveBeenCalledWith('session-pg-src');
   });
 
+  it('keeps SQLite main as the catalog without overriding the configured file path', async () => {
+    vi.mocked(invoke).mockResolvedValue([
+      { id: 'sqlite-src', name: 'SQLite Src', databaseType: 'sqlite', database: '/tmp/source.db' },
+      { id: 'sqlite-tgt', name: 'SQLite Tgt', databaseType: 'sqlite', database: '/tmp/target.db' },
+    ]);
+    vi.mocked(listDatabasesDedicated).mockResolvedValue({ databases: ['main'], dbSessionId: null });
+
+    const { result } = renderHook(() => useSchemaDiffEndpoints());
+    await waitFor(() => expect(result.current.connections).toHaveLength(2));
+    act(() => {
+      result.current.setSourceId('sqlite-src');
+      result.current.setTargetId('sqlite-tgt');
+    });
+
+    await waitFor(() => {
+      expect(result.current.sourceDatabase).toBe('main');
+      expect(result.current.targetDatabase).toBe('main');
+      expect(result.current.sourceSession?.dbSessionId).toBe('session-sqlite-src');
+      expect(result.current.targetSession?.dbSessionId).toBe('session-sqlite-tgt');
+    });
+    expect(listDatabasesDedicated).toHaveBeenCalledWith('sqlite-src', '/tmp/source.db');
+    expect(listDatabasesDedicated).toHaveBeenCalledWith('sqlite-tgt', '/tmp/target.db');
+    expect(ensureDedicatedSession).toHaveBeenCalledWith(null, 'sqlite-src', 'main', null);
+    expect(ensureDedicatedSession).toHaveBeenCalledWith(null, 'sqlite-tgt', 'main', null);
+
+    await act(async () => {
+      await result.current.refreshEndpointSessions();
+    });
+    expect(ensureDedicatedSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({ connectionId: 'sqlite-tgt', database: 'main' }),
+      'sqlite-tgt',
+      'main',
+      null,
+    );
+  });
+
   it('[tester] applies URL prefill for source and target connection ids', async () => {
     urlParamMock.mockImplementation((name) => {
       if (name === 'sourceId') return 'pg-src';
@@ -259,5 +296,29 @@ describe('useSchemaDiffEndpoints', () => {
       'session-mysql-tgt',
       'datazen_sync_src',
     );
+  });
+
+  it('prefers the configured connection schema over an empty public schema marker', async () => {
+    vi.mocked(invoke).mockResolvedValue([
+      pgConn('pg-src', 'PG Src', 'worker_db', 'e2e_worker_0'),
+      pgConn('pg-tgt', 'PG Tgt', 'datazen_sync_tgt'),
+    ]);
+    vi.mocked(databaseCommands.getTables).mockResolvedValue([
+      { name: '', schema: 'public', tableType: 'systemTable' },
+      { name: 'e2e_contract_conn', schema: 'e2e_worker_0', tableType: 'table' },
+    ]);
+
+    const { result } = renderHook(() => useSchemaDiffEndpoints());
+    await waitFor(() => expect(result.current.connections).toHaveLength(2));
+
+    act(() => {
+      result.current.setSourceId('pg-src');
+      result.current.setSourceDatabase('worker_db');
+    });
+
+    await waitFor(() => {
+      expect(result.current.sourceSchemas).toEqual(['e2e_worker_0', 'public']);
+      expect(result.current.sourceSchema).toBe('e2e_worker_0');
+    });
   });
 });

@@ -1,13 +1,14 @@
 //! Live driver-backed keyset page source for Data Sync compare.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datazen_driver_api::Value;
+use datazen_driver_api::{SyncKeyContract, SyncKeyValue, SyncSourceAdapter, Value};
 
 use crate::data_sync::{
-    build_keyset_select_sql, mysql_placeholder, postgres_placeholder, DataSyncError, Row,
-    RowPageSource,
+    build_keyset_select_sql_with_order_filter_and_pagination, quote_ident_sql, DataSyncError, Row,
+    RowPageSource, SyncSourceFilter,
 };
 use crate::db::{ConnectionHandle, DatabaseDriver, SqlTarget};
 
@@ -21,6 +22,12 @@ pub struct DriverKeysetSource {
     pk_columns: Vec<String>,
     quote: char,
     family: String,
+    key_adapter: Arc<dyn SyncSourceAdapter>,
+    key_contracts: Vec<SyncKeyContract>,
+    key_order_expressions: Vec<String>,
+    sync_filter: Option<SyncSourceFilter>,
+    column_types: HashMap<String, String>,
+    recordset_remaining: Option<u64>,
 }
 
 impl DriverKeysetSource {
@@ -34,8 +41,26 @@ impl DriverKeysetSource {
         pk_columns: Vec<String>,
         quote: char,
         family: &str,
-    ) -> Self {
-        Self {
+        key_adapter: Arc<dyn SyncSourceAdapter>,
+        key_contracts: Vec<SyncKeyContract>,
+        sync_filter: Option<SyncSourceFilter>,
+        column_types: HashMap<String, String>,
+        recordset_limit: Option<u64>,
+    ) -> Result<Self, DataSyncError> {
+        if key_contracts.len() != pk_columns.len() {
+            return Err(DataSyncError::validation(
+                "normalized key contract count does not match primary key columns",
+            ));
+        }
+        let key_order_expressions = pk_columns
+            .iter()
+            .zip(&key_contracts)
+            .map(|(column, contract)| {
+                let quoted = quote_ident_sql(column, quote);
+                key_adapter.sync_key_order_expression(&quoted, contract)
+            })
+            .collect();
+        Ok(Self {
             driver,
             handle,
             table,
@@ -45,7 +70,13 @@ impl DriverKeysetSource {
             pk_columns,
             quote,
             family: family.to_string(),
-        }
+            key_adapter,
+            key_contracts,
+            key_order_expressions,
+            sync_filter,
+            column_types,
+            recordset_remaining: recordset_limit,
+        })
     }
 }
 
@@ -56,32 +87,94 @@ impl RowPageSource for DriverKeysetSource {
         after_key: Option<&[Value]>,
         limit: u32,
     ) -> Result<Vec<Row>, DataSyncError> {
+        if self.recordset_remaining == Some(0) {
+            return Ok(Vec::new());
+        }
+        let page_limit = self
+            .recordset_remaining
+            .map(|remaining| remaining.min(u64::from(limit)).max(1) as u32)
+            .unwrap_or(limit);
         let family = self.family.clone();
         let quote = self.quote;
-        // The dialect owns the clause: SQL Server has no `LIMIT` and pages with
-        // `ORDER BY … OFFSET n ROWS FETCH NEXT m ROWS ONLY` (the PK ordering
-        // below satisfies its `ORDER BY` requirement).
+        let seek_key = after_key
+            .map(|key| {
+                if key.len() != self.key_contracts.len() {
+                    return Err(DataSyncError::validation(
+                        "key value count does not match normalized key contract",
+                    ));
+                }
+                key.iter()
+                    .zip(&self.key_contracts)
+                    .map(|(value, contract)| {
+                        self.key_adapter
+                            .sync_key_seek_value(value, contract)
+                            .map_err(DataSyncError::validation)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+        let (filter_sql, filter_params) = match self.sync_filter.as_ref() {
+            Some(filter) => filter
+                .build_where_typed_with_key_order(
+                    quote,
+                    after_key.map_or(0, |key| key.len()) + 1,
+                    (self.pk_columns.len() == 1).then(|| self.pk_columns[0].as_str()),
+                    Some((&self.pk_columns, &self.key_order_expressions)),
+                    |column, value| {
+                        let index = self
+                            .pk_columns
+                            .iter()
+                            .position(|candidate| candidate == column)
+                            .ok_or_else(|| {
+                                DataSyncError::validation(format!(
+                                    "recordset key '{column}' has no verified key contract"
+                                ))
+                            })?;
+                        self.key_adapter
+                            .sync_key_seek_value(value, &self.key_contracts[index])
+                            .map_err(DataSyncError::validation)
+                    },
+                    |column| self.column_types.get(column).cloned(),
+                    |index, data_type| {
+                        self.driver
+                            .parameter_placeholder(index, data_type)
+                            .map_err(|error| DataSyncError::validation(error.to_string()))
+                    },
+                )
+                .map_err(|error| DataSyncError::validation(error.to_string()))?,
+            None => (None, Vec::new()),
+        };
+        // Pagination syntax belongs to the driver (for example SQL Server
+        // requires OFFSET/FETCH while PostgreSQL and MySQL use LIMIT).
         let pagination_clause = self
             .driver
-            .pagination_syntax(u64::from(limit.max(1)), 0)
+            .pagination_syntax(u64::from(page_limit.max(1)), 0)
             .clause;
-        let (sql, params) = build_keyset_select_sql(
+        let (sql, params) = build_keyset_select_sql_with_order_filter_and_pagination(
             &self.table,
             self.database.as_deref(),
             self.schema.as_deref(),
             &family,
             &self.columns,
             &self.pk_columns,
-            after_key,
+            &self.key_order_expressions,
+            seek_key.as_deref(),
             &pagination_clause,
             quote,
             |i| {
-                if family == "mysql" {
-                    mysql_placeholder(i)
-                } else {
-                    postgres_placeholder(i)
-                }
+                self.driver
+                    .parameter_placeholder(i, None)
+                    .unwrap_or_else(|_| {
+                        if family == "mysql" {
+                            "?".into()
+                        } else {
+                            format!("${i}")
+                        }
+                    })
             },
+            filter_sql
+                .as_deref()
+                .map(|sql| (sql, filter_params.as_slice())),
         )?;
         // The keyset SQL is already fully qualified for MySQL-family drivers,
         // but PostgreSQL cannot cross databases in one statement: the target is
@@ -96,6 +189,45 @@ impl RowPageSource for DriverKeysetSource {
             )
             .await
             .map_err(|e| DataSyncError::validation(e.to_string()))?;
+        for row in &result.rows {
+            for pk in &self.pk_columns {
+                let idx = self
+                    .columns
+                    .iter()
+                    .position(|c| c == pk)
+                    .ok_or_else(|| DataSyncError::validation("key missing from projection"))?;
+                let value = row
+                    .get(idx)
+                    .ok_or_else(|| DataSyncError::validation("key missing from row"))?;
+                let key_index = self
+                    .pk_columns
+                    .iter()
+                    .position(|column| column == pk)
+                    .ok_or_else(|| DataSyncError::validation("key missing from projection"))?;
+                self.key_adapter
+                    .normalize_sync_key(value, &self.key_contracts[key_index])
+                    .map_err(DataSyncError::validation)?;
+            }
+        }
+        if let Some(remaining) = &mut self.recordset_remaining {
+            *remaining = remaining.saturating_sub(result.rows.len() as u64);
+        }
         Ok(result.rows)
+    }
+
+    fn normalize_key(&self, key: &[Value]) -> Result<Vec<SyncKeyValue>, DataSyncError> {
+        if key.len() != self.key_contracts.len() {
+            return Err(DataSyncError::validation(
+                "key value count does not match normalized key contract",
+            ));
+        }
+        key.iter()
+            .zip(&self.key_contracts)
+            .map(|(value, contract)| {
+                self.key_adapter
+                    .normalize_sync_key(&Some(value.clone()), contract)
+                    .map_err(DataSyncError::validation)
+            })
+            .collect()
     }
 }

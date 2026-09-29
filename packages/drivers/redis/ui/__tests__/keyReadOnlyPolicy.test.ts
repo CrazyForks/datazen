@@ -59,9 +59,7 @@ describe('resolveReadOnlyPolicy — view dimension', () => {
       const policy = resolveReadOnlyPolicy({ frame: SMALL, view });
       expect(policy.readOnly, view).toBe(true);
       expect(policy.reason?.id, view).toBe('binary-view');
-      expect(policy.reason?.i18nKey, view).toBe(
-        READ_ONLY_REASONS['binary-view'].i18nKey,
-      );
+      expect(policy.reason?.i18nKey, view).toBe(READ_ONLY_REASONS['binary-view'].i18nKey);
     }
   });
 

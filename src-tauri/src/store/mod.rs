@@ -9,8 +9,11 @@ pub(crate) mod history_db;
 mod key_store;
 mod models;
 mod platform_vault;
+mod schema_diff_profiles;
 mod settings;
+mod sync_profiles;
 mod sync_tasks;
+mod transfer_profiles;
 mod tunnels;
 
 #[allow(unused_imports)] // public re-exports for IPC / other modules
@@ -20,8 +23,8 @@ pub use app_db::{
 };
 pub(crate) use favorites::NewFavorite;
 pub use history_db::{
-    HistoryDb, HistoryEntry, HistoryListItem, HistoryOrder, HistoryScope, QueryHistoryFilter,
-    QueryHistoryPage,
+    HistoryDb, HistoryEntry, HistoryListItem, HistoryOrder, HistoryScope, MigrationProfileRef,
+    MigrationRunFilter, MigrationRunPage, MigrationRunRecord, QueryHistoryFilter, QueryHistoryPage,
 };
 pub use models::{FavoriteQuery, QueryHistoryEntry, SyncTask};
 pub use settings::{clamp_connection_pool_size, AppSettings, OnboardingState};

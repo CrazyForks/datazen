@@ -14,13 +14,15 @@ import { join } from 'node:path';
 import {
   buildSyncReport,
   checkDriverLocalePacks,
+  extractHostKeysFromSources,
   extractPackKeys,
   findDriverLocalePacks,
   inspectDriverLocalePack,
 } from '../i18n-sync-check.mjs';
 
 /** Dictionary source in the shape driver packs actually ship. */
-const dictSource = (lines) => `const locale = {\n${lines.join('\n')}\n} as const;\n\nexport default locale;\n`;
+const dictSource = (lines) =>
+  `const locale = {\n${lines.join('\n')}\n} as const;\n\nexport default locale;\n`;
 
 /** locales/index.ts side-effect module importing the given locale codes. */
 const indexSource = (codes) =>
@@ -29,6 +31,17 @@ const indexSource = (codes) =>
   `\n\nregisterTranslations({\n` +
   codes.map((c) => `  '${c}': ${c.replace(/[^a-zA-Z]/g, '_')},`).join('\n') +
   `\n});\n\nexport {};\n`;
+
+describe('extractHostKeysFromSources', () => {
+  it('merges English keys from split domain packs', () => {
+    expect(
+      extractHostKeysFromSources([
+        "const core = {\n  'common.save': 'Save',\n};",
+        "const sync = {\n  'sync.compare': 'Compare',\n};",
+      ]),
+    ).toEqual({ 'common.save': 'Save', 'sync.compare': 'Compare' });
+  });
+});
 
 describe('i18n-sync-check driver locale packs', () => {
   let root;
@@ -48,11 +61,16 @@ describe('i18n-sync-check driver locale packs', () => {
   const writePack = (driver, { en, locales = {}, index = true, importedLocales }) => {
     const dir = join(driversDir, driver, 'locales');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'en.ts'), dictSource(Object.entries(en).map(([k, v]) => `  '${k}': '${v}',`)));
+    writeFileSync(
+      join(dir, 'en.ts'),
+      dictSource(Object.entries(en).map(([k, v]) => `  '${k}': '${v}',`)),
+    );
     for (const [code, entries] of Object.entries(locales)) {
       writeFileSync(
         join(dir, `${code}.ts`),
-        typeof entries === 'string' ? entries : dictSource(Object.entries(entries).map(([k, v]) => `  '${k}': '${v}',`)),
+        typeof entries === 'string'
+          ? entries
+          : dictSource(Object.entries(entries).map(([k, v]) => `  '${k}': '${v}',`)),
       );
     }
     if (index) {
@@ -64,12 +82,7 @@ describe('i18n-sync-check driver locale packs', () => {
 
   describe('extractPackKeys', () => {
     it('reads inline single- and double-quoted values', () => {
-      const keys = extractPackKeys(
-        dictSource([
-          "  'redis.a': 'Alpha',",
-          '  \'redis.b\': "Beta",',
-        ]),
-      );
+      const keys = extractPackKeys(dictSource(["  'redis.a': 'Alpha',", '  \'redis.b\': "Beta",']));
       expect(keys).toEqual({ 'redis.a': 'Alpha', 'redis.b': 'Beta' });
     });
 
@@ -136,7 +149,7 @@ describe('i18n-sync-check driver locale packs', () => {
       const result = inspectDriverLocalePack({ driver: 'redis', dir });
       expect(result.structural).toBe(1);
       expect(result.lines.join('\n')).toContain(
-        "[driver.redis] locales/index.ts is missing — a driver pack must self-register via registerTranslations().",
+        '[driver.redis] locales/index.ts is missing — a driver pack must self-register via registerTranslations().',
       );
     });
 
@@ -222,14 +235,21 @@ describe('i18n-sync-check driver locale packs', () => {
 
   describe('buildSyncReport', () => {
     it('passes on a fully synced repository with exit code 0', () => {
-      expect(buildSyncReport({ totalMissing: 0, totalStale: 0, totalStructural: 0, driverPackCount: 2 })).toEqual({
+      expect(
+        buildSyncReport({ totalMissing: 0, totalStale: 0, totalStructural: 0, driverPackCount: 2 }),
+      ).toEqual({
         lines: ['All locale files are in sync with en.ts.'],
         exitCode: 0,
       });
     });
 
     it('fails on missing keys and names both host and driver scopes', () => {
-      const report = buildSyncReport({ totalMissing: 3, totalStale: 0, totalStructural: 0, driverPackCount: 2 });
+      const report = buildSyncReport({
+        totalMissing: 3,
+        totalStale: 0,
+        totalStructural: 0,
+        driverPackCount: 2,
+      });
       expect(report.exitCode).toBe(1);
       expect(report.lines[0].trim()).toBe(
         'Summary: 3 missing key(s), 0 stale translation(s) across 8 host locales; 0 driver pack issue(s) across 2 driver locale pack(s).',
@@ -237,15 +257,25 @@ describe('i18n-sync-check driver locale packs', () => {
     });
 
     it('fails on structural issues even with zero missing keys', () => {
-      const report = buildSyncReport({ totalMissing: 0, totalStale: 0, totalStructural: 1, driverPackCount: 0 });
+      const report = buildSyncReport({
+        totalMissing: 0,
+        totalStale: 0,
+        totalStructural: 1,
+        driverPackCount: 0,
+      });
       expect(report.exitCode).toBe(1);
       expect(report.lines[0]).toContain('1 driver pack issue(s) across 0 driver locale pack(s).');
     });
 
     it('keeps the stale-only case failing (host translation debt)', () => {
       expect(
-        buildSyncReport({ totalMissing: 0, totalStale: 5, totalStructural: 0, driverPackCount: 1, hostLocaleCount: 2 })
-          .exitCode,
+        buildSyncReport({
+          totalMissing: 0,
+          totalStale: 5,
+          totalStructural: 0,
+          driverPackCount: 1,
+          hostLocaleCount: 2,
+        }).exitCode,
       ).toBe(1);
     });
   });

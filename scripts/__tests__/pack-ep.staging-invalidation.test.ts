@@ -20,11 +20,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { checkProStagingReady } from '../ci-tauri-build.mjs';
-import {
-  packEp,
-  stagedTreeComplete,
-  stagingMarkerPath,
-} from '../pack-ep.mjs';
+import { packEp, stagedTreeComplete, stagingMarkerPath } from '../pack-ep.mjs';
 import { downloadPrebuiltEp, resolvePro, stagedTreeUsable } from '../resolve-pro.mjs';
 
 const GOOD_BUNDLE = 'export function activate() { return 1; }\n';
@@ -165,7 +161,10 @@ describe('a failed pack must not leave a reusable signed tree', () => {
   it('a failed prebuilt download does not leave a half-extracted tree reusable', () => {
     stageGoodTree();
     expect(() =>
-      downloadPrebuiltEp({ prebuiltUrl: `file://${join(sb.root, 'does-not-exist.tar.gz')}`, stageDir: sb.stageDir }),
+      downloadPrebuiltEp({
+        prebuiltUrl: `file://${join(sb.root, 'does-not-exist.tar.gz')}`,
+        stageDir: sb.stageDir,
+      }),
     ).toThrow();
     expect(stagedTreeComplete(sb.stageDir)).toBe(false);
     expect(stagedTreeUsable(sb.stageDir)).toBe(false);

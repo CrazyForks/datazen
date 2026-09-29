@@ -1,6 +1,8 @@
 //! Shared request helpers for Data Sync IPC.
 
-use crate::data_sync::{LargeValueMode, MatchingStrategy, SyncOptions, TableMapping, TableResult};
+use crate::data_sync::{
+    ConflictPolicy, LargeValueMode, MatchingStrategy, SyncOptions, TableMapping, TableResult,
+};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -12,6 +14,7 @@ pub struct SyncOptionsInput {
     pub matching_strategy: Option<MatchingStrategy>,
     pub batch_size: Option<u32>,
     pub large_value_mode: Option<LargeValueMode>,
+    pub conflict_policy: Option<ConflictPolicy>,
 }
 
 impl SyncOptionsInput {
@@ -34,6 +37,9 @@ impl SyncOptionsInput {
         }
         if let Some(v) = self.large_value_mode {
             opts.large_value_mode = v;
+        }
+        if let Some(v) = self.conflict_policy {
+            opts.conflict_policy = v;
         }
         opts
     }
@@ -123,6 +129,7 @@ impl From<TableMappingInput> for TableMapping {
             target_table: value.target_table,
             enabled: value.enabled,
             matching_columns: Vec::new(),
+            source_filter: None,
         }
     }
 }

@@ -133,6 +133,46 @@ describe('usePanelHandlers.handleNewQuery binds a database to the query tab', ()
     // bound to the tab, not just the first level.
     expect(panel?.namespacePath).toEqual(['558:hive', 'snap']);
   });
+
+  it('[tester] keeps routine overload and trigger target panel identities independent', async () => {
+    const { result } = renderHandler('postgresql', 'db_a');
+
+    await act(async () => {
+      result.current.handleOpenDbObject('function', 'lookup', 'public', 'integer');
+      result.current.handleOpenDbObject('function', 'lookup', 'public', 'text');
+      result.current.handleOpenDbObject(
+        'trigger',
+        'audit_trigger',
+        'public',
+        undefined,
+        'public',
+        'orders',
+      );
+      result.current.handleOpenDbObject(
+        'trigger',
+        'audit_trigger',
+        'public',
+        undefined,
+        'public',
+        'users',
+      );
+    });
+
+    const panels = usePanelStore.getState().panels.filter((panel) => panel.type === 'db-object');
+    expect(panels).toHaveLength(4);
+    expect(panels.map((panel) => panel.type === 'db-object' && panel.objectSignature)).toEqual([
+      'integer',
+      'text',
+      null,
+      null,
+    ]);
+    expect(panels.map((panel) => panel.type === 'db-object' && panel.objectTargetName)).toEqual([
+      null,
+      null,
+      'orders',
+      'users',
+    ]);
+  });
 });
 
 describe('usePanelHandlers.handleOpenErDiagram binds the database and inherits the panel schema', () => {

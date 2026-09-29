@@ -36,9 +36,7 @@ const slot = (value: string): Extension => [tag.of(value)];
 function makeView(payload: ProCompartmentPayload): EditorView {
   const state = EditorState.create({
     doc: 'a\nb\nc',
-    extensions: [
-      ...Object.keys(payload).map((id) => ensureProCompartment(id).of(payload[id])),
-    ],
+    extensions: [...Object.keys(payload).map((id) => ensureProCompartment(id).of(payload[id]))],
   });
   const host = document.body.appendChild(document.createElement('div'));
   return new EditorView({ state, parent: host });

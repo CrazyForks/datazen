@@ -42,9 +42,11 @@ pub(crate) async fn workflow_execute_impl(
 
     // Dashboard-owned hidden workflows must not pollute the user-facing history list.
     if workflow.visibility != crate::workflow::WorkflowVisibility::DashboardHidden {
+        let history_variables =
+            crate::workflow::migration::sanitize_variables(&workflow, &variables);
         if let Err(e) = state
             .workflow_history
-            .record(&workflow.id, &workflow.name, &variables, &result)
+            .record(&workflow.id, &workflow.name, &history_variables, &result)
             .await
         {
             tracing::warn!("Failed to record workflow history: {e}");

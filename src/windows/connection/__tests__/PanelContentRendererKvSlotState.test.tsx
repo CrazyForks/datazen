@@ -17,7 +17,10 @@ import { createKvSlotState } from '../../../lib/kvSlotState';
 import type { DatabaseTypeMeta } from '../../../lib/databaseMeta';
 import type { Panel } from '../../../stores/panelStore';
 
-const { registry } = vi.hoisted(() => ({ registry: {} as Record<string, unknown> }));
+const { registry, receivedState } = vi.hoisted(() => ({
+  registry: {} as Record<string, unknown>,
+  receivedState: { current: undefined as unknown },
+}));
 
 vi.mock('../../../hooks/useI18n', () => ({
   // Key-style mock: nothing here asserts visible copy.
@@ -34,6 +37,7 @@ vi.mock('../../../lib/connectionViews', () => ({
   getConnectionView: (): ComponentType<Record<string, unknown>> =>
     function MockKvView(props) {
       const state = props.kvSlotState as KvSlotState | undefined;
+      receivedState.current = state;
       return (
         <div
           data-testid="mock-kv-view"
@@ -140,9 +144,11 @@ describe('[tester] PanelContentRenderer KV state relay', () => {
     const atom = createKvSlotState();
     atom.selectKey('app:cache:session:1');
     atom.setDirty(true);
+    receivedState.current = undefined;
 
     renderRenderer(atom);
 
+    expect(receivedState.current).toBe(atom);
     const view = screen.getByTestId('mock-kv-view');
     // Identity, not structural equality: a re-created atom would silently fork the
     // publish (workbench) and read (slots) sides of the relay.

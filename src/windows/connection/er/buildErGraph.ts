@@ -166,7 +166,6 @@ export function buildErGraph(
     predicted.filter((r) => visibleNames.has(r.fromTable) && visibleNames.has(r.toTable)),
   );
 
-
   // Sizes are declared up front, exactly as `TableNode` renders them, and the
   // positions come from the layout below — never from the node's index.
   const nodes: Node[] = visibleSchemas.map((schema) => {

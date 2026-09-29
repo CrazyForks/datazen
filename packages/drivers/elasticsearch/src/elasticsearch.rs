@@ -298,6 +298,7 @@ impl DatabaseDriver for ElasticsearchDriver {
             primary_keys: Vec::new(),
             indexes: Vec::new(),
             foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
         })
     }
 

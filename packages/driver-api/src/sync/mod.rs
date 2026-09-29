@@ -5,6 +5,8 @@
 
 mod adapter;
 mod ir;
+mod key;
 
 pub use adapter::*;
 pub use ir::*;
+pub use key::*;

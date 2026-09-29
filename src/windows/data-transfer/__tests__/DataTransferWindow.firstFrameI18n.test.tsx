@@ -51,6 +51,7 @@ vi.mock('../../../commands/database', () => ({
 vi.mock('../../../commands/transfer', () => ({
   DEFAULT_TRANSFER_OPTIONS: { batchSize: 500, stopOnError: true, confirmedDestructive: false },
   transferCommands: {
+    getProfiles: vi.fn().mockResolvedValue([]),
     inspect: vi.fn().mockResolvedValue([]),
     preview: vi.fn(),
     execute: vi.fn(),

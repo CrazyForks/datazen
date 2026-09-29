@@ -20,7 +20,11 @@ export interface LocaleDomainLoadingProps {
  * must NOT depend on any (possibly not-yet-loaded) lazy translation key. It only
  * uses the icon + local fallback text, and exposes stable test hooks.
  */
-export function LocaleDomainLoading({ variant = 'page', testId, className }: LocaleDomainLoadingProps) {
+export function LocaleDomainLoading({
+  variant = 'page',
+  testId,
+  className,
+}: LocaleDomainLoadingProps) {
   return (
     <div
       data-testid={testId}

@@ -318,5 +318,9 @@ const pack = {
     'WebSocket 프로브는 릴레이를 확인합니다. raw_binary 모드에서는 릴레이에 접근할 수 있다는 것만 확인하고, datazen_v1은 대상으로 채널을 엽니다.',
   'settings.tunnels.test.scope.general':
     '프로브가 통과했다고 해서 이 터널을 통해 데이터베이스에 접근할 수 있다는 보장은 없습니다.',
+  'settings.updater.manualDescription':
+    '이 빌드에는 서명된 업데이트 채널이 없습니다. GitHub Releases에서 해당 빌드에 맞는 릴리스를 설치해 업데이트하세요.',
+  'settings.updater.manualVariant': '현재 빌드: {variant}',
+  'settings.updater.openReleases': 'Releases 페이지 열기',
 } as const;
 export default pack;

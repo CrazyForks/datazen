@@ -42,9 +42,9 @@ describe('planOverviewJump', () => {
     expect(planOverviewJump({ kind: 'database', dbIndex: 0 }, undefined).hintKey).toBe(
       'redis.overview.jump.pendingTree',
     );
-    expect(
-      planOverviewJump({ kind: 'key', dbIndex: 0, key: 'user:1' }, undefined).hintKey,
-    ).toBe('redis.overview.jump.pendingTree');
+    expect(planOverviewJump({ kind: 'key', dbIndex: 0, key: 'user:1' }, undefined).hintKey).toBe(
+      'redis.overview.jump.pendingTree',
+    );
     expect(planOverviewJump({ kind: 'newKey', dbIndex: 0 }, undefined).hintKey).toBe(
       'redis.overview.jump.pendingTree',
     );

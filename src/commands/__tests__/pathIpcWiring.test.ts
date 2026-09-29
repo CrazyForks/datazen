@@ -274,7 +274,9 @@ describe('path IPC frontend wiring', () => {
       'utf8',
     );
     const registered = new Set(
-      [...hostBootstrap.matchAll(/crate::commands::([a-z_0-9]+),/g)].map((m) => m[1]),
+      [
+        ...hostBootstrap.matchAll(/crate::commands::(?:[a-z_0-9]+::)*([a-z_0-9]+),/g),
+      ].map((m) => m[1]),
     );
     registered.add('rebuild_menu');
 

@@ -1,11 +1,11 @@
 # 隧道连接（SSH / HTTP Proxy / WebSocket）
 
-> 对应代码：`src-tauri/src/ssh_tunnel.rs`、`src-tauri/src/tunnel/`、连接表单 Advanced → Tunnel。  
+> 对应代码：`src-tauri/src/ssh_tunnel.rs`、`src-tauri/src/tunnel/`、连接表单 Advanced → Tunnel。
 > 架构文档：[docs/architecture/backend/tunnel.md](../architecture/backend/tunnel.md)。
 
 ## 1. 概述
 
-当数据库主机不能直连时，DataZen 可在本机监听 `127.0.0.1:随机端口`，把流量经隧道转到真实 `host:port`。  
+当数据库主机不能直连时，DataZen 可在本机监听 `127.0.0.1:随机端口`，把流量经隧道转到真实 `host:port`。
 驱动层只看到改写后的回环地址，与是否使用隧道无关。
 
 | 类型 | 适用场景 | 配置入口 |

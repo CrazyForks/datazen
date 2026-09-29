@@ -159,10 +159,10 @@ async function rightClick(selector: string, textMatch?: string) {
   // 首次打开（reload 后模块重新加载，较慢）竞争 → 等待真实菜单出现；
   // 目标节点没有菜单处理器时保持旧语义（getMenuText() 返回 ''）不抛错。
   await browser
-    .waitUntil(
-      async () => (await $('[data-testid="web-context-menu"]')).isExisting(),
-      { timeout: 8000, timeoutMsg: '右键菜单未渲染' },
-    )
+    .waitUntil(async () => (await $('[data-testid="web-context-menu"]')).isExisting(), {
+      timeout: 8000,
+      timeoutMsg: '右键菜单未渲染',
+    })
     .catch(() => {
       /* 无菜单的目标节点 */
     });
