@@ -76,6 +76,26 @@ pub trait DatabaseDriver: Send + Sync {
         true
     }
 
+    /// Pagination syntax this dialect accepts for a `SELECT` returning at most
+    /// `limit` rows starting at `offset`.
+    ///
+    /// The host builds every paged read through this method, so a dialect that
+    /// has no `LIMIT` (SQL Server) or that needs an `ORDER BY` before `OFFSET`
+    /// overrides it instead of the host special-casing the driver by name.
+    /// The default keeps the historical `LIMIT …` / `LIMIT … OFFSET …` shape for
+    /// dialects that opt out of `OFFSET` via [`Self::supports_offset`].
+    fn pagination_syntax(&self, limit: u64, offset: u64) -> PaginationSyntax {
+        PaginationSyntax {
+            clause: if self.supports_offset() {
+                format!("LIMIT {limit} OFFSET {offset}")
+            } else {
+                format!("LIMIT {limit}")
+            },
+            requires_order_by: false,
+            order_by_fallback: None,
+        }
+    }
+
     /// Whether the driver supports EXPLAIN query plan analysis.
     fn supports_explain(&self) -> bool {
         true
