@@ -4,7 +4,7 @@ import {
   cleanupR3Suite,
   fixtures,
   sessions,
-  pgTables,
+  pgCollationTable,
   pgTextIndexTable,
   pgLossyTypesTable,
   pgArrayTable,
@@ -175,8 +175,11 @@ describe('Data Transfer type portability independent live journeys', () => {
       'both',
       { clearSuggestedTypes: true },
     );
-    const outcome = await executeIfPreviewExists();
-    expect(outcome.rejected).toBe(true);
+    const previewError = await $('[data-testid="data-transfer-preview-error"]');
+    if (!(await previewError.isExisting())) {
+      throw new Error('expected MySQL table-collation incompatibility to fail during preview');
+    }
+    const previewErrorText = await previewError.getText();
     const source = await connectFixture(fixtures[2]);
     let sourceCollation: string;
     try {
@@ -193,7 +196,7 @@ describe('Data Transfer type portability independent live journeys', () => {
       await disconnectBackend(source);
       sessions.delete(source);
     }
-    expect(outcome.text).toContain(
+    expect(previewErrorText).toContain(
       `source table collation '${sourceCollation}' has no proven equivalent on this target; ` +
         'choose a target collation with reviewed matching semantics or create the target table ' +
         'with an explicit reviewed conversion. The source UTF8MB4 character encoding can map ' +
@@ -205,6 +208,29 @@ describe('Data Transfer type portability independent live journeys', () => {
         target,
         `SELECT COUNT(*) AS c FROM information_schema.tables
          WHERE table_schema = current_schema() AND table_name IN ('${mysqlTables.parent}', '${mysqlTables.child}')`,
+      );
+      expect(queryScalar(targetTables, 'c')).toBe(0);
+    } finally {
+      await disconnectBackend(target);
+      sessions.delete(target);
+    }
+  });
+
+  it('fails closed on unproven PostgreSQL text collation before creating a MySQL target', async () => {
+    await prepareTransfer(fixtures[0], fixtures[3], [pgCollationTable], 'structure');
+    const previewError = await $('[data-testid="data-transfer-preview-error"]');
+    if (!(await previewError.isExisting())) {
+      throw new Error('expected PostgreSQL text collation incompatibility to fail during preview');
+    }
+    const previewErrorText = await previewError.getText();
+    expect(previewErrorText).toMatch(/requires collation preservation/i);
+
+    const target = await connectFixture(fixtures[3]);
+    try {
+      const targetTables = await sql(
+        target,
+        `SELECT COUNT(*) AS c FROM information_schema.tables
+         WHERE table_schema = DATABASE() AND table_name = '${pgCollationTable}'`,
       );
       expect(queryScalar(targetTables, 'c')).toBe(0);
     } finally {
