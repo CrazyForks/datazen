@@ -535,9 +535,7 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
   },
 
   setActiveResult: (panelId, idx, paneId) => {
-    set((s) => ({
-      queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), { activeResultIdx: idx }),
-    }));
+    set((s) => ({ queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), { activeResultIdx: idx }) }));
   },
 
   togglePinResult: (panelId, idx, paneId) => {
@@ -576,15 +574,11 @@ export const usePanelStore = create<PanelState & PanelActions>((set, get) => ({
   },
 
   setChartConfig: (panelId, config, paneId) => {
-    set((s) => ({
-      queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), { chartConfig: config }),
-    }));
+    set((s) => ({ queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), { chartConfig: config }) }));
   },
 
   setResultViewMode: (panelId, mode, paneId) => {
-    set((s) => ({
-      queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), { resultViewMode: mode }),
-    }));
+    set((s) => ({ queryExec: patchExec(s.queryExec, paneKey(panelId, paneId), { resultViewMode: mode }) }));
   },
 
   // ── History / Favorites ────────────────────────────────────────

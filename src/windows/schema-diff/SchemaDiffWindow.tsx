@@ -572,6 +572,11 @@ export function SchemaDiffWindow() {
     }
   };
 
+  // All hooks have run. Do not evaluate lazy-domain translations until ready.
+  if (!localesReady) {
+    return <LocaleDomainLoading testId="schema-diff-locale-loading" />;
+  }
+
   const endpointsCrossDialectNote = endpoints.isCrossDialect ? (
     <span
       data-testid="schema-diff-cross-dialect-note"
@@ -646,12 +651,6 @@ export function SchemaDiffWindow() {
       </Button>
     </div>
   );
-
-  // All hooks above. Gate the body on the `sync` locale pack so the UI
-  // never renders raw/un-translated keys before it loads.
-  if (!localesReady) {
-    return <LocaleDomainLoading testId="schema-diff-locale-loading" />;
-  }
 
   return (
     <div

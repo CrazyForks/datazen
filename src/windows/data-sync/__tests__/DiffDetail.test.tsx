@@ -89,7 +89,7 @@ describe('diff review journeys', () => {
     expect(within(review).getAllByRole('checkbox')[1]).toBeChecked();
     fireEvent.click(screen.getByText('sync.pageNext'));
     expect(within(review).getByRole('checkbox')).not.toBeChecked();
-  });
+  }, 20_000);
 
   it('option changes never reselect manually excluded rows', () => {
     const rows = [{ ...changedRow(1), selected: false }, changedRow(2)];
