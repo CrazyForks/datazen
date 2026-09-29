@@ -84,7 +84,7 @@ importers:
         specifier: ^18.0.9
         version: 18.0.9
       react:
-        specifier: ^18.3.1
+        specifier: 18.3.1
         version: 18.3.1
       react-dom:
         specifier: ^18.3.1
