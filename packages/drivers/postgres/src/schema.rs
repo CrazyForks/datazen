@@ -367,10 +367,9 @@ impl PostgresDriver {
                 Some(ForeignKeyInfo {
                     name: r.get("fk_name"),
                     columns,
-                    referenced_table: format!(
-                        "{}.{}",
-                        r.get::<String, _>("ref_schema"),
-                        r.get::<String, _>("ref_table")
+                    referenced_table: qualified_pg_table_identity(
+                        &r.get::<String, _>("ref_schema"),
+                        &r.get::<String, _>("ref_table"),
                     ),
                     referenced_columns,
                     on_update: r.get("update_rule"),
@@ -537,6 +536,10 @@ fn parse_pg_fk_deferrability(
     ForeignKeyDeferrability::Unknown
 }
 
+fn qualified_pg_table_identity(schema: &str, table: &str) -> String {
+    format!("{schema}.{table}")
+}
+
 /// Collapse a foreign key's column arrays down to their ordered distinct columns.
 ///
 /// `information_schema` exposes the two sides of a foreign key as independent
@@ -580,12 +583,24 @@ fn parse_pg_check_definition(definition: &str) -> Option<String> {
 mod schema_tests {
     use super::{
         normalise_fk_columns, parse_pg_check_definition, parse_pg_fk_deferrability,
-        relation_supports_consistent_snapshot,
+        qualified_pg_table_identity, relation_supports_consistent_snapshot,
     };
     use datazen_driver_api::ForeignKeyDeferrability;
 
     fn owned(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn postgres_foreign_key_identity_preserves_referenced_schema() {
+        assert_eq!(
+            qualified_pg_table_identity("archive", "events"),
+            "archive.events"
+        );
+        assert_ne!(
+            qualified_pg_table_identity("archive", "events"),
+            qualified_pg_table_identity("public", "events")
+        );
     }
 
     #[test]

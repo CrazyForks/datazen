@@ -516,11 +516,11 @@ async fn fetch_target_table_dependency_catalog(
         } else {
             vec![metadata_database.to_string()]
         };
-        let mut snapshots = selected_snapshots.to_vec();
-        let mut seen = snapshots
-            .iter()
-            .map(|(table, _)| dependency_relation_identity(dialect, table, schema_scope))
-            .collect::<HashSet<_>>();
+        // This must be a catalog read, not a union with individually fetched
+        // selected tables: adding selected snapshots here could make an
+        // incomplete catalog look complete and hide an inbound FK dependent.
+        let mut snapshots = Vec::new();
+        let mut seen = HashSet::new();
         let mut table_count = 0usize;
 
         for catalog_database in databases {
@@ -576,6 +576,55 @@ async fn fetch_target_table_dependency_catalog(
                 snapshots.push((table_identity, schema));
             }
         }
+        for (selected_table, _) in selected_snapshots {
+            let mut selected_identity =
+                dependency_relation_identity(dialect, selected_table, schema_scope);
+            if normalize_dialect(dialect) == "mysql" {
+                if let Some((selected_database, relation)) = selected_identity.split_once('.') {
+                    if selected_database == database {
+                        selected_identity = relation.to_string();
+                    }
+                }
+            }
+            if snapshots
+                .iter()
+                .any(|(identity, _)| identity == &selected_identity)
+            {
+                continue;
+            }
+
+            if normalize_dialect(dialect) == "postgresql" && !selected_table.contains('.') {
+                let candidates = snapshots
+                    .iter()
+                    .filter(|(identity, _)| {
+                        identity.rsplit('.').next() == Some(selected_table.as_str())
+                            && schema_scope
+                                .map(str::trim)
+                                .filter(|schema| !schema.is_empty())
+                                .map(|schema| identity.starts_with(&format!("{schema}.")))
+                                .unwrap_or(true)
+                    })
+                    .collect::<Vec<_>>();
+                match candidates.as_slice() {
+                    [_] => continue,
+                    [] => {
+                        return Err(CommandError::Validation(format!(
+                            "Selected target table `{selected_table}` is absent from the complete target dependency catalog"
+                        )));
+                    }
+                    _ => {
+                        return Err(CommandError::Validation(format!(
+                            "Selected target table `{selected_table}` has an ambiguous schema identity in the complete target dependency catalog"
+                        )));
+                    }
+                }
+            }
+
+            return Err(CommandError::Validation(format!(
+                "Selected target table `{selected_table}` is absent from the complete target dependency catalog"
+            )));
+        }
+
         Ok::<_, CommandError>((snapshots, table_count))
     })
     .await

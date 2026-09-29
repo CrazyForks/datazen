@@ -29,7 +29,12 @@ import {
 } from '../lib/schemaDiffFixtures.js';
 
 type Dialect = 'postgresql' | 'mysql';
-type Scenario = 'missing-target' | 'missing-fk' | 'target-only' | 'target-parent-only';
+type Scenario =
+  | 'missing-target'
+  | 'missing-fk'
+  | 'target-only'
+  | 'target-parent-only'
+  | 'target-only-cross-schema';
 
 type DialectFixture = {
   dialect: Dialect;
@@ -41,6 +46,7 @@ type DialectFixture = {
   targetConfig: ReturnType<typeof pgConnectionConfig> | ReturnType<typeof mysqlConnectionConfig>;
   parentTable: string;
   childTable: string;
+  childSchema?: string;
   lateChildTable: string;
   foreignKey: string;
 };
@@ -86,12 +92,36 @@ async function assertFixtureTablesAbsent(fixture: DialectFixture): Promise<void>
     let session: string | undefined;
     try {
       session = await invokeBackend<string>('connect', { connectionId: endpoint.config.id });
+      if (fixture.childSchema && endpoint.label === 'target') {
+        const schemaExists = await invokeBackend<QueryResultPayload>('execute_query', {
+          dbSessionId: session,
+          sql: `SELECT count(*)::int AS c FROM information_schema.schemata WHERE schema_name = '${fixture.childSchema}'`,
+        });
+        if (queryScalar(schemaExists, 'c') > 0) {
+          await invokeBackend('execute_query', {
+            dbSessionId: session,
+            sql: `DROP TABLE IF EXISTS ${childTableIdentifier(fixture)}`,
+          });
+          await invokeBackend('execute_query', {
+            dbSessionId: session,
+            sql: `DROP SCHEMA ${fixture.childSchema}`,
+          });
+        }
+        await invokeBackend('execute_query', {
+          dbSessionId: session,
+          sql: `DROP TABLE IF EXISTS ${fixture.lateChildTable}, ${fixture.parentTable}`,
+        });
+      }
       const names = tableNames.map((name) => `'${name}'`).join(', ');
       const sql =
-        fixture.dialect === 'postgresql'
+        fixture.childSchema && fixture.dialect === 'postgresql'
           ? `SELECT count(*)::int AS c FROM information_schema.tables
+           WHERE (table_schema = 'public' AND table_name IN ('${fixture.lateChildTable}', '${fixture.parentTable}'))
+              OR (table_schema = '${fixture.childSchema}' AND table_name = '${fixture.childTable}')`
+          : fixture.dialect === 'postgresql'
+            ? `SELECT count(*)::int AS c FROM information_schema.tables
              WHERE table_schema = 'public' AND table_name IN (${names})`
-          : `SELECT count(*) AS c FROM information_schema.tables
+            : `SELECT count(*) AS c FROM information_schema.tables
              WHERE table_schema = DATABASE() AND table_name IN (${names})`;
       const result = await invokeBackend<QueryResultPayload>('execute_query', {
         dbSessionId: session,
@@ -103,6 +133,13 @@ async function assertFixtureTablesAbsent(fixture: DialectFixture): Promise<void>
         throw new Error(
           `${fixture.dialect} ${endpoint.label} fixture cleanup left ${count} named tables`,
         );
+      }
+      if (fixture.childSchema && endpoint.label === 'target') {
+        const schemaResult = await invokeBackend<QueryResultPayload>('execute_query', {
+          dbSessionId: session,
+          sql: `SELECT count(*)::int AS c FROM information_schema.schemata WHERE schema_name = '${fixture.childSchema}'`,
+        });
+        expect(queryScalar(schemaResult, 'c')).toBe(0);
       }
     } finally {
       if (session) await disconnectBackend(session);
@@ -118,15 +155,23 @@ async function setupFixture(fixture: DialectFixture, scenario: Scenario) {
   const target = await invokeBackend<string>('connect', { connectionId: fixture.targetId });
   try {
     await withSafeModeOff(async () => {
+      if (scenario === 'target-only-cross-schema' && fixture.childSchema) {
+        await invokeBackend('execute_query', {
+          dbSessionId: target,
+          sql: `CREATE SCHEMA ${fixture.childSchema}`,
+        });
+      }
       for (const session of [source, target]) {
         await invokeBackend('execute_query', {
           dbSessionId: session,
           sql: `DROP TABLE IF EXISTS ${fixture.lateChildTable}`,
         });
-        await invokeBackend('execute_query', {
-          dbSessionId: session,
-          sql: `DROP TABLE IF EXISTS ${fixture.childTable}`,
-        });
+        if (session === target || !fixture.childSchema) {
+          await invokeBackend('execute_query', {
+            dbSessionId: session,
+            sql: `DROP TABLE IF EXISTS ${childTableIdentifier(fixture)}`,
+          });
+        }
         await invokeBackend('execute_query', {
           dbSessionId: session,
           sql: `DROP TABLE IF EXISTS ${fixture.parentTable}`,
@@ -148,6 +193,9 @@ async function setupFixture(fixture: DialectFixture, scenario: Scenario) {
           sql: `CREATE TABLE ${fixture.parentTable} (id INT PRIMARY KEY)${engineClause(fixture)}`,
         });
       }
+      if (scenario === 'target-only-cross-schema') {
+        await createParentChild(target, fixture, true);
+      }
     });
   } finally {
     await disconnectBackend(source);
@@ -166,15 +214,19 @@ async function createParentChild(
   });
   await invokeBackend('execute_query', {
     dbSessionId: session,
-    sql: `CREATE TABLE ${fixture.childTable} (
+    sql: `CREATE TABLE ${childTableIdentifier(fixture)} (
       id INT PRIMARY KEY,
       parent_id INT NOT NULL${
         includeForeignKey
-          ? `,\n      CONSTRAINT ${fixture.foreignKey}\n        FOREIGN KEY (parent_id) REFERENCES ${fixture.parentTable}(id)`
+          ? `,\n      CONSTRAINT ${fixture.foreignKey}\n        FOREIGN KEY (parent_id) REFERENCES ${fixture.childSchema ? `public.${fixture.parentTable}` : fixture.parentTable}(id)`
           : ''
       }
     )${engineClause(fixture)}`,
   });
+}
+
+function childTableIdentifier(fixture: DialectFixture): string {
+  return fixture.childSchema ? `${fixture.childSchema}.${fixture.childTable}` : fixture.childTable;
 }
 
 function engineClause(fixture: DialectFixture): string {
@@ -248,13 +300,14 @@ function assertForeignKeyPlanOrder(fixture: DialectFixture, statements: string[]
 async function foreignKeyCount(
   fixture: DialectFixture,
   childTable = fixture.childTable,
+  childSchema = 'public',
 ): Promise<number> {
   const session = await invokeBackend<string>('connect', { connectionId: fixture.targetId });
   try {
     const sql =
       fixture.dialect === 'postgresql'
         ? `SELECT count(*)::int AS c FROM information_schema.table_constraints
-           WHERE constraint_schema = 'public'
+           WHERE constraint_schema = '${childSchema}'
              AND table_name = '${childTable}'
              AND constraint_name = '${fixture.foreignKey}'
              AND constraint_type = 'FOREIGN KEY'`
@@ -273,13 +326,17 @@ async function foreignKeyCount(
   }
 }
 
-async function tableExists(fixture: DialectFixture, table: string): Promise<boolean> {
+async function tableExists(
+  fixture: DialectFixture,
+  table: string,
+  schema = 'public',
+): Promise<boolean> {
   const session = await invokeBackend<string>('connect', { connectionId: fixture.targetId });
   try {
     const sql =
       fixture.dialect === 'postgresql'
         ? `SELECT count(*)::int AS c FROM information_schema.tables
-           WHERE table_schema = 'public' AND table_name = '${table}'`
+           WHERE table_schema = '${schema}' AND table_name = '${table}'`
         : `SELECT count(*) AS c FROM information_schema.tables
            WHERE table_schema = DATABASE() AND table_name = '${table}'`;
     const result = await invokeBackend<QueryResultPayload>('execute_query', {
@@ -395,6 +452,7 @@ function createFixture(dialect: Dialect, scenario: Scenario): DialectFixture {
   const targetDatabase = dialect === 'postgresql' ? PG_SYNC_TGT_DB : MYSQL_SYNC_DB;
   const parentTable = `sd_dag_${dialect}_${scenario.replaceAll('-', '_')}_a_parent_${stamp}`;
   const childTable = `sd_dag_${dialect}_${scenario.replaceAll('-', '_')}_z_child_${stamp}`;
+  const childSchema = scenario === 'target-only-cross-schema' ? `sd_dag_${stamp}` : undefined;
   const foreignKey = `fk_dag_${dialect}_${scenario.replaceAll('-', '_')}_${stamp}`;
   const sourceConfig =
     dialect === 'postgresql'
@@ -414,6 +472,7 @@ function createFixture(dialect: Dialect, scenario: Scenario): DialectFixture {
     targetConfig,
     parentTable,
     childTable,
+    childSchema,
     lateChildTable: `${childTable}_late`,
     foreignKey,
   };
@@ -523,6 +582,37 @@ describe('Schema Diff supported dependency order (SD-DAG)', function () {
       });
     });
   }
+
+  it('SD-DAG-postgresql-005: blocks a parent-only drop with an inbound child in another schema', async () => {
+    await withFixture('postgresql', 'target-only-cross-schema', mainWindow, async (fixture) => {
+      const childSchema = fixture.childSchema;
+      if (!childSchema) throw new Error('cross-schema fixture is missing its child schema');
+      await openSchemaDiffWindow();
+      await selectSchemaDiffEndpoints(fixture.sourceName, fixture.targetName);
+      await setSchemaDiffTables(fixture.parentTable);
+      await clickSchemaDiffCompare();
+      await clickSchemaDiffGeneratePlan();
+
+      const allowDestructive = await $('[data-testid="schema-diff-allow-destructive"]');
+      if (!(await allowDestructive.isSelected())) await allowDestructive.click();
+      const regenerate = await $(`button*=${t('schemaDiff.regeneratePlan')}`);
+      await regenerate.waitForClickable({ timeout: 10000 });
+      await regenerate.click();
+
+      const requirements = await $('[data-testid="schema-diff-plan-requirements"]');
+      await requirements.waitForDisplayed({ timeout: 15000 });
+      expect(await requirements.getText()).toContain(childTableIdentifier(fixture));
+      expect(await readPlanStatements()).toEqual([]);
+
+      await advanceSchemaDiffToReview();
+      const deploy = await $('[data-testid="schema-diff-deploy"]');
+      await deploy.waitForDisplayed({ timeout: 8000 });
+      expect(await deploy.isEnabled()).toBe(false);
+      expect(await tableExists(fixture, fixture.parentTable)).toBe(true);
+      expect(await tableExists(fixture, fixture.childTable, childSchema)).toBe(true);
+      expect(await foreignKeyCount(fixture, fixture.childTable, childSchema)).toBe(1);
+    });
+  });
 
   for (const dialect of ['postgresql', 'mysql'] as const) {
     it(`SD-DAG-boundary-${dialect}-new-dependent-after-review-blocks-deploy`, async function () {

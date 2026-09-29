@@ -210,7 +210,10 @@ fn target_only_blank_control_or_invalid_identifier_is_not_executable() {
 fn explicit_target_only_picker_does_not_invent_source_snapshot() {
     let source = schema(vec![col("id", "integer")]);
     let target = schema(vec![col("id", "integer")]);
-    let target_catalog = vec![("archive".into(), schema(vec![col("id", "integer")]))];
+    let target_catalog = vec![
+        ("users".into(), target.clone()),
+        ("archive".into(), schema(vec![col("id", "integer")])),
+    ];
     let plan = build_schema_diff_plan_with_target_only_catalog(
         &[("users".into(), source, target)],
         &["archive".into()],
@@ -874,7 +877,11 @@ fn target_only_drop_refuses_basename_only_foreign_key_identity() {
         on_delete: "NO ACTION".into(),
         deferrability: ForeignKeyDeferrability::NotDeferrable,
     });
-    let target_schemas = vec![("z_child".into(), child_schema)];
+    let target_schemas = vec![
+        ("public.a_parent".into(), schema(vec![col("id", "int")])),
+        ("other.a_parent".into(), schema(vec![col("id", "int")])),
+        ("z_child".into(), child_schema),
+    ];
     let plan = build_schema_diff_plan_with_target_only_catalog(
         &[],
         &tables,
@@ -892,6 +899,109 @@ fn target_only_drop_refuses_basename_only_foreign_key_identity() {
         requirement,
         PlanRequirement::Unsupported { operation, reason }
             if operation == "target-only-table-drop-order" && reason.contains("basename")
+    )));
+}
+
+#[test]
+fn postgres_target_only_drop_uses_exact_schema_qualified_fk_identity() {
+    let mut archive_child = schema(vec![col("id", "int"), col("parent_id", "int")]);
+    archive_child.foreign_keys.push(ForeignKeyInfo {
+        name: "fk_archive_child_parent".into(),
+        columns: vec!["parent_id".into()],
+        referenced_table: "archive.parent".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
+    });
+    let catalog = vec![
+        ("public.parent".into(), schema(vec![col("id", "int")])),
+        ("archive.parent".into(), schema(vec![col("id", "int")])),
+        ("archive.child".into(), archive_child),
+    ];
+    let plan = build_schema_diff_plan_with_target_only_catalog(
+        &[],
+        &["public.parent".into()],
+        Some(&catalog),
+        "postgresql",
+        "postgresql",
+        PlanOptions {
+            allow_destructive: true,
+            ..PlanOptions::default()
+        },
+    );
+
+    assert!(plan.requirements.is_empty(), "{:?}", plan.requirements);
+    assert_eq!(plan.statements.len(), 1, "{:?}", plan.statements);
+    assert!(plan.statements[0].sql.contains("\"public\""));
+    assert!(plan.statements[0].sql.contains("\"parent\""));
+    assert!(!plan.statements[0].sql.contains("archive"));
+}
+
+#[test]
+fn target_only_drop_fails_closed_when_selected_table_is_missing_from_full_snapshot() {
+    let catalog = vec![("public.child".into(), schema(vec![col("id", "int")]))];
+    let plan = build_schema_diff_plan_with_target_only_catalog(
+        &[],
+        &["public.parent".into()],
+        Some(&catalog),
+        "postgresql",
+        "postgresql",
+        PlanOptions {
+            allow_destructive: true,
+            ..PlanOptions::default()
+        },
+    );
+
+    assert!(plan.statements.is_empty(), "{:?}", plan.statements);
+    assert!(plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { operation, reason }
+            if operation == "target-only-table-drop-order"
+                && reason.contains("complete target dependency snapshot")
+    )));
+}
+
+#[test]
+fn target_only_drop_cycle_fails_closed() {
+    let mut table_a = schema(vec![col("id", "int"), col("b_id", "int")]);
+    table_a.foreign_keys.push(ForeignKeyInfo {
+        name: "fk_a_b".into(),
+        columns: vec!["b_id".into()],
+        referenced_table: "b".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
+    });
+    let mut table_b = schema(vec![col("id", "int"), col("a_id", "int")]);
+    table_b.foreign_keys.push(ForeignKeyInfo {
+        name: "fk_b_a".into(),
+        columns: vec!["a_id".into()],
+        referenced_table: "a".into(),
+        referenced_columns: vec!["id".into()],
+        on_update: "NO ACTION".into(),
+        on_delete: "NO ACTION".into(),
+        deferrability: ForeignKeyDeferrability::NotDeferrable,
+    });
+    let catalog = vec![("a".into(), table_a), ("b".into(), table_b)];
+    let plan = build_schema_diff_plan_with_target_only_catalog(
+        &[],
+        &["a".into(), "b".into()],
+        Some(&catalog),
+        "mysql",
+        "mysql",
+        PlanOptions {
+            allow_destructive: true,
+            ..PlanOptions::default()
+        },
+    );
+
+    assert!(plan.statements.is_empty(), "{:?}", plan.statements);
+    assert!(plan.requirements.iter().any(|requirement| matches!(
+        requirement,
+        PlanRequirement::Unsupported { operation, reason }
+            if operation == "target-only-table-drop-order" && reason.contains("cycle")
     )));
 }
 

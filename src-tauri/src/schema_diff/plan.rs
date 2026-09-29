@@ -1565,26 +1565,48 @@ fn selected_target_drop_dependencies(
     target_database: Option<&str>,
     target_schema: Option<&str>,
 ) -> Result<Vec<(String, String)>, String> {
-    let selected_tables = target_only_tables
-        .iter()
-        .map(|table| {
-            (
-                target_drop_relation_identity(
-                    target_dialect,
-                    table,
-                    target_database,
-                    target_schema,
-                ),
-                resolve_table_for_dialect(target_dialect, table),
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut catalog_identities = Vec::with_capacity(target_dependency_schemas.len());
+    let mut seen_catalog_identities = HashSet::new();
+    for (table, _) in target_dependency_schemas {
+        let identity =
+            target_drop_relation_identity(target_dialect, table, target_database, target_schema);
+        if !seen_catalog_identities.insert(identity.clone()) {
+            return Err(format!(
+                "Complete target dependency snapshot contains duplicate relation identity `{identity}`"
+            ));
+        }
+        catalog_identities.push(identity);
+    }
+
+    let mut selected_tables = Vec::with_capacity(target_only_tables.len());
+    let mut seen_selected_identities = HashSet::new();
+    for table in target_only_tables {
+        let identity = resolve_snapshot_relation_identity(
+            target_dialect,
+            table,
+            target_database,
+            target_schema,
+            &catalog_identities,
+        )?;
+        if !seen_selected_identities.insert(identity.clone()) {
+            return Err(format!(
+                "Target-only table identity `{identity}` was selected more than once"
+            ));
+        }
+        selected_tables.push((identity, resolve_table_for_dialect(target_dialect, table)));
+    }
     let selected_pair_tables = selected_pair_tables
         .iter()
         .map(|table| {
-            target_drop_relation_identity(target_dialect, table, target_database, target_schema)
+            resolve_snapshot_relation_identity(
+                target_dialect,
+                table,
+                target_database,
+                target_schema,
+                &catalog_identities,
+            )
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     let mut dependencies = Vec::new();
     for (raw_child_table, schema) in target_dependency_schemas {
         let child_table = target_drop_relation_identity(
@@ -1612,6 +1634,18 @@ fn selected_target_drop_dependencies(
                 target_database,
                 target_schema,
             );
+            if normalize_dialect(target_dialect) == "postgresql"
+                && !reference.contains('.')
+                && selected_tables.iter().any(|(identity, _)| {
+                    identity.contains('.')
+                        && identity.rsplit('.').next() == reference.rsplit('.').next()
+                })
+            {
+                return Err(format!(
+                    "Cannot verify whether foreign key {} on `{child_table}` references `{reference}` because the PostgreSQL relation identity is not schema-qualified; basename-only matches are not accepted",
+                    foreign_key.name
+                ));
+            }
             let exact = selected_tables
                 .iter()
                 .filter(|(candidate, _)| candidate == &reference_identity)
@@ -1679,6 +1713,49 @@ fn selected_target_drop_dependencies(
     dependencies.sort();
     dependencies.dedup();
     Ok(dependencies)
+}
+
+fn resolve_snapshot_relation_identity(
+    dialect: &str,
+    table: &str,
+    target_database: Option<&str>,
+    target_schema: Option<&str>,
+    catalog_identities: &[String],
+) -> Result<String, String> {
+    let requested = target_drop_relation_identity(dialect, table, target_database, target_schema);
+    if catalog_identities
+        .iter()
+        .any(|identity| identity == &requested)
+    {
+        return Ok(requested);
+    }
+
+    if normalize_dialect(dialect) == "postgresql" && !table.contains('.') {
+        let candidates = catalog_identities
+            .iter()
+            .filter(|identity| {
+                identity.rsplit('.').next() == Some(table.trim())
+                    && target_schema
+                        .map(str::trim)
+                        .filter(|schema| !schema.is_empty())
+                        .map(|schema| identity.starts_with(&format!("{schema}.")))
+                        .unwrap_or(true)
+            })
+            .collect::<Vec<_>>();
+        return match candidates.as_slice() {
+            [identity] => Ok((*identity).clone()),
+            [] => Err(format!(
+                "Target table `{table}` is absent from the complete target dependency snapshot"
+            )),
+            _ => Err(format!(
+                "Target table `{table}` has an ambiguous PostgreSQL schema identity in the complete target dependency snapshot; select it with an explicit schema"
+            )),
+        };
+    }
+
+    Err(format!(
+        "Target table `{table}` is absent from the complete target dependency snapshot"
+    ))
 }
 
 fn target_drop_relation_identity(

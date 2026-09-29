@@ -43,8 +43,9 @@ fn command_definitions_include_schema_object_commands() {
     let ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
     assert!(ids.contains(&"list_objects"));
     assert!(ids.contains(&"get_object_ddl"));
+    assert!(ids.contains(&"get_object_dependencies"));
     assert!(ids.contains(&"list_privileges"));
-    assert_eq!(schema_object_command_definitions().len(), 3);
+    assert_eq!(schema_object_command_definitions().len(), 4);
 }
 
 #[tokio::test]

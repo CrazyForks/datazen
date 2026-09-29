@@ -63,3 +63,12 @@ The Coder changeset addresses the three earlier findings; independent retest res
 - Six original WDIO journeys: 5 passed, 1 failed. Both PostgreSQL create/FK journeys and both MySQL create/FK journeys passed. MySQL target-only child/parent drop passed. PostgreSQL target-only drop failed closed as described under BUG-003. No unsafe/failed plan was deployed.
 - The app used an isolated temporary app-data directory and port 4445; the global worker-database bootstrap was disabled. No fixture reset script or shared-database teardown was run. Unique-prefix schema fixtures were cleaned up, the temporary app-data directory was removed, and port 4445 was verified free at completion.
 - DMG packaging is excluded from this feature's test gate.
+
+## Safety follow-up merged from `feature/migration-schema-dependency-safety`
+
+- Status: `READY_FOR_RETEST` for the newly merged follow-up; the earlier R4 `PASSED` result remains valid only for its recorded candidate.
+- BUG-003 follow-up: PostgreSQL FK metadata retains both referenced schema and table identity, including cross-schema relations. Selected target-only drops are ordered by exact relation identity; unqualified same-basename references remain fail-closed.
+- BUG-004 follow-up: target-only parent drops are blocked when a known inbound FK child is not selected or its identity cannot be verified. PostgreSQL catalog enumeration includes user schemas.
+- Added regression coverage: `target_only_table_drops_order_selected_children_before_parents_for_pg_and_mysql`, `postgres_target_drop_uses_exact_schema_identity_instead_of_basename`, `postgres_target_drop_fails_closed_on_unqualified_same_basename_fk`, and `target_only_parent_drop_is_blocked_by_unselected_fk_child_for_pg_and_mysql`; PostgreSQL driver coverage: `postgres_foreign_key_identity_preserves_referenced_schema`.
+- Added WDIO plan-only coverage for PostgreSQL/MySQL parent-only drops and a PostgreSQL inbound child in a separate schema. The parent-only plans must never be deployed. The integrated spec also retains the R4 stale-catalog deploy-rejection journeys and cleanup/read-back assertions.
+- Coder checks from the safety branch: 16 target-only Host tests, 1 PostgreSQL FK identity driver test, Host typecheck, scoped Rust formatting, WDIO formatting, and `git diff --check` passed. The merged candidate still needs an independent WDIO retest and changed-core coverage assessment; see the follow-up section in `progress.md`.
