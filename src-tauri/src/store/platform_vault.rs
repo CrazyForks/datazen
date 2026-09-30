@@ -110,6 +110,7 @@ pub mod macos_security {
 pub mod windows_dpapi {
     use super::*;
     use std::ffi::c_void;
+    use std::path::PathBuf;
 
     // Raw FFI for DPAPI — avoids windows crate version friction.
     #[repr(C)]
