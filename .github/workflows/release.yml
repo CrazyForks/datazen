@@ -588,7 +588,12 @@ jobs:
           fi
         env:
           BUNDLE_DIR: target/${{ matrix.target }}/release/bundle
-          TAURI_SIGNING_PRIVATE_KEY: ${{ matrix.variant_suffix == '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          # Same key as the job-level env used by `tauri build`. This re-sign
+          # step runs after the AppImage repack, so it must see the key for
+          # every SKU — blanking it for non-basic variants handed
+          # `tauri signer sign -k ""` and failed the Linux -all build with
+          # "Missing comment in secret key", leaving that channel unsigned.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Download the signed Pro .dzx (Default Pro, once)
